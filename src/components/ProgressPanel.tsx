@@ -20,7 +20,7 @@ export const ProgressPanel: React.FC<ProgressPanelProps> = ({
           <span className="badge badge-neutral">No Run Selected</span>
         </div>
         <div className="panel-content empty-hint">
-          Select an associated run from the project rail to view scoped task progress.
+          Select an active run from the topbar picker to view scoped task progress.
         </div>
       </section>
     );

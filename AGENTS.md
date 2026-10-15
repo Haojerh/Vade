@@ -16,7 +16,8 @@ Conventions, architecture patterns, and interface contracts for agents contribut
   - No fabricated states, progress estimates, or synthetic orchestrators.
   - Failures in upstream dependencies (Orca CLI or `gh`) are communicated via explicit `Section<T>` envelopes containing `SourceMeta` and `Issue` structures.
   - Distinguish agent state (`working`, `waiting`, `blocked`, `completed`, `failed`, `idle`, `unknown`) from workspace status and terminal process liveness.
-  - Push events are finite, bounded historical records (up to 100 entries) from GitHub, not real-time git pushes or whole-history logs.
+  - GitHub activity includes bounded commits, pull requests and repository-wide issues. Push events are excluded. Worktree scope must derive branch/path from discovered metadata, never executable user input.
+  - Conversation history contains public agent/user turns only, never tool output or internal thinking. Resolve exact provider/session provenance, bound file reads, and bind opaque cursors to project/node/run/source. Model/effort fields contain observed effective metadata only.
 
 ## HTTP Endpoints & API Contract
 
@@ -28,8 +29,8 @@ Implemented in [`server/api.ts`](file:///C:/Users/inter/orca/orca-visualization/
 | `GET /api/projects` | None | `Section<Inventory>` | Lists registered Orca projects (Git repos and folder workspaces). |
 | `GET /api/projects/:projectId/snapshot` | `runId` (optional) | `DashboardSnapshot` | Full project dashboard graph, runtime metadata, nodes, edges, tasks, progress, and activity. |
 | `GET /api/projects/:projectId/events` | `runId` (optional) | SSE stream (`text/event-stream`) | Pushes full snapshot updates as `event: snapshot` with `id: <revision>` on collection changes. 15s comment heartbeats (`: heartbeat`). |
-| `GET /api/projects/:projectId/nodes/:nodeId` | `cursor` (optional, <= 512 chars), `limit` (optional, 1..200, default 100) | `NodeDetails` | Inspects node metadata, tool invocation, associated tasks, activity, and terminal output sample. |
-| `GET /api/projects/:projectId/github` | None | `GitHubData` | Pull requests, commit history, and push events for the resolved project repository. |
+| `GET /api/projects/:projectId/nodes/:nodeId` | `runId` (optional), `cursor` (optional, <= 512 chars), `limit` (optional, 1..200, default 100; UI requests 20) | `NodeDetails` | Node facts, tool/tasks/activity metadata and a source-bound conversation section. Worktrees and terminal nodes do not expose conversation history. |
+| `GET /api/projects/:projectId/github` | `scope=general` (default) or `scope=worktree&nodeId=<discovered worktree node>` | `GitHubData` | Scoped commits/PRs, repository-wide issues and explicit coverage metadata. |
 
 ## Error Responses
 

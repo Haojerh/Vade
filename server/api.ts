@@ -10,6 +10,7 @@ import {
   Section,
   Inventory,
   HealthResponse,
+  GitHubQuery,
 } from '../shared/contracts.js';
 import { CommandRunner, defaultCommandRunner, CliError } from './cli.js';
 import { collectInventory, globalSourceMaps } from './orca.js';
@@ -96,12 +97,29 @@ export function createApiHandler(options: ApiServerOptions = {}) {
     const reqUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
     const pathname = reqUrl.pathname;
     const query: Record<string, string> = {};
+    const seenQueryKeys = new Set<string>();
+    let queryParseError: string | null = null;
+
     for (const [k, v] of reqUrl.searchParams.entries()) {
+      if (seenQueryKeys.has(k)) {
+        queryParseError = `Duplicate query parameter '${k}'`;
+        break;
+      }
+      seenQueryKeys.add(k);
+      if (v === '') {
+        queryParseError = `Query parameter '${k}' cannot be empty`;
+        break;
+      }
       query[k] = v;
     }
 
     // 3. API Routes
     if (pathname.startsWith('/api/')) {
+      if (queryParseError) {
+        sendError(400, 'INVALID_ARGUMENT', queryParseError);
+        return;
+      }
+
       if (reqMethod === 'HEAD') {
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end();
@@ -209,16 +227,20 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           const nodeId = decodeURIComponent(nodeMatch[2]);
 
           for (const k of Object.keys(query)) {
-            if (k !== 'cursor' && k !== 'limit') {
+            if (k !== 'cursor' && k !== 'limit' && k !== 'runId') {
               sendError(400, 'INVALID_ARGUMENT', `Unexpected query parameter '${k}'`);
               return;
             }
           }
 
           let limit = 100;
-          if (query.limit) {
-            const parsed = parseInt(String(query.limit), 10);
-            if (isNaN(parsed) || parsed < 1 || parsed > 200) {
+          if (query.limit !== undefined) {
+            if (!/^\d+$/.test(query.limit)) {
+              sendError(400, 'INVALID_ARGUMENT', 'Query parameter limit must be an integer between 1 and 200');
+              return;
+            }
+            const parsed = parseInt(query.limit, 10);
+            if (parsed < 1 || parsed > 200) {
               sendError(400, 'INVALID_ARGUMENT', 'Query parameter limit must be an integer between 1 and 200');
               return;
             }
@@ -226,15 +248,24 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           }
 
           let cursor: string | null = null;
-          if (query.cursor) {
-            if (typeof query.cursor !== 'string' || query.cursor.length > 512) {
-              sendError(400, 'INVALID_ARGUMENT', 'Query parameter cursor must be string <= 512 chars');
+          if (query.cursor !== undefined) {
+            if (query.cursor.length === 0 || query.cursor.length > 512) {
+              sendError(400, 'INVALID_ARGUMENT', 'Query parameter cursor must be string between 1 and 512 chars');
               return;
             }
             cursor = query.cursor;
           }
 
-          const details = await snapshotManager.getNodeDetails(projectId, nodeId, { cursor, limit }, runner);
+          let runId: string | null = null;
+          if (query.runId !== undefined) {
+            if (query.runId.length === 0 || query.runId.length > 256 || !/^[a-zA-Z0-9_.-]{1,256}$/.test(query.runId)) {
+              sendError(400, 'INVALID_ARGUMENT', 'Query parameter runId must be an opaque identifier between 1 and 256 chars');
+              return;
+            }
+            runId = query.runId;
+          }
+
+          const details = await snapshotManager.getNodeDetails(projectId, nodeId, { runId, cursor, limit }, runner);
           sendJson(200, details);
           return;
         }
@@ -243,9 +274,39 @@ export function createApiHandler(options: ApiServerOptions = {}) {
         const githubMatch = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/github$/);
         if (githubMatch) {
           const projectId = decodeURIComponent(githubMatch[1]);
-          if (Object.keys(query).length > 0) {
-            sendError(400, 'INVALID_ARGUMENT', 'No query parameters allowed on /api/projects/:projectId/github');
+
+          for (const k of Object.keys(query)) {
+            if (k !== 'scope' && k !== 'nodeId') {
+              sendError(400, 'INVALID_ARGUMENT', `Unexpected query parameter '${k}'`);
+              return;
+            }
+          }
+
+          const rawScope = query.scope;
+          if (rawScope !== undefined && rawScope !== 'general' && rawScope !== 'worktree') {
+            sendError(400, 'INVALID_ARGUMENT', `Query parameter scope must be 'general' or 'worktree'`);
             return;
+          }
+
+          const scopeKind = rawScope ?? 'general';
+          let githubQuery: GitHubQuery;
+
+          if (scopeKind === 'general') {
+            if (query.nodeId !== undefined) {
+              sendError(400, 'INVALID_ARGUMENT', 'General scope does not accept nodeId');
+              return;
+            }
+            githubQuery = { scope: 'general' };
+          } else {
+            if (query.nodeId === undefined) {
+              sendError(400, 'INVALID_ARGUMENT', 'Worktree scope requires nodeId');
+              return;
+            }
+            if (query.nodeId.length === 0 || query.nodeId.length > 256 || !/^[a-zA-Z0-9_.-]{1,256}$/.test(query.nodeId)) {
+              sendError(400, 'INVALID_ARGUMENT', 'Query parameter nodeId must be an opaque identifier between 1 and 256 chars');
+              return;
+            }
+            githubQuery = { scope: 'worktree', nodeId: query.nodeId };
           }
 
           // Lookup project in inventory
@@ -258,7 +319,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
             return;
           }
 
-          const githubData = await collectGitHubData(project, runner);
+          const githubData = await collectGitHubData(project, githubQuery, runner);
           sendJson(200, githubData);
           return;
         }

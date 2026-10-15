@@ -2,11 +2,11 @@
 
 A read-only local dashboard for inspecting Orca multi-agent workflows, worktree relationships, agent and terminal execution, and associated GitHub repository activity.
 
-The dashboard runs locally alongside the user's installed Orca runtime. It displays projects, worktrees, orchestrators, worker agents, terminals, task progress, bounded activity feeds, and GitHub pull requests, commits, and push events.
+The dashboard runs locally alongside the user's installed Orca runtime. It displays projects, worktree groups, orchestrators, worker agents, task progress, bounded activity feeds, and GitHub pull requests, commits, and issues.
 
 ## Prerequisites
 
-- **Node.js**: Node.js runtime supporting ES modules (v20+ recommended).
+- **Node.js**: Node.js 22.13+ with built-in `node:sqlite` support.
 - **Orca CLI**: Locally installed Orca CLI binary accessible via `PATH` or discovered automatically at `%LOCALAPPDATA%\Programs\orca\resources\bin\orca.exe` (can also be customized via `ORCA_PATH` environment variable). All Orca interactions are read-only and restricted to a fixed internal command allowlist.
 - **Git**: Installed `git` binary (can also be specified via `GIT_PATH`).
 - **GitHub CLI (`gh`)**: Installed `gh` binary (can also be specified via `GH_PATH`).
@@ -72,7 +72,7 @@ npm test
 ## System Architecture & Features
 
 ### Read-Only Orca CLI Integration
-- Executes only fixed, allowlisted read commands (`status`, `project list`, `project setups`, `repo list`, `worktree ps`, `worktree list`, `terminal list`, `terminal read`, `orchestration run-list`, `worker-list`, `task-list`).
+- Executes only fixed, allowlisted read commands, including `orchestration worker-show` for effective launch metadata and `worker-read --source transcript` for supported conversation sources.
 - Spawns CLI commands directly with `shell: false`, bounded execution timeouts (8s for Orca, 12s for Git/gh), stdout caps (4 MiB), and global concurrency limits (maximum 3 concurrent processes).
 - Never performs mutations, sends orchestration messages, creates runs, or modifies runtime metadata.
 
@@ -82,17 +82,20 @@ npm test
 - **Polling is not instantaneous**: Displayed nodes, states, and activity represent periodically sampled evidence from the underlying CLI, marked with explicit source collection timestamps (`observedAt` / `attemptedAt`) and stale indicators.
 
 ### Graph & Node Details
-- **Nodes**: Worktree workspaces, orchestrators, worker agents, and terminals are organized hierarchically with containment and delegation edges.
+- **Topology**: Compact agent cards sit inside worktree boxes; orchestrators sit outside. Terminal and shell nodes are excluded from the rendered graph. Relationships use one idle/active path, with blue delivery animation on active paths.
 - **Status & Liveness**: Distinguishes agent state (`working`, `waiting`, `blocked`, `completed`, `failed`, `idle`, `unknown`) from raw workspace statuses and terminal process liveness (`live`, `exited`, `unverifiable`).
-- **Node Details**: Selecting a node inspects associated tasks, active tool invocations (`currentTool`), recent activity, and tail terminal output. Terminal output lines are bounded, sanitized, and labeled with source metadata (e.g. `screen` samples).
+- **Node Details**: Selecting a card opens an animated modal with provider identity and workspace facts. Agent/user conversation turns appear left/right with Read More for long messages. Worktrees have no conversation section; assigned tasks and terminal samples are not displayed.
+- **Conversation Sources**: Supported worker transcripts use Orca's exact source binding. Codex coordinators and Antigravity sessions can use read-only provider logs resolved through exact Orca session metadata. Local reads are bounded; tool/thinking records are excluded before the chat limit. The UI requests 20 recent turns, merges newer turns by stable identity, and hides the newer action after an exhausted check. Refresh can discover later messages. Missing provider logs remain explicitly unsupported.
+- **Model and Effort**: Cards show known effective launch/session values, including proven original launches for reused workers. Unavailable values are omitted rather than inferred from requested defaults.
+- **Layout and Settings**: Left/right sidebars and the bottom progress/activity panel can be hidden and resized. Settings in the left footer control persistent neutral dark/light themes and optional state card coloring; reduced-motion preferences are respected.
 
 ### GitHub Section
 - Inspects repository remotes resolved from local project Git configuration or registered metadata.
 - Queries `gh api` for:
-  - **Pull Requests**: Recent pull requests with open/closed and draft states.
+  - **Pull Requests**: Recent pull requests with open/closed/merged and draft states.
   - **Commits**: Recent commit history. Handles empty repositories (HTTP 409) gracefully.
-  - **Push Events**: Filtered `PushEvent` items from the repository event feed.
-- **Finite Event History**: Push events reflect a finite recent activity window (capped at 100 events by the API) and do not represent complete git audit history or immediate push notifications.
+  - **Issues**: Recent repository issues, excluding pull requests.
+- **Scope**: General uses the repository default branch; worktree scope derives the branch from a discovered worktree. Commits and PRs indicate their branch coverage; issues stay repository-wide. Push events are not displayed.
 
 ## Project Structure
 

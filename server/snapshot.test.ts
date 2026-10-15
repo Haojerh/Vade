@@ -164,4 +164,72 @@ describe('server/snapshot', () => {
     // Cleanup
     for (const u of unsubs) u();
   });
+
+  test('SnapshotManager.getNodeDetails resolves run-aware graph and caches details', async () => {
+    const projApiId = hashId('proj', 'details-test-proj');
+    const nodeId = hashId('node', 'wt-node-1');
+    globalSourceMaps.projectSourceMap.set(projApiId, {
+      sourceId: 'details-test-proj',
+      repoIds: ['repo-snap'],
+      paths: ['C:\\snap-test'],
+    });
+
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      const cmd = args.join(' ');
+      if (cmd.includes('worktree ps')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: {
+              worktrees: [
+                {
+                  worktreeId: 'wt-node-1',
+                  repoId: 'repo-snap',
+                  path: 'C:\\snap-test',
+                  workspaceStatus: 'in-progress',
+                  status: 'working',
+                  terminalVerdict: 'live',
+                  agents: [],
+                },
+              ],
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      if (cmd.includes('terminal list')) {
+        return { stdout: JSON.stringify({ ok: true, result: { terminals: [] } }), stderr: '', exitCode: 0 };
+      }
+      if (cmd.includes('orchestration run-list')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: { runs: [{ id: 'run_test_1', objective: 'Test 1' }] },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      if (cmd.includes('worker-list')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: { workers: [{ resource: { worktreeId: 'wt-node-1' } }] },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      return { stdout: '{}', stderr: '', exitCode: 0 };
+    };
+
+    const manager = new SnapshotManager(fakeRunner);
+    const runApiId = hashId('run', 'run_test_1');
+    const details = await manager.getNodeDetails(projApiId, nodeId, { runId: runApiId, limit: 100 }, fakeRunner);
+
+    assert.ok(details.node);
+    assert.equal(details.node.id, nodeId);
+    assert.ok(details.conversation);
+  });
 });

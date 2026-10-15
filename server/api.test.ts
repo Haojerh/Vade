@@ -72,6 +72,7 @@ describe('server/api', () => {
                   worktreeId: 'wt-api-1',
                   repoId: 'repo-api',
                   path: 'C:\\api-test',
+                  branch: 'main',
                   workspaceStatus: 'in-progress',
                   status: 'working',
                   terminalVerdict: 'live',
@@ -106,7 +107,7 @@ describe('server/api', () => {
           exitCode: 0,
         };
       }
-      if (cmd.includes('/pulls?') || cmd.includes('/commits?') || cmd.includes('/events?')) {
+      if (cmd.includes('/pulls?') || cmd.includes('/commits?') || cmd.includes('/issues?')) {
         return {
           stdout: JSON.stringify([]),
           stderr: '',
@@ -204,24 +205,69 @@ describe('server/api', () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.node.id, nodeApiId);
+    assert.ok(body.conversation);
+
+    // Invalid limit with non-integer prefix
+    const nonIntPrefixRes = await fetch(`${baseUrl}/api/projects/${projApiId}/nodes/${nodeApiId}?limit=50abc`);
+    assert.equal(nonIntPrefixRes.status, 400);
 
     // Invalid limit > 200
     const badLimitRes = await fetch(`${baseUrl}/api/projects/${projApiId}/nodes/${nodeApiId}?limit=999`);
     assert.equal(badLimitRes.status, 400);
+
+    // Empty query value
+    const emptyValRes = await fetch(`${baseUrl}/api/projects/${projApiId}/nodes/${nodeApiId}?limit=`);
+    assert.equal(emptyValRes.status, 400);
 
     // Unexpected query
     const badQueryRes = await fetch(`${baseUrl}/api/projects/${projApiId}/nodes/${nodeApiId}?foo=bar`);
     assert.equal(badQueryRes.status, 400);
   });
 
-  test('GET /api/projects/:projectId/github returns GitHubData', async () => {
+  test('GET /api/projects/:projectId/github supports general and worktree scopes and enforces query rules', async () => {
+    // 1. No query defaults to general scope
     const res = await fetch(`${baseUrl}/api/projects/${projApiId}/github`);
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(body.repository);
     assert.ok(body.pullRequests);
     assert.ok(body.commits);
-    assert.ok(body.pushEvents);
+    assert.ok(body.issues);
+    assert.equal(body.pushEvents, undefined); // pushEvents must be absent
+    assert.equal(body.scope.kind, 'general');
+
+    // 2. Explicit scope=general
+    const generalRes = await fetch(`${baseUrl}/api/projects/${projApiId}/github?scope=general`);
+    assert.equal(generalRes.status, 200);
+    const generalBody = await generalRes.json();
+    assert.equal(generalBody.scope.kind, 'general');
+
+    // 3. General scope with nodeId must be rejected with 400
+    const invalidGeneralRes = await fetch(
+      `${baseUrl}/api/projects/${projApiId}/github?scope=general&nodeId=${nodeApiId}`
+    );
+    assert.equal(invalidGeneralRes.status, 400);
+
+    // 4. Worktree scope with valid nodeId
+    const worktreeRes = await fetch(
+      `${baseUrl}/api/projects/${projApiId}/github?scope=worktree&nodeId=${nodeApiId}`
+    );
+    assert.equal(worktreeRes.status, 200);
+    const worktreeBody = await worktreeRes.json();
+    assert.equal(worktreeBody.scope.kind, 'worktree');
+    assert.equal(worktreeBody.scope.nodeId, nodeApiId);
+
+    // 5. Worktree scope without nodeId must be rejected with 400
+    const missingNodeIdRes = await fetch(`${baseUrl}/api/projects/${projApiId}/github?scope=worktree`);
+    assert.equal(missingNodeIdRes.status, 400);
+
+    // 6. Duplicate query parameter must be rejected with 400
+    const dupRes = await fetch(`${baseUrl}/api/projects/${projApiId}/github?scope=general&scope=worktree`);
+    assert.equal(dupRes.status, 400);
+
+    // 7. Invalid scope enum must be rejected with 400
+    const badScopeRes = await fetch(`${baseUrl}/api/projects/${projApiId}/github?scope=other`);
+    assert.equal(badScopeRes.status, 400);
   });
 
   test('Unrecognized /api route returns JSON 404, not HTML', async () => {

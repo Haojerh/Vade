@@ -49,6 +49,34 @@ describe('server/cli', () => {
     assert.doesNotThrow(() =>
       validateOrcaArgs(['orchestration', 'task-list', '--run', 'run_123', '--json'])
     );
+    assert.doesNotThrow(() =>
+      validateOrcaArgs([
+        'orchestration',
+        'worker-read',
+        '--dispatch',
+        'ctx_123',
+        '--source',
+        'transcript',
+        '--limit',
+        '100',
+        '--json',
+      ])
+    );
+    assert.doesNotThrow(() =>
+      validateOrcaArgs([
+        'orchestration',
+        'worker-read',
+        '--dispatch',
+        'ctx_abc-123',
+        '--source',
+        'transcript',
+        '--cursor',
+        'server_cursor_1',
+        '--limit',
+        '50',
+        '--json',
+      ])
+    );
 
     // Invalid commands / parameters
     assert.throws(() => validateOrcaArgs([]), /INVALID_ARGUMENT/);
@@ -57,6 +85,51 @@ describe('server/cli', () => {
     assert.throws(() => validateOrcaArgs(['status', '; rm -rf /']), /INVALID_ARGUMENT/);
     assert.throws(
       () => validateOrcaArgs(['terminal', 'read', '--terminal', 'bad handle', '--json']),
+      /INVALID_ARGUMENT/
+    );
+    assert.throws(
+      () =>
+        validateOrcaArgs([
+          'orchestration',
+          'worker-read',
+          '--dispatch',
+          'bad_id',
+          '--source',
+          'transcript',
+          '--limit',
+          '100',
+          '--json',
+        ]),
+      /INVALID_ARGUMENT/
+    );
+    assert.throws(
+      () =>
+        validateOrcaArgs([
+          'orchestration',
+          'worker-read',
+          '--dispatch',
+          'ctx_123',
+          '--source',
+          'terminal',
+          '--limit',
+          '100',
+          '--json',
+        ]),
+      /INVALID_ARGUMENT/
+    );
+    assert.throws(
+      () =>
+        validateOrcaArgs([
+          'orchestration',
+          'worker-read',
+          '--dispatch',
+          'ctx_123',
+          '--source',
+          'transcript',
+          '--limit',
+          '500',
+          '--json',
+        ]),
       /INVALID_ARGUMENT/
     );
   });
@@ -124,7 +197,7 @@ describe('server/cli', () => {
 
   test('runGh validates endpoint patterns and handles error codes', async () => {
     const fakeSuccessRunner: CommandRunner = async () => ({
-      stdout: JSON.stringify([{ id: 1, title: 'PR 1' }]),
+      stdout: JSON.stringify([{ id: 1, title: 'Item 1' }]),
       stderr: '',
       exitCode: 0,
     });
@@ -135,9 +208,42 @@ describe('server/cli', () => {
     );
     assert.equal(out.length, 1);
 
-    // Disallowed endpoint
+    // Valid branch commits endpoint
+    const commitOut = await runGh(
+      'repos/owner/repo/commits?per_page=20&sha=feat%2Fmy-feature',
+      fakeSuccessRunner
+    );
+    assert.equal(commitOut.length, 1);
+
+    // Valid PR head endpoint
+    const prOut = await runGh(
+      'repos/owner/repo/pulls?state=all&sort=updated&direction=desc&per_page=20&head=owner%3Afeat%2Fmy-feature',
+      fakeSuccessRunner
+    );
+    assert.equal(prOut.length, 1);
+
+    // Valid issues endpoint
+    const issuesOut = await runGh(
+      'repos/owner/repo/issues?state=all&sort=updated&direction=desc&per_page=20',
+      fakeSuccessRunner
+    );
+    assert.equal(issuesOut.length, 1);
+
+    // Disallowed endpoints
     await assert.rejects(
       () => runGh('users/octocat', fakeSuccessRunner),
+      (err: any) => err.issue.code === 'INVALID_ARGUMENT'
+    );
+
+    // Events endpoint is removed from allowlist
+    await assert.rejects(
+      () => runGh('repos/owner/repo/events?per_page=100', fakeSuccessRunner),
+      (err: any) => err.issue.code === 'INVALID_ARGUMENT'
+    );
+
+    // Query injection / unencoded branch attempts
+    await assert.rejects(
+      () => runGh('repos/owner/repo/commits?per_page=20&sha=main&admin=true', fakeSuccessRunner),
       (err: any) => err.issue.code === 'INVALID_ARGUMENT'
     );
 
@@ -161,8 +267,31 @@ describe('server/cli', () => {
     });
 
     await assert.rejects(
-      () => runGh('repos/owner/repo/events?per_page=100', fake404Runner),
+      () => runGh('repos/owner/repo/commits?per_page=20', fake404Runner),
       (err: any) => err.issue.code === 'GITHUB_NOT_FOUND'
+    );
+
+    // 403 rate limit vs forbidden
+    const fakeRateLimitRunner: CommandRunner = async () => ({
+      stdout: '',
+      stderr: 'API rate limit exceeded (HTTP 403)',
+      exitCode: 1,
+    });
+
+    await assert.rejects(
+      () => runGh('repos/owner/repo/commits?per_page=20', fakeRateLimitRunner),
+      (err: any) => err.issue.code === 'RATE_LIMITED'
+    );
+
+    const fakeForbiddenRunner: CommandRunner = async () => ({
+      stdout: '',
+      stderr: 'Resource access forbidden (HTTP 403)',
+      exitCode: 1,
+    });
+
+    await assert.rejects(
+      () => runGh('repos/owner/repo/commits?per_page=20', fakeForbiddenRunner),
+      (err: any) => err.issue.code === 'GITHUB_FORBIDDEN'
     );
   });
 

@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type {
   DashboardSnapshot,
   GitHubData,
+  GitHubQuery,
   Inventory,
   NodeDetails,
   Section,
@@ -26,14 +27,14 @@ export interface UseDashboardReturn {
   selectedRunId: string | null;
   setSelectedRunId: (id: string | null) => void;
 
-  // Selected Node
+  // Selected Node (for modal inspection)
   selectedNodeId: string | null;
   setSelectedNodeId: (id: string | null) => void;
   nodeDetails: NodeDetails | null;
   nodeDetailsLoading: boolean;
   nodeDetailsError: string | null;
   refreshNodeDetails: () => void;
-  loadMoreNodeOutput: () => void;
+  loadNewerConversation: () => void;
 
   // Snapshot & Graph
   snapshot: DashboardSnapshot | null;
@@ -42,10 +43,12 @@ export interface UseDashboardReturn {
   isLocallyStale: boolean;
   connectionMode: 'sse' | 'polling' | 'disconnected';
 
-  // GitHub Data
+  // GitHub Data & Scope
   gitHubData: GitHubData | null;
   gitHubLoading: boolean;
   gitHubError: string | null;
+  gitHubQuery: GitHubQuery;
+  setGitHubQuery: (query: GitHubQuery) => void;
   refreshGitHub: () => void;
 
   // Manual global refresh
@@ -81,9 +84,12 @@ export function useDashboard(): UseDashboardReturn {
   const [gitHubData, setGitHubData] = useState<GitHubData | null>(null);
   const [gitHubLoading, setGitHubLoading] = useState<boolean>(false);
   const [gitHubError, setGitHubError] = useState<string | null>(null);
+  const [gitHubQuery, setGitHubQueryState] = useState<GitHubQuery>({ scope: 'general' });
 
   // References to track generation & timing
   const selectionGeneration = useRef<number>(0);
+  const nodeGeneration = useRef<number>(0);
+  const githubGeneration = useRef<number>(0);
   const lastGraphObservedAtRef = useRef<number>(0);
   const sseFailureCount = useRef<number>(0);
   const nodeAbortRef = useRef<AbortController | null>(null);
@@ -101,9 +107,13 @@ export function useDashboard(): UseDashboardReturn {
 
   const setSelectedProjectId = useCallback((id: string) => {
     selectionGeneration.current += 1;
+    nodeGeneration.current += 1;
+    githubGeneration.current += 1;
+
     setSelectedProjectIdState(id);
     setSelectedRunIdState(null); // Reset run on project change
-    setSelectedNodeIdState(null); // Reset node on project change
+    setSelectedNodeIdState(null); // Reset node modal selection
+    setGitHubQueryState({ scope: 'general' }); // Reset GitHub scope to general
 
     // Immediately clear old snapshot, GitHub, and inspector state
     setSnapshot(null);
@@ -135,21 +145,48 @@ export function useDashboard(): UseDashboardReturn {
 
   const setSelectedRunId = useCallback((id: string | null) => {
     selectionGeneration.current += 1;
-    setSelectedRunIdState(id);
-    setSelectedNodeIdState(null);
-    setNodeDetails(null);
-    setNodeDetailsError(null);
+    nodeGeneration.current += 1;
     if (nodeAbortRef.current) {
       nodeAbortRef.current.abort();
       nodeAbortRef.current = null;
     }
+    setSelectedRunIdState(id);
+    setSelectedNodeIdState(null);
+    setNodeDetails(null);
+    setNodeDetailsLoading(false);
+    setNodeDetailsError(null);
+    setSnapshot(null);
+    setSnapshotLoading(true);
+    setSnapshotError(null);
+    lastGraphObservedAtRef.current = 0;
+    setIsLocallyStale(true);
     syncUrl(selectedProjectId, id, null);
   }, [selectedProjectId, syncUrl]);
 
   const setSelectedNodeId = useCallback((id: string | null) => {
+    nodeGeneration.current += 1;
+    if (nodeAbortRef.current) {
+      nodeAbortRef.current.abort();
+      nodeAbortRef.current = null;
+    }
     setSelectedNodeIdState(id);
+    setNodeDetails(null);
+    setNodeDetailsError(null);
+    setNodeDetailsLoading(Boolean(id));
     syncUrl(selectedProjectId, selectedRunId, id);
   }, [selectedProjectId, selectedRunId, syncUrl]);
+
+  const setGitHubQuery = useCallback((query: GitHubQuery) => {
+    githubGeneration.current += 1;
+    if (githubAbortRef.current) {
+      githubAbortRef.current.abort();
+      githubAbortRef.current = null;
+    }
+    setGitHubData(null);
+    setGitHubError(null);
+    setGitHubLoading(true);
+    setGitHubQueryState(query);
+  }, []);
 
   // Load Inventory
   const loadProjects = useCallback(async () => {
@@ -215,13 +252,11 @@ export function useDashboard(): UseDashboardReturn {
       const isSourceStale = graphMeta.stale;
       const hasIssue = Boolean(graphMeta.issue);
 
-      // Only update lastGraphObservedAtRef and clear staleness if the graph source is ready and not stale
       if (isAvailable && !isSourceStale && !hasIssue && graphMeta.observedAt) {
         const obsEpoch = new Date(graphMeta.observedAt).getTime();
         lastGraphObservedAtRef.current = isNaN(obsEpoch) ? Date.now() : obsEpoch;
         setIsLocallyStale(false);
       } else {
-        // Failed, unavailable, or stale source response
         if (graphMeta.observedAt) {
           const obsEpoch = new Date(graphMeta.observedAt).getTime();
           if (!isNaN(obsEpoch)) {
@@ -235,11 +270,49 @@ export function useDashboard(): UseDashboardReturn {
       setSnapshotLoading(false);
       setSnapshotError(null);
 
-      // Auto-align selectedRunId if none selected yet
-      if (!selectedRunId && snap.graph.data?.selectedRunId) {
-        setSelectedRunIdState(snap.graph.data.selectedRunId);
-        syncUrl(selectedProjectId, snap.graph.data.selectedRunId, selectedNodeId);
-      }
+      // Verify that if a node was selected, it still exists in the fresh snapshot
+      setSelectedNodeIdState((currentNodeId) => {
+        if (currentNodeId) {
+          const nodeExists = snap.graph.data?.nodes?.some((n) => n.id === currentNodeId);
+          if (!nodeExists) {
+            setNodeDetails(null);
+            setNodeDetailsError(null);
+            setNodeDetailsLoading(false);
+            if (nodeAbortRef.current) {
+              nodeAbortRef.current.abort();
+              nodeAbortRef.current = null;
+            }
+            syncUrl(selectedProjectId, selectedRunId, null);
+            return null;
+          }
+        }
+        return currentNodeId;
+      });
+
+      // Verify that if a run was selected, it still exists in the fresh snapshot
+      setSelectedRunIdState((currentRunId) => {
+        if (currentRunId) {
+          const runExists = snap.graph.data?.runs?.some((r) => r.id === currentRunId);
+          if (!runExists) {
+            syncUrl(selectedProjectId, null, null);
+            return null;
+          }
+        }
+        return currentRunId;
+      });
+
+      // Verify that if a worktree scope is selected in GitHub, it still exists
+      setGitHubQueryState((prev) => {
+        if (prev.scope === 'worktree') {
+          const worktreeExists = snap.graph.data?.nodes?.some(
+            (n) => n.kind === 'worktree' && n.id === prev.nodeId,
+          );
+          if (!worktreeExists) {
+            return { scope: 'general' };
+          }
+        }
+        return prev;
+      });
     };
 
     const startPollingFallback = () => {
@@ -278,7 +351,6 @@ export function useDashboard(): UseDashboardReturn {
         },
         () => {
           sseFailureCount.current += 1;
-          // After 2 consecutive failures, switch to polling fallback
           if (sseFailureCount.current >= 2) {
             startPollingFallback();
           }
@@ -293,14 +365,16 @@ export function useDashboard(): UseDashboardReturn {
       if (sseCleanup) sseCleanup();
       if (pollingTimer) clearInterval(pollingTimer);
     };
-  }, [selectedProjectId, selectedRunId, selectedNodeId, syncUrl]);
+  }, [selectedProjectId, selectedRunId]);
 
-  // Load GitHub data for selected project
+  // Load GitHub data for selected project and scope
   const loadGitHub = useCallback(async () => {
     if (!selectedProjectId) {
       setGitHubData(null);
       return;
     }
+
+    const currentGen = ++githubGeneration.current;
 
     if (githubAbortRef.current) {
       githubAbortRef.current.abort();
@@ -312,22 +386,24 @@ export function useDashboard(): UseDashboardReturn {
     setGitHubError(null);
 
     try {
-      const data = await fetchGitHub(selectedProjectId, abort.signal);
-      setGitHubData(data);
+      const data = await fetchGitHub(selectedProjectId, gitHubQuery, abort.signal);
+      if (!abort.signal.aborted && currentGen === githubGeneration.current) {
+        setGitHubData(data);
+      }
     } catch (err: any) {
-      if (!abort.signal.aborted) {
+      if (!abort.signal.aborted && currentGen === githubGeneration.current) {
         setGitHubError(err.message || 'Failed to load GitHub activity');
       }
     } finally {
-      if (!abort.signal.aborted) {
+      if (!abort.signal.aborted && currentGen === githubGeneration.current) {
         setGitHubLoading(false);
       }
     }
-  }, [selectedProjectId]);
+  }, [selectedProjectId, gitHubQuery]);
 
   useEffect(() => {
     loadGitHub();
-    const interval = setInterval(loadGitHub, 60000); // 60s background refresh
+    const interval = setInterval(loadGitHub, 60000);
     return () => {
       clearInterval(interval);
       if (githubAbortRef.current) {
@@ -344,6 +420,8 @@ export function useDashboard(): UseDashboardReturn {
         return;
       }
 
+      const currentGen = ++nodeGeneration.current;
+
       if (nodeAbortRef.current) {
         nodeAbortRef.current.abort();
       }
@@ -357,37 +435,53 @@ export function useDashboard(): UseDashboardReturn {
         const details = await fetchNodeDetails(
           selectedProjectId,
           selectedNodeId,
-          cursor,
-          100,
+          {
+            runId: selectedRunId,
+            cursor: cursor || undefined,
+            limit: 20,
+          },
           abort.signal,
         );
 
-        if (cursor && nodeDetails && details.output.data) {
-          // Append output lines for pagination
-          setNodeDetails({
-            ...details,
-            output: {
-              ...details.output,
-              data: {
-                ...details.output.data,
-                lines: [...(nodeDetails.output.data?.lines ?? []), ...details.output.data.lines],
+        if (abort.signal.aborted || currentGen !== nodeGeneration.current) return;
+
+        if (cursor && nodeDetails && details.conversation?.data && nodeDetails.conversation?.data) {
+          // If source changed, reset to new page
+          if (details.conversation.data.sourceIdentity !== nodeDetails.conversation.data.sourceIdentity) {
+            setNodeDetails(details);
+          } else {
+            // Deduplicate by message ID and merge chronologically
+            const existing = nodeDetails.conversation.data.messages;
+            const incoming = details.conversation.data.messages;
+            const existingIds = new Set(existing.map((m) => m.id));
+            const newMessages = incoming.filter((m) => !existingIds.has(m.id));
+            const combined = [...existing, ...newMessages];
+
+            setNodeDetails({
+              ...details,
+              conversation: {
+                ...details.conversation,
+                data: {
+                  ...details.conversation.data,
+                  messages: combined,
+                },
               },
-            },
-          });
+            });
+          }
         } else {
           setNodeDetails(details);
         }
       } catch (err: any) {
-        if (!abort.signal.aborted) {
+        if (!abort.signal.aborted && currentGen === nodeGeneration.current) {
           setNodeDetailsError(err.message || 'Failed to load node details');
         }
       } finally {
-        if (!abort.signal.aborted) {
+        if (!abort.signal.aborted && currentGen === nodeGeneration.current) {
           setNodeDetailsLoading(false);
         }
       }
     },
-    [selectedProjectId, selectedNodeId, nodeDetails],
+    [selectedProjectId, selectedNodeId, selectedRunId, nodeDetails],
   );
 
   useEffect(() => {
@@ -401,14 +495,14 @@ export function useDashboard(): UseDashboardReturn {
         nodeAbortRef.current.abort();
       }
     };
-  }, [selectedProjectId, selectedNodeId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedProjectId, selectedNodeId, selectedRunId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const refreshNodeDetails = useCallback(() => {
     loadNodeDetails();
   }, [loadNodeDetails]);
 
-  const loadMoreNodeOutput = useCallback(() => {
-    const nextCursor = nodeDetails?.output.data?.nextCursor;
+  const loadNewerConversation = useCallback(() => {
+    const nextCursor = nodeDetails?.conversation?.data?.nextCursor;
     if (nextCursor) {
       loadNodeDetails(nextCursor);
     }
@@ -438,7 +532,7 @@ export function useDashboard(): UseDashboardReturn {
     nodeDetailsLoading,
     nodeDetailsError,
     refreshNodeDetails,
-    loadMoreNodeOutput,
+    loadNewerConversation,
 
     snapshot,
     snapshotLoading,
@@ -449,6 +543,8 @@ export function useDashboard(): UseDashboardReturn {
     gitHubData,
     gitHubLoading,
     gitHubError,
+    gitHubQuery,
+    setGitHubQuery,
     refreshGitHub: loadGitHub,
 
     refreshAll,

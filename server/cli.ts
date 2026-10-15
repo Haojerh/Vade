@@ -274,6 +274,49 @@ export function validateOrcaArgs(args: string[]): void {
         return;
       }
     }
+
+    if (verb === 'worker-show') {
+      // orchestration worker-show --dispatch <discovered ctx_ID> --json
+      if (args[2] === '--dispatch' && /^ctx_[a-zA-Z0-9_-]+$/.test(args[3]) && args[4] === '--json') {
+        return;
+      }
+    }
+
+    if (verb === 'worker-read') {
+      // orchestration worker-read --dispatch <discovered ctx_ID> --source transcript [--cursor <server-stored upstream cursor>] --limit <1..200> --json
+      if (
+        args[2] === '--dispatch' &&
+        /^ctx_[a-zA-Z0-9_-]+$/.test(args[3]) &&
+        args[4] === '--source' &&
+        args[5] === 'transcript'
+      ) {
+        let idx = 6;
+        if (args[idx] === '--cursor') {
+          const cursorVal = args[idx + 1];
+          if (
+            typeof cursorVal !== 'string' ||
+            cursorVal.length === 0 ||
+            cursorVal.length > 512 ||
+            cursorVal.startsWith('--')
+          ) {
+            throw new CliError('INVALID_ARGUMENT', 'Invalid cursor argument');
+          }
+          idx += 2;
+        }
+        if (args[idx] === '--limit') {
+          const limitVal = args[idx + 1];
+          if (/^\d+$/.test(limitVal)) {
+            const parsed = parseInt(limitVal, 10);
+            if (parsed >= 1 && parsed <= 200) {
+              idx += 2;
+              if (idx === args.length - 1 && args[idx] === '--json') {
+                return;
+              }
+            }
+          }
+        }
+      }
+    }
   }
 
   throw new CliError('INVALID_ARGUMENT', `Orca command arguments not in allowlist: ${args.join(' ')}`);
@@ -288,6 +331,31 @@ export interface OrcaEnvelope<T> {
   };
 }
 
+export function cleanErrorMessage(msg: string): string {
+  if (!msg || typeof msg !== 'string') return '';
+  let cleaned = msg.trim();
+  while (/^\[?[A-Z_]+\]?:?\s*/.test(cleaned)) {
+    const match = cleaned.match(/^\[?([A-Z_]+)\]?:?\s*(.*)$/);
+    if (
+      match &&
+      [
+        'CLI_FAILED',
+        'CONVERSATION_UNSUPPORTED',
+        'SOURCE_CHANGED',
+        'INVALID_UPSTREAM',
+        'CLI_TIMEOUT',
+        'CLI_MISSING',
+        'INTERNAL',
+      ].includes(match[1])
+    ) {
+      cleaned = match[2].trim();
+    } else {
+      break;
+    }
+  }
+  return cleaned || msg;
+}
+
 export async function runOrca<T = any>(
   args: string[],
   runner: CommandRunner = defaultCommandRunner
@@ -298,11 +366,24 @@ export async function runOrca<T = any>(
 
   if (res.exitCode !== 0) {
     let msg = `Orca CLI exited with code ${res.exitCode}`;
+    let issueCode: ErrorCode = 'CLI_FAILED';
     try {
       const parsed = JSON.parse(res.stdout);
       if (parsed && typeof parsed.error === 'string') {
         msg = parsed.error;
-      } else if (parsed && parsed.message) {
+      } else if (parsed && parsed.error && typeof parsed.error.message === 'string') {
+        msg = parsed.error.message;
+        if (parsed.error.code === 'source_changed' || parsed.error.data?.reason === 'source_changed') {
+          issueCode = 'SOURCE_CHANGED';
+        } else if (
+          parsed.error.code === 'transcript_required' ||
+          parsed.error.data?.reason === 'provider_unsupported' ||
+          parsed.error.data?.reason === 'session_not_reported' ||
+          parsed.error.data?.reason === 'release_completed'
+        ) {
+          issueCode = 'CONVERSATION_UNSUPPORTED';
+        }
+      } else if (parsed && typeof parsed.message === 'string') {
         msg = parsed.message;
       }
     } catch {
@@ -310,7 +391,8 @@ export async function runOrca<T = any>(
         msg = res.stderr.trim().slice(0, 500);
       }
     }
-    throw new CliError('CLI_FAILED', msg, false, res.exitCode, res.stderr);
+    msg = cleanErrorMessage(msg);
+    throw new CliError(issueCode, msg, false, res.exitCode, res.stderr);
   }
 
   try {
@@ -319,8 +401,14 @@ export async function runOrca<T = any>(
       throw new Error('Expected JSON object');
     }
     if (envelope.ok !== true || envelope.result === undefined) {
-      const msg = envelope.error?.message || envelope.message || 'Orca command reported failure';
-      throw new CliError('INVALID_UPSTREAM', msg, false);
+      const msg = cleanErrorMessage(
+        envelope.error?.message || envelope.message || 'Orca command reported failure'
+      );
+      const isUnsupported =
+        envelope.error?.code === 'transcript_required' ||
+        envelope.error?.data?.reason === 'provider_unsupported' ||
+        envelope.error?.data?.reason === 'session_not_reported';
+      throw new CliError(isUnsupported ? 'CONVERSATION_UNSUPPORTED' : 'INVALID_UPSTREAM', msg, false);
     }
     return envelope as OrcaEnvelope<T>;
   } catch (err: any) {
@@ -346,19 +434,71 @@ export async function runGit(
   return res.stdout;
 }
 
+export function validateGhEndpoint(endpoint: string): void {
+  // Allowed templates:
+  // repos/{owner}/{repo}/commits?per_page=20
+  // repos/{owner}/{repo}/commits?per_page=20&sha={encodedDiscoveredBranch}
+  // repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=20
+  // repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=20&head={encodedOwnerColonBranch}
+  // repos/{owner}/{repo}/issues?state=all&sort=updated&direction=desc&per_page=20
+
+  const commitsNoSha = endpoint.match(/^repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/commits\?per_page=20$/);
+  if (commitsNoSha) return;
+
+  const commitsSha = endpoint.match(
+    /^repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/commits\?per_page=20&sha=([^&]+)$/
+  );
+  if (commitsSha) {
+    const rawSha = commitsSha[3];
+    try {
+      const decoded = decodeURIComponent(rawSha);
+      if (
+        decoded.length > 0 &&
+        decoded.length <= 256 &&
+        !/[\x00-\x1F\x7F]/.test(decoded) &&
+        encodeURIComponent(decoded) === rawSha
+      ) {
+        return;
+      }
+    } catch {}
+  }
+
+  const pullsNoHead = endpoint.match(
+    /^repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/pulls\?state=all&sort=updated&direction=desc&per_page=20$/
+  );
+  if (pullsNoHead) return;
+
+  const pullsHead = endpoint.match(
+    /^repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/pulls\?state=all&sort=updated&direction=desc&per_page=20&head=([^&]+)$/
+  );
+  if (pullsHead) {
+    const rawHead = pullsHead[3];
+    try {
+      const decoded = decodeURIComponent(rawHead);
+      if (
+        decoded.length > 0 &&
+        decoded.length <= 256 &&
+        !/[\x00-\x1F\x7F]/.test(decoded) &&
+        encodeURIComponent(decoded) === rawHead
+      ) {
+        return;
+      }
+    } catch {}
+  }
+
+  const issuesPattern = endpoint.match(
+    /^repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/issues\?state=all&sort=updated&direction=desc&per_page=20$/
+  );
+  if (issuesPattern) return;
+
+  throw new CliError('INVALID_ARGUMENT', `GitHub endpoint pattern not allowed: ${endpoint}`);
+}
+
 export async function runGh(
   endpoint: string,
   runner: CommandRunner = defaultCommandRunner
 ): Promise<any> {
-  // Validate endpoint format
-  // Allowed patterns:
-  // repos/{owner}/{repo}/pulls?state=all&sort=updated&direction=desc&per_page=20
-  // repos/{owner}/{repo}/commits?per_page=20
-  // repos/{owner}/{repo}/events?per_page=100
-  const m = endpoint.match(/^repos\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)\/(pulls\?state=all&sort=updated&direction=desc&per_page=20|commits\?per_page=20|events\?per_page=100)$/);
-  if (!m) {
-    throw new CliError('INVALID_ARGUMENT', `GitHub endpoint pattern not allowed: ${endpoint}`);
-  }
+  validateGhEndpoint(endpoint);
 
   const args = ['api', '--method', 'GET', endpoint];
   const res = await runDeduplicatedCommand(GH_PATH, args, { timeoutMs: 12000 }, runner);
@@ -370,11 +510,14 @@ export async function runGh(
       (err as any).httpStatus = 409;
       throw err;
     }
-    if (errText.includes('404') || errText.includes('Not Found')) {
+    if (errText.includes('404') || errText.includes('Not Found') || errText.includes('422')) {
       throw new CliError('GITHUB_NOT_FOUND', 'GitHub repository or resource not found', false, 404);
     }
-    if (errText.includes('403') || errText.includes('rate limit')) {
-      throw new CliError('RATE_LIMITED', 'GitHub rate limit exceeded or access forbidden', true, 403);
+    if (errText.includes('403') || errText.toLowerCase().includes('rate limit')) {
+      if (errText.toLowerCase().includes('rate limit')) {
+        throw new CliError('RATE_LIMITED', 'GitHub rate limit exceeded', true, 403);
+      }
+      throw new CliError('GITHUB_FORBIDDEN', 'GitHub access forbidden', false, 403);
     }
     if (errText.includes('401') || errText.includes('authentication') || errText.includes('auth login')) {
       throw new CliError('AUTH_REQUIRED', 'GitHub authentication required', false, 401);

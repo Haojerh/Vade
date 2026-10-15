@@ -8,7 +8,8 @@ export type ErrorCode = 'INVALID_ARGUMENT' | 'PROJECT_NOT_FOUND' | 'RUN_NOT_FOUN
   | 'CLI_MISSING' | 'CLI_TIMEOUT' | 'CLI_FAILED' | 'INVALID_UPSTREAM'
   | 'RUNTIME_UNAVAILABLE' | 'AUTH_REQUIRED' | 'REMOTE_MISSING'
   | 'REMOTE_AMBIGUOUS' | 'REMOTE_UNSUPPORTED' | 'GITHUB_FORBIDDEN'
-  | 'GITHUB_NOT_FOUND' | 'RATE_LIMITED' | 'SOURCE_CHANGED' | 'INTERNAL';
+  | 'GITHUB_NOT_FOUND' | 'RATE_LIMITED' | 'SOURCE_CHANGED' | 'INTERNAL'
+  | 'CONVERSATION_UNSUPPORTED' | 'SCOPE_UNAVAILABLE';
 
 export interface Issue {
   code: ErrorCode;
@@ -77,6 +78,8 @@ export interface Node {
   taskIds: Id[];
   preview: string | null;
   outputAvailable: boolean;
+  model?: string | null;
+  effort?: string | null;
 }
 
 export interface Edge {
@@ -145,29 +148,63 @@ export interface DashboardSnapshot {
   graph: Section<Graph>;
 }
 
+export interface ConversationMessage {
+  id: Id; // stable opaque ID from source identity + upstream message ID
+  role: 'agent' | 'user';
+  text: string; // explicit transcript text blocks only, plain text
+  at: ISO | null; // source timestamp only
+}
+
+export interface ConversationPage {
+  messages: ConversationMessage[];
+  source: 'transcript';
+  sourceIdentity: string; // opaque server hash; never a local transcript path
+  provider: string | null;
+  cursor: string | null; // input public cursor, not a raw upstream cursor
+  nextCursor: string | null;
+  limited: boolean;
+  truncated: boolean;
+  warnings: string[];
+}
+
 export interface NodeDetails {
   node: Node;
   tasks: Task[];
   activity: Activity[];
   currentTool: { name: string; input: string | null } | null;
-  output: Section<{
-    lines: string[];
-    source: 'screen' | 'terminal' | 'transcript' | 'unknown';
-    cursor: string | null;
-    nextCursor: string | null;
-    limited: boolean;
-    truncated: boolean;
-  }>;
+  conversation: Section<ConversationPage>; // replaces output entirely
+}
+
+export interface NodeDetailsQuery {
+  runId?: Id | null;
+  cursor?: string | null;
+  limit?: number;
+}
+
+export type GitHubQuery =
+  | { scope: 'general' }
+  | { scope: 'worktree'; nodeId: Id };
+
+export interface GitHubScope {
+  kind: 'general' | 'worktree';
+  nodeId: Id | null;
+  branch: string | null;
+  commits: 'default-branch' | 'branch' | 'unavailable';
+  pullRequests: 'repository' | 'head-branch' | 'unavailable';
+  issues: 'repository';
 }
 
 export interface PullRequest {
   number: number;
   title: string;
   url: string;
-  state: 'open' | 'closed';
+  state: 'open' | 'closed' | 'merged';
   draft: boolean;
   author: string | null;
-  updatedAt: ISO;
+  updatedAt: ISO | null;
+  mergedAt: ISO | null;
+  headRef: string | null;
+  baseRef: string | null;
 }
 
 export interface Commit {
@@ -178,13 +215,14 @@ export interface Commit {
   committedAt: ISO | null;
 }
 
-export interface PushEvent {
-  id: string;
-  actor: string | null;
-  ref: string | null;
-  before: string | null;
-  head: string | null;
-  at: ISO;
+export interface GitHubIssue {
+  number: number;
+  title: string;
+  url: string;
+  state: 'open' | 'closed';
+  author: string | null;
+  updatedAt: ISO | null;
+  labels: string[];
 }
 
 export interface GitHubData {
@@ -195,9 +233,10 @@ export interface GitHubData {
     remoteName: string | null;
   } | null;
   auth: 'available' | 'required' | 'unknown';
+  scope: GitHubScope;
   pullRequests: Section<PullRequest[]>;
   commits: Section<Commit[]>;
-  pushEvents: Section<PushEvent[]>;
+  issues: Section<GitHubIssue[]>;
 }
 
 export interface HealthResponse {

@@ -1,18 +1,19 @@
 import type {
   DashboardSnapshot,
   GitHubData,
+  GitHubQuery,
   HealthResponse,
   Inventory,
   NodeDetails,
+  NodeDetailsQuery,
   Section,
   ApiError,
 } from '../shared/contracts';
 
 /**
- * Strips ANSI escape sequences and non-printable control characters from terminal text.
+ * Strips ANSI escape sequences and non-printable control characters from text.
  */
 export function stripAnsi(text: string): string {
-  // Matches ANSI escape codes, OSC sequences, CSI sequences
   return text
     // eslint-disable-next-line no-control-regex
     .replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~]|\].*?(?:\x07|\x1B\\))/g, '')
@@ -68,13 +69,15 @@ export async function fetchSnapshot(
 export async function fetchNodeDetails(
   projectId: string,
   nodeId: string,
-  cursor?: string | null,
-  limit?: number,
+  options?: NodeDetailsQuery,
   signal?: AbortSignal,
 ): Promise<NodeDetails> {
   const params = new URLSearchParams();
-  if (cursor) params.set('cursor', cursor);
-  if (limit) params.set('limit', String(limit));
+  if (options?.runId) params.set('runId', options.runId);
+  if (options?.cursor) params.set('cursor', options.cursor);
+  if (options?.limit !== undefined && options?.limit !== null) {
+    params.set('limit', String(options.limit));
+  }
   const queryString = params.toString() ? `?${params.toString()}` : '';
 
   const res = await fetch(
@@ -89,9 +92,19 @@ export async function fetchNodeDetails(
 
 export async function fetchGitHub(
   projectId: string,
+  query: GitHubQuery = { scope: 'general' },
   signal?: AbortSignal,
 ): Promise<GitHubData> {
-  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/github`, {
+  const params = new URLSearchParams();
+  if (query.scope === 'worktree') {
+    params.set('scope', 'worktree');
+    params.set('nodeId', query.nodeId);
+  } else {
+    params.set('scope', 'general');
+  }
+  const queryString = params.toString() ? `?${params.toString()}` : '';
+
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/github${queryString}`, {
     headers: { Accept: 'application/json' },
     signal,
   });
@@ -118,7 +131,6 @@ export function subscribeProjectEvents(
   };
 
   es.addEventListener('snapshot', snapshotHandler);
-  // Also listen to default message in case server sends plain messages
   es.addEventListener('message', snapshotHandler);
 
   es.onerror = (e) => {

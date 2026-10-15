@@ -307,10 +307,11 @@ export class SnapshotManager {
   public async getNodeDetails(
     projectId: Id,
     nodeId: Id,
-    options?: { cursor?: string | null; limit?: number },
+    options?: { runId?: Id | null; cursor?: string | null; limit?: number },
     runner: CommandRunner = this.runner
   ): Promise<NodeDetails> {
-    const cacheKey = `${projectId}::${nodeId}::${options?.cursor ?? ''}::${options?.limit ?? 100}`;
+    const runId = options?.runId ?? null;
+    const cacheKey = `${projectId}::${runId ?? 'default'}::${nodeId}::${options?.cursor ?? ''}::${options?.limit ?? 100}`;
     const cached = this.nodeOutputCache.get(cacheKey);
     const now = Date.now();
 
@@ -318,9 +319,14 @@ export class SnapshotManager {
       return cached.data;
     }
 
-    const key = this.getCacheKey(projectId, null);
+    const key = this.getCacheKey(projectId, runId);
     const projectCache = this.projects.get(key);
-    const preloadedGraph = projectCache?.lastSnapshot?.graph.data ?? undefined;
+    let preloadedGraph = projectCache?.lastSnapshot?.graph.data;
+
+    if (!preloadedGraph) {
+      const snap = await this.getSnapshot(projectId, runId, runner);
+      preloadedGraph = snap.graph.data ?? undefined;
+    }
 
     const details = await collectNodeDetails(projectId, nodeId, { ...options, preloadedGraph }, runner);
     this.nodeOutputCache.set(cacheKey, {
