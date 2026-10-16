@@ -763,11 +763,11 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
               <div className="github-skeleton-line" />
               <div className="github-skeleton-line medium" />
             </div>)}
-          </div> : more ? (
+          </div> : more && (
             <button className="btn btn-sm" disabled={loading} onClick={() => void pagination.loadMore(activeTab)}>
               {pageError ? 'Retry loading' : 'Load 20 more'}
             </button>
-          ) : (commits.length + prs.length + issues.length > 0 && <span className="text-muted text-xs">All available activity loaded</span>)}
+          )}
         </div>
       </div>
     </>
