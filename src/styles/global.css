@@ -2637,7 +2637,7 @@ dialog.node-modal-dialog.is-closing::backdrop {
     position: relative;
     z-index: 30;
     flex-wrap: wrap;
-    padding: 6px 12px;
+    padding: 8px 12px;
     gap: 6px 10px;
     min-height: 44px;
   }
@@ -2685,7 +2685,6 @@ dialog.node-modal-dialog.is-closing::backdrop {
 
 @media (max-width: 600px) {
   .dashboard-topbar {
-    padding: 5px 8px;
     gap: 4px 6px;
   }
   .topbar-meta-controls .btn-label,
