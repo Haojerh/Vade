@@ -4,6 +4,7 @@ import { ProviderIcon } from '../../components/providers/ProviderIcon';
 import { NodeMessagePreview } from './NodeMessagePreview';
 import { compareWorkflowNodes } from './workflowOrder';
 import { sendNodeMessage } from '../../api/client';
+import { usePopoverState } from '../../hooks/usePopoverState';
 
 interface WorkflowGraphProps {
   projectId: string | null;
@@ -123,6 +124,11 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   loading,
 }) => {
   const prefersReducedMotion = usePrefersReducedMotion();
+  const resetConfirmation = usePopoverState();
+  const resetDialogRef = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    if (resetConfirmation.present) resetDialogRef.current?.showModal();
+  }, [resetConfirmation.present]);
   const [preview, setPreview] = useState<{ nodeId: string; anchor: HTMLElement } | null>(null);
   const suppressPreviewRef = useRef(false);
   const closePreview = useCallback(() => setPreview(null), []);
@@ -897,6 +903,33 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
   return (
     <section className="workflow-graph-wrapper" aria-label="Workflow relationship graph">
+      {resetConfirmation.present && (
+        <dialog
+          ref={resetDialogRef}
+          className={`node-modal-dialog reset-layout-dialog${resetConfirmation.closing ? ' is-closing' : ''}`}
+          aria-labelledby="reset-layout-title"
+          aria-describedby="reset-layout-description"
+          onCancel={(event) => { event.preventDefault(); resetConfirmation.close(); }}
+          onClick={(event) => {
+            if (event.target === event.currentTarget) {
+              const rect = event.currentTarget.getBoundingClientRect();
+              if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
+                resetConfirmation.close();
+              }
+            }
+          }}
+        >
+          <h2 id="reset-layout-title">Reset layout?</h2>
+          <p id="reset-layout-description">Return cards and worktrees in this project to their default positions. Your saved layout will be cleared.</p>
+          <div className="reset-layout-actions">
+            <button type="button" className="btn btn-secondary" autoFocus onClick={resetConfirmation.close}>Cancel</button>
+            <button type="button" className="btn btn-primary" disabled={resetConfirmation.closing} onClick={() => {
+              handleResetLayout();
+              resetConfirmation.close();
+            }}>Reset layout</button>
+          </div>
+        </dialog>
+      )}
       {projectId && !selectedNodeId && !draggingNodeId && !isCanvasPanning && !isDraggingGitHubItem && preview && nodes.some((node) => node.id === preview.nodeId) &&
         <NodeMessagePreview key={`${projectId}:${runId}:${preview.nodeId}`} projectId={projectId} runId={runId}
           nodeId={preview.nodeId} anchor={preview.anchor} onLeave={closePreview} />}
@@ -914,7 +947,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
             <button
               type="button"
               className="btn btn-secondary btn-xs btn-reset-layout"
-              onClick={handleResetLayout}
+              onClick={() => { closePreview(); resetConfirmation.toggle(); }}
               title="Reset repositioned cards and worktrees to default layout"
               aria-label="Reset repositioned cards and worktrees to default layout"
             >
