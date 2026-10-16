@@ -6,14 +6,21 @@
   --notification-text: #c2410c;
   --notification-bg: #fff7ed;
 }
-.tab-btn.github-has-new,
 .github-item.github-has-new {
   background: var(--notification-bg);
-  border: 1px solid var(--notification-text);
-  border-radius: 6px;
+  border-color: transparent;
+}
+.tab-btn.github-has-new { position: relative; }
+.tab-btn.github-has-new:not(.active)::after {
+  content: '';
+  position: absolute;
+  bottom: -2px;
+  left: 10px;
+  right: 10px;
+  height: 2px;
+  background: var(--notification-text);
 }
 .github-new-indicator { color: var(--notification-text); display: inline-flex; align-items: center; flex-shrink: 0; }
-.github-has-new .tab-count { color: var(--notification-text); background: var(--notification-bg); }
 .node-message-preview {
   position: fixed;
   z-index: 160;

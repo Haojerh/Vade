@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { observeGitHubItems } from './githubUnread';
+import { acknowledgeGitHubItem, observeGitHubItems } from './githubUnread';
 import { latestAgentMessage } from './conversation';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -28,6 +28,15 @@ test('latest agent preview excludes user turns and blank replies', () => {
     { id: 'u', role: 'user', text: 'new question', at: null },
     { id: 'empty', role: 'agent', text: ' ', at: null },
   ]), latest);
+});
+
+test('acknowledging a notification clears only that item and subsequent polls keep it read', () => {
+  const baseline = observeGitHubItems(undefined, ['old']);
+  const arrivals = observeGitHubItems(baseline, ['first', 'second', 'old']);
+  const readFirst = acknowledgeGitHubItem(arrivals, 'first');
+  assert.deepEqual([...readFirst.unread], ['second']);
+  assert.deepEqual([...observeGitHubItems(readFirst, ['first', 'second', 'old']).unread], ['second']);
+  assert.equal(arrivals.unread.size, 2);
 });
 
 test('latest message card formats Markdown and keeps local file references inert', () => {

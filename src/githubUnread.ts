@@ -5,3 +5,9 @@ export function observeGitHubItems(previous: UnreadHistory | undefined, ids: str
   return { seen: new Set([...previous.seen, ...ids]),
     unread: new Set([...previous.unread, ...ids.filter((id) => !previous.seen.has(id))]) };
 }
+
+export function acknowledgeGitHubItem(previous: UnreadHistory, id: string): UnreadHistory {
+  const unread = new Set(previous.unread);
+  unread.delete(id);
+  return { ...previous, unread };
+}

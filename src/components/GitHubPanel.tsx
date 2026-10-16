@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { observeGitHubItems, type UnreadHistory } from '../githubUnread';
+import { acknowledgeGitHubItem, observeGitHubItems, type UnreadHistory } from '../githubUnread';
 import { RefreshIcon } from './RefreshIcon';
 import type {
   GitHubData,
@@ -63,15 +63,14 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     setUnread(next);
   }, [data, projectId]);
 
-  const acknowledge = (tab: TabKey, id?: string) => {
+  const acknowledge = (tab: TabKey, id: string) => {
     const stored = history.current.get(keys[tab]);
     if (!stored) return;
-    const remaining = new Set(stored.unread);
-    if (id) remaining.delete(id); else remaining.clear();
-    history.current.set(keys[tab], { ...stored, unread: remaining });
-    setUnread((prev) => ({ ...prev, [tab]: remaining }));
+    const acknowledged = acknowledgeGitHubItem(stored, id);
+    history.current.set(keys[tab], acknowledged);
+    setUnread((prev) => ({ ...prev, [tab]: acknowledged.unread }));
   };
-  const selectTab = (tab: TabKey) => { setActiveTab(tab); acknowledge(tab); };
+  const selectTab = (tab: TabKey) => setActiveTab(tab);
   const notification = (tab: TabKey) => unread[tab].size > 0 ? (
     <span className="github-new-indicator" title={`${unread[tab].size} new items`}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -298,6 +297,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
       <div ref={tabsRef} className="github-tabs-nav" role="tablist" aria-label="GitHub activity views">
         <span className="github-tab-indicator" aria-hidden="true" style={{
           transform: `translateX(${tabLine.left}px) scaleX(${tabLine.width})`, opacity: tabLine.width ? 1 : 0,
+          background: unread[activeTab].size ? 'var(--notification-text)' : 'var(--accent)',
         }} />
         <button
           type="button"
@@ -309,7 +309,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           onClick={() => selectTab('commits')}
         >
           Commits
-          {notification('commits')}
+          {unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
           <span className="tab-count font-mono">{commits.length}</span>
         </button>
 
@@ -323,7 +323,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           onClick={() => selectTab('prs')}
         >
           PR History
-          {notification('prs')}
+          {unread.prs.size > 0 && <span className="sr-only">{unread.prs.size} new items</span>}
           <span className="tab-count font-mono">{prs.length}</span>
         </button>
 
@@ -337,7 +337,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           onClick={() => selectTab('issues')}
         >
           Issues
-          {notification('issues')}
+          {unread.issues.size > 0 && <span className="sr-only">{unread.issues.size} new items</span>}
           <span className="tab-count font-mono">{issues.length}</span>
         </button>
       </div>
