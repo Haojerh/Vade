@@ -297,7 +297,6 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
       <div ref={tabsRef} className="github-tabs-nav" role="tablist" aria-label="GitHub activity views">
         <span className="github-tab-indicator" aria-hidden="true" style={{
           transform: `translateX(${tabLine.left}px) scaleX(${tabLine.width})`, opacity: tabLine.width ? 1 : 0,
-          background: unread[activeTab].size ? 'var(--notification-text)' : 'var(--accent)',
         }} />
         <button
           type="button"

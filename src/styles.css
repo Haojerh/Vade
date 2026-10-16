@@ -2631,11 +2631,6 @@ dialog.node-modal-dialog.is-closing::backdrop {
   display: inline-block;
   flex-shrink: 0;
 }
-.provider-codex { color: #10b981; }
-.provider-antigravity { color: #38bdf8; }
-.provider-claude { color: #f97316; }
-.provider-opencode { color: #a855f7; }
-.provider-kilo { color: #eab308; }
 .provider-unknown { color: var(--text-muted); }
 
 /* 13. Narrow Viewport / Responsiveness */

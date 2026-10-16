@@ -115,7 +115,7 @@ export function normalizeUsageSnapshot(raw: any, now = Date.now()): Section<Usag
     const partial = failed || !hasData ||
       [value.session, value.weekly, value.monthly, value.fableWeekly].filter(Boolean).length !== windows.length ||
       (Array.isArray(value.buckets) && value.buckets.length !== buckets.length);
-    providers.push({ provider: key === 'opencodeGo' ? 'opencode' : key, label, windows, buckets, meta: {
+    providers.push({ provider: key === 'opencodeGo' ? 'opencode-go' : key, label, windows, buckets, meta: {
       availability: hasData && !failed ? 'ready' : 'unavailable', observedAt, attemptedAt: new Date(now).toISOString(),
       stale: hasData && (failed || !observedAt || now - Date.parse(observedAt) > STALE_MS ||
         [...windows, ...buckets].some((w) => w.resetsAt && Date.parse(w.resetsAt) <= now)),

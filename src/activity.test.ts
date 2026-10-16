@@ -5,6 +5,8 @@ import { latestAgentMessage } from './conversation';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LatestMessageCard } from './components/LatestMessageCard';
+import { normalizeProvider, ProviderIcon } from './components/ProviderIcon';
+import { ORCA_PROVIDER_IMAGES } from './components/OrcaProviderAssets';
 
 test('GitHub notifications baseline existing items and retain unread arrivals until acknowledged', () => {
   const baseline = observeGitHubItems(undefined, ['old']);
@@ -52,4 +54,20 @@ test('latest message card formats Markdown and keeps local file references inert
   assert.ok(!html.includes('file:///'));
   assert.ok(!html.includes('href="javascript:'));
   assert.ok(!html.includes('<script>'));
+});
+
+test('provider icons distinguish Gemini and Antigravity and cover Orca’s bundled catalog', () => {
+  assert.equal(normalizeProvider('gemini').id, 'gemini');
+  assert.equal(normalizeProvider('agy').id, 'antigravity');
+  assert.equal(normalizeProvider('opencode-go').id, 'opencode-go');
+  assert.equal(normalizeProvider('claude-agent-teams').id, 'claude');
+  assert.equal(normalizeProvider('dsb').id, 'dsh');
+  for (const provider of [...Object.keys(ORCA_PROVIDER_IMAGES), 'codex', 'claude', 'minimax', 'opencode-go', 'opencode', 'kilo', 'pi', 'omp', 'aider', 'copilot', 'droid']) {
+    assert.notEqual(normalizeProvider(provider).id, 'unknown', provider);
+    const html = renderToStaticMarkup(createElement(ProviderIcon, { provider }));
+    assert.ok(!html.includes('>?</text>'), provider);
+  }
+  assert.equal(normalizeProvider('unrecognized-agent').id, 'unknown');
+  const ag = renderToStaticMarkup(createElement(ProviderIcon, { provider: 'antigravity' }));
+  assert.ok(ag.includes('providers/orca/antigravity.png'));
 });
