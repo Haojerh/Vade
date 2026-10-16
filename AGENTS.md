@@ -5,9 +5,9 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 ## Project Scope & Conventions
 
 - **Application Type**: Local React 19 + TypeScript frontend with a lightweight native Node HTTP backend.
-- **Read-Only Nature**: The dashboard is strictly observational. No mutations, run injections, mail sends, task status modifications, or git pushes are performed.
-- **Contract-First Design**: The backend and frontend communicate through normative types defined in [`shared/contracts.ts`](file:///C:/Users/inter/orca/orca-visualization/shared/contracts.ts). Any updates to data models must originate or be mirrored in `shared/contracts.ts`.
-- **Zero Raw CLI Passthrough**: The server strictly validates all CLI invocation arguments against an internal allowlist in [`server/cli.ts`](file:///C:/Users/inter/orca/orca-visualization/server/cli.ts). Never accept arbitrary command flags or user inputs as executable commands.
+- **Read-Only Nature**: The dashboard is strictly observational. No runtime mutations, run injections, mail sends, or task status modifications are performed.
+- **Contract-First Design**: The backend and frontend communicate through normative types defined in [`shared/contracts.ts`](shared/contracts.ts). Any updates to data models must originate or be mirrored in `shared/contracts.ts`.
+- **Zero Raw CLI Passthrough**: The server strictly validates all CLI invocation arguments against an internal allowlist in [`server/integrations/cli.ts`](server/integrations/cli.ts). Never accept arbitrary command flags or user inputs as executable commands.
 - **Localhost & Origin Constraints**:
   - Backend runs on `127.0.0.1:4317`.
   - Frontend development runs on `127.0.0.1:5173`.
@@ -21,7 +21,7 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 
 ## HTTP Endpoints & API Contract
 
-Implemented in [`server/api.ts`](file:///C:/Users/inter/orca/orca-visualization/server/api.ts). All requests use `GET` or `HEAD`. Mutation methods (`POST`, `PUT`, `DELETE`, `PATCH`) return `405 METHOD_NOT_ALLOWED`.
+Implemented in [`server/http/api.ts`](server/http/api.ts). All requests use `GET` or `HEAD`. Mutation methods (`POST`, `PUT`, `DELETE`, `PATCH`) return `405 METHOD_NOT_ALLOWED`.
 
 | Endpoint | Query Parameters | Response / Behavior | Description |
 |---|---|---|---|
@@ -35,7 +35,7 @@ Implemented in [`server/api.ts`](file:///C:/Users/inter/orca/orca-visualization/
 
 ## Error Responses
 
-All error payloads conform to `ApiError` from [`shared/contracts.ts`](file:///C:/Users/inter/orca/orca-visualization/shared/contracts.ts):
+All error payloads conform to `ApiError` from [`shared/contracts.ts`](shared/contracts.ts):
 
 ```json
 {
@@ -53,11 +53,31 @@ Standard error codes:
 
 ## Development Conventions for Agents
 
-1. **Do Not Touch Production Git Remotes**: Never execute `git push`, create remote branches, or perform PR actions during agent tasks.
+1. **Git scope**: Do not push, create remote branches, or perform PR actions unless the user explicitly requests them. Application runtime code must never perform these actions.
 2. **Observe Concurrency Boundaries**:
-   - Backend files: [`server/`](file:///C:/Users/inter/orca/orca-visualization/server/), [`shared/contracts.ts`](file:///C:/Users/inter/orca/orca-visualization/shared/contracts.ts), [`scripts/`](file:///C:/Users/inter/orca/orca-visualization/scripts/).
-   - Frontend files: [`src/`](file:///C:/Users/inter/orca/orca-visualization/src/), [`index.html`](file:///C:/Users/inter/orca/orca-visualization/index.html).
-   - Documentation files: [`README.md`](file:///C:/Users/inter/orca/orca-visualization/README.md), [`AGENTS.md`](file:///C:/Users/inter/orca/orca-visualization/AGENTS.md).
-   - Shared coordination files: [`.orca/runs/live-dashboard/`](file:///C:/Users/inter/orca/orca-visualization/.orca/runs/live-dashboard/).
+   - Backend files: [`server/`](server/), [`shared/contracts.ts`](shared/contracts.ts), [`scripts/`](scripts/).
+   - Frontend files: [`src/`](src/), [`index.html`](index.html).
+   - Documentation files: [`README.md`](README.md), [`AGENTS.md`](AGENTS.md).
+   - Shared coordination files: [`.orca/runs/live-dashboard/`](.orca/runs/live-dashboard/).
 3. **Preserve Ongoing Work**: Respect concurrent worker edits and review findings tracked in `.orca/runs/live-dashboard/review-findings.json`.
-4. **Lifecycle Communication**: Send timely heartbeats and check the Orca orchestration mailbox at natural task boundaries.
+4. **Lifecycle Communication**: Give concise progress updates. Check an Orca mailbox only when working in an explicitly assigned orchestration task.
+
+## Source Layout and Change Rules
+
+- `src/app/`: dashboard composition, selection, subscriptions, and state.
+- `src/api/`: typed HTTP and SSE clients; no provider filesystem access.
+- `src/features/`: workflow, GitHub, usage, projects, and activity UI with feature-specific helpers.
+- `src/components/ui/` and `src/components/providers/`: reusable controls and the shared provider icon system.
+- `src/hooks/`, `src/styles/`, `src/assets/`: common hooks, styles, and attributed assets.
+- `server/http/`: request validation, routing, loopback/origin constraints, and response envelopes.
+- `server/integrations/`: fixed read-only Orca, GitHub, CLI, and usage adapters.
+- `server/providers/`: exact-session transcript parsers and effective model/effort readers.
+- `server/services/`: snapshot collection, caching, and subscriptions. `server/index.ts` stays the process entry.
+- `shared/contracts.ts` stays dependency-free and shared by both layers.
+- Keep backend tests next to their modules; frontend behavior/render tests live in `src/tests/`.
+- Read the scoped `src/AGENTS.md` or `server/AGENTS.md` before changes in that layer.
+- Prefer direct imports. Do not add barrel exports, compatibility forwarding files, or parallel provider registries for routine moves.
+- A provider icon does not imply transcript or quota support. Claim support only with exact-session evidence; never choose the newest transcript globally.
+- Treat local command XML, synthetic API errors, tool output, and thinking as non-conversation content. Render public text with the shared safe Markdown component.
+- Codex settings may precede lengthy tool records: preserve bounded recent-turn lookup and regression coverage beyond the small tail window.
+- Run `npm test` and `npm run build` after cross-layer changes or file moves. Update this map, README, imports, asset URLs, and test discovery when paths change.

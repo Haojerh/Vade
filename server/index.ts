@@ -1,4 +1,4 @@
-import { createServer } from './api.js';
+import { createServer } from './http/api.js';
 
 const PORT = 4317;
 const HOST = '127.0.0.1';
