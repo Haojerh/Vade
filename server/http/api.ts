@@ -11,9 +11,10 @@ import {
   Inventory,
   HealthResponse,
   GitHubQuery,
+  PrerequisitesStatus,
 } from '../../shared/contracts.js';
 import { CommandRunner, defaultCommandRunner, CliError } from '../integrations/cli.js';
-import { collectInventory, globalSourceMaps, sendAgentMessage } from '../integrations/orca.js';
+import { collectInventory, globalSourceMaps, sendAgentMessage, checkPrerequisites } from '../integrations/orca.js';
 import { collectGitHubData } from '../integrations/github.js';
 import { SnapshotManager, defaultSnapshotManager } from '../services/snapshot.js';
 import { UsageCollector } from '../integrations/usage.js';
@@ -27,6 +28,7 @@ export interface ApiServerOptions {
   allowedOrigins?: string[];
   devMode?: boolean;
   usageCollector?: UsageCollector;
+  checkAppInstallation?: () => boolean;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -176,6 +178,19 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           }
           const health: HealthResponse = { status: 'ok', readOnly: true };
           sendJson(200, health);
+          return;
+        }
+
+        // GET /api/prerequisites: verify Orca desktop app, CLI, and Orchestration skill.
+        if (pathname === '/api/prerequisites') {
+          if (Object.keys(query).length > 0) {
+            sendError(400, 'INVALID_ARGUMENT', 'No query parameters allowed on /api/prerequisites');
+            return;
+          }
+          const prereqs = await checkPrerequisites(runner, {
+            checkAppInstallation: options.checkAppInstallation,
+          });
+          sendJson(200, prereqs);
           return;
         }
 

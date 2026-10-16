@@ -18,6 +18,7 @@ import {
   isPathInsideRoots,
   workerLaunchCache,
   isAntigravityChatRecord,
+  checkPrerequisites,
 } from './orca.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -3321,5 +3322,110 @@ describe('server/orca', () => {
       else delete process.env.ORCA_APPDATA_DIR;
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
+  });
+
+  test('checkPrerequisites reports ready when Orca app, CLI, and orchestration skill are present', async () => {
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      const cmd = args.join(' ');
+      if (cmd.includes('status')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: {
+              app: { running: true },
+              runtime: {
+                state: 'ready',
+                appVersion: '1.4.224',
+                capabilities: ['orchestration.contract.v1', 'orchestration.federation.v1'],
+              },
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      return { stdout: '{}', stderr: '', exitCode: 0 };
+    };
+
+    const result = await checkPrerequisites(fakeRunner, { checkAppInstallation: () => true });
+    assert.equal(result.orcaApp, true);
+    assert.equal(result.orcaCli, true);
+    assert.equal(result.orchestrationSkill, true);
+    assert.equal(result.ready, true);
+    assert.equal(result.version, '1.4.224');
+    assert.equal(result.issues, undefined);
+  });
+
+  test('checkPrerequisites reports not ready and missing app when Orca desktop app is not installed', async () => {
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      const cmd = args.join(' ');
+      if (cmd.includes('status')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: {
+              // App is not running/present
+              runtime: {
+                state: 'ready',
+                capabilities: ['orchestration.contract.v1'],
+              },
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      return { stdout: '{}', stderr: '', exitCode: 0 };
+    };
+
+    const result = await checkPrerequisites(fakeRunner, { checkAppInstallation: () => false });
+    assert.equal(result.orcaApp, false);
+    assert.equal(result.ready, false);
+    assert.ok(result.issues?.some((i) => i.includes('desktop application is not installed')));
+  });
+
+  test('checkPrerequisites reports not ready when CLI is missing', async () => {
+    const fakeRunner: CommandRunner = async () => {
+      throw new CliError('CLI_MISSING', 'orca command not found');
+    };
+
+    const result = await checkPrerequisites(fakeRunner, { checkAppInstallation: () => true });
+    assert.equal(result.orcaCli, false);
+    assert.equal(result.orchestrationSkill, false);
+    assert.equal(result.ready, false);
+    assert.ok(result.issues?.some((i) => i.includes('Orca CLI is not installed')));
+  });
+
+  test('checkPrerequisites reports not ready when orchestration skill is missing', async () => {
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      const cmd = args.join(' ');
+      if (cmd.includes('status')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: {
+              app: { running: true },
+              runtime: {
+                state: 'ready',
+                capabilities: ['session.tabs.v1'], // No orchestration capability
+              },
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      if (cmd.includes('orchestration run-list')) {
+        throw new CliError('CLI_FAILED', 'unknown command orchestration');
+      }
+      return { stdout: '{}', stderr: '', exitCode: 0 };
+    };
+
+    const result = await checkPrerequisites(fakeRunner, { checkAppInstallation: () => true });
+    assert.equal(result.orcaApp, true);
+    assert.equal(result.orcaCli, true);
+    assert.equal(result.orchestrationSkill, false);
+    assert.equal(result.ready, false);
+    assert.ok(result.issues?.some((i) => i.includes('Orchestration skill is not installed')));
   });
 });

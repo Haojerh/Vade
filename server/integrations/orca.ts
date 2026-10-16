@@ -23,8 +23,9 @@ import {
   ConversationMessage,
   ConversationPage,
   ErrorCode,
+  PrerequisitesStatus,
 } from '../../shared/contracts.js';
-import { runOrca, CommandRunner, defaultCommandRunner, CliError, cleanErrorMessage } from './cli.js';
+import { runOrca, CommandRunner, defaultCommandRunner, CliError, cleanErrorMessage, ORCA_PATH } from './cli.js';
 import { readAntigravityModel } from '../providers/antigravity.js';
 import { taskProgress } from '../services/progress.js';
 import { attachmentPaste, attachmentReference, usesNativeImageAttachment } from '../services/attachments.js';
@@ -3109,5 +3110,132 @@ export async function sendAgentMessage(
   }
 
   throw new CliError('NODE_NOT_FOUND', `No active terminal or dispatch found for node ${nodeId}`);
+}
+
+export function detectOrcaAppInstallation(): boolean {
+  const localAppData = process.env.LOCALAPPDATA || '';
+  const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
+  const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
+  const homeDir = process.env.USERPROFILE || process.env.HOME || '';
+
+  const candidates: string[] = [
+    // Windows standard locations
+    path.join(localAppData, 'Programs', 'orca', 'Orca.exe'),
+    path.join(programFiles, 'Orca', 'Orca.exe'),
+    path.join(programFilesX86, 'Orca', 'Orca.exe'),
+    // Relative to ORCA_PATH if ORCA_PATH is inside an installed bundle
+    path.resolve(path.dirname(ORCA_PATH), '..', '..', 'Orca.exe'),
+    // macOS standard locations
+    '/Applications/Orca.app',
+    path.join(homeDir, 'Applications', 'Orca.app'),
+    // Linux standard locations
+    '/usr/bin/orca-app',
+    '/opt/Orca/orca',
+    '/opt/orca/orca',
+    path.join(homeDir, '.local', 'share', 'orca', 'orca'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return true;
+      }
+    } catch {
+      // Ignore filesystem errors
+    }
+  }
+  return false;
+}
+
+export interface CheckPrerequisitesOptions {
+  checkAppInstallation?: () => boolean;
+  checkCliInstallation?: () => boolean;
+}
+
+export async function checkPrerequisites(
+  runner: CommandRunner = defaultCommandRunner,
+  options?: CheckPrerequisitesOptions
+): Promise<PrerequisitesStatus> {
+  const checkApp = options?.checkAppInstallation ?? detectOrcaAppInstallation;
+  let orcaApp = checkApp();
+  let orcaCli = false;
+  let orchestrationSkill = false;
+  let version: string | null = null;
+  const issues: string[] = [];
+
+  let statusResult: any = null;
+  let cliMissing = false;
+  try {
+    const res = await runOrca<any>(['status', '--json'], runner);
+    statusResult = res?.result;
+    orcaCli = true;
+    const meta = res?._meta as any;
+    if (meta?.appVersion || statusResult?.runtime?.appVersion) {
+      version = meta?.appVersion || statusResult?.runtime?.appVersion || null;
+    }
+    if (statusResult?.app?.running === true || statusResult?.app) {
+      orcaApp = true;
+    }
+  } catch (err: any) {
+    if (
+      err?.issue?.code === 'CLI_MISSING' ||
+      (err?.message && (err.message.includes('ENOENT') || err.message.includes('not found') || err.message.includes('not recognized')))
+    ) {
+      cliMissing = true;
+      orcaCli = false;
+    } else {
+      const exists = options?.checkCliInstallation ? options.checkCliInstallation() : (path.isAbsolute(ORCA_PATH) && fs.existsSync(ORCA_PATH));
+      if (exists) {
+        orcaCli = true;
+      }
+    }
+  }
+
+  if (!cliMissing && !orcaCli) {
+    const exists = options?.checkCliInstallation ? options.checkCliInstallation() : (path.isAbsolute(ORCA_PATH) && fs.existsSync(ORCA_PATH));
+    if (exists) {
+      orcaCli = true;
+    }
+  }
+
+  // Check Orchestration Skill
+  const capabilities = statusResult?.runtime?.capabilities;
+  if (Array.isArray(capabilities)) {
+    if (capabilities.some((cap: string) => typeof cap === 'string' && cap.startsWith('orchestration.'))) {
+      orchestrationSkill = true;
+    }
+  }
+
+  if (orcaCli && !orchestrationSkill) {
+    try {
+      const orchRes = await runOrca<any>(['orchestration', 'run-list', '--limit', '1', '--json'], runner);
+      if (orchRes && (orchRes.ok || orchRes.result)) {
+        orchestrationSkill = true;
+      }
+    } catch {
+      orchestrationSkill = false;
+    }
+  }
+
+  if (!orcaApp) {
+    issues.push('Orca desktop application is not installed.');
+  }
+  if (!orcaCli) {
+    issues.push('Orca CLI is not installed or not in PATH.');
+  }
+  if (!orchestrationSkill) {
+    issues.push('Orca Orchestration skill is not installed or enabled.');
+  }
+
+  const ready = orcaApp && orcaCli && orchestrationSkill;
+
+  return {
+    orcaApp,
+    orcaCli,
+    orchestrationSkill,
+    ready,
+    version,
+    ...(issues.length > 0 ? { issues } : {}),
+  };
 }
 

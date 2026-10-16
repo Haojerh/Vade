@@ -12,6 +12,9 @@ import { ActivityPanel } from '../features/activity/ActivityPanel';
 import { GitHubPanel } from '../features/github/GitHubPanel';
 import { ResizableSidebar } from '../components/ui/ResizableSidebar';
 import { RefreshIcon } from '../components/ui/RefreshIcon';
+import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
+import { fetchPrerequisites } from '../api/client';
+import type { PrerequisitesStatus } from '../../shared/contracts';
 import '../styles/activity.css';
 
 export const App: React.FC = () => {
@@ -47,6 +50,50 @@ export const App: React.FC = () => {
 
     refreshAll,
   } = useDashboard();
+
+  // Prerequisites State (Enforces Orca App, CLI, and Orchestration skill)
+  const [prerequisites, setPrerequisites] = useState<PrerequisitesStatus | null>(null);
+  const [prerequisitesLoading, setPrerequisitesLoading] = useState<boolean>(true);
+  const [isCheckingPrerequisites, setIsCheckingPrerequisites] = useState<boolean>(false);
+
+  const checkPrerequisitesStatus = useCallback(async (isManual = false) => {
+    if (isManual) {
+      setIsCheckingPrerequisites(true);
+    }
+    try {
+      const status = await fetchPrerequisites();
+      setPrerequisites(status);
+      if (status.ready) {
+        refreshAll();
+      }
+    } catch {
+      setPrerequisites({
+        orcaApp: false,
+        orcaCli: false,
+        orchestrationSkill: false,
+        ready: false,
+        issues: ['Prerequisites check failed to connect to local server.'],
+      });
+    } finally {
+      setPrerequisitesLoading(false);
+      if (isManual) {
+        setIsCheckingPrerequisites(false);
+      }
+    }
+  }, [refreshAll]);
+
+  useEffect(() => {
+    checkPrerequisitesStatus();
+  }, [checkPrerequisitesStatus]);
+
+  useEffect(() => {
+    if (prerequisites && !prerequisites.ready) {
+      const timer = setInterval(() => {
+        checkPrerequisitesStatus();
+      }, 5000);
+      return () => clearInterval(timer);
+    }
+  }, [prerequisites, checkPrerequisitesStatus]);
 
   // 1. Persistent Theme state
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
@@ -423,6 +470,33 @@ export const App: React.FC = () => {
       return iso;
     }
   };
+
+  // If checking initially or prerequisites not met, block user with PrerequisitesGate
+  if (prerequisitesLoading && !prerequisites) {
+    return (
+      <div className="dashboard-app-root">
+        <PrerequisitesGate
+          prerequisites={null}
+          loading={true}
+          onRecheck={() => checkPrerequisitesStatus(true)}
+          isChecking={false}
+        />
+      </div>
+    );
+  }
+
+  if (prerequisites && !prerequisites.ready) {
+    return (
+      <div className="dashboard-app-root">
+        <PrerequisitesGate
+          prerequisites={prerequisites}
+          loading={prerequisitesLoading}
+          onRecheck={() => checkPrerequisitesStatus(true)}
+          isChecking={isCheckingPrerequisites}
+        />
+      </div>
+    );
+  }
 
   return (
     <div

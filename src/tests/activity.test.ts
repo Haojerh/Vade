@@ -15,7 +15,8 @@ import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/NodeDetails';
 import { buildGitHubPrompt } from '../features/workflow/WorkflowGraph';
 import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
-import type { GitHubData, Node, NodeDetails as NodeDetailsType } from '../../shared/contracts';
+import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
+import type { GitHubData, Node, NodeDetails as NodeDetailsType, PrerequisitesStatus } from '../../shared/contracts';
 
 test('GitHub refresh preserves the previous first-page boundary across all activity types', () => {
   const meta = { availability: 'ready' as const, observedAt: null, attemptedAt: '2026-10-16T00:00:00Z', stale: false, partial: true, issue: null };
@@ -441,5 +442,77 @@ test('NodeDetails does not render settings button and respects visibleSections',
     visibleSections: { ...DEFAULT_VISIBLE_SECTIONS, status: false },
   }));
   assert.equal(htmlHidden.includes('Status &amp; Workspace'), false);
+});
+
+test('PrerequisitesGate returns null when all prerequisites are ready', () => {
+  const readyStatus: PrerequisitesStatus = {
+    orcaApp: true,
+    orcaCli: true,
+    orchestrationSkill: true,
+    ready: true,
+    version: '1.4.224',
+  };
+  const html = renderToStaticMarkup(createElement(PrerequisitesGate, {
+    prerequisites: readyStatus,
+    loading: false,
+    onRecheck: () => {},
+    isChecking: false,
+  }));
+  assert.equal(html, '');
+});
+
+test('PrerequisitesGate shows "Orca not downloaded" and link to https://www.onorca.dev/ when orcaApp is missing', () => {
+  const missingApp: PrerequisitesStatus = {
+    orcaApp: false,
+    orcaCli: false,
+    orchestrationSkill: false,
+    ready: false,
+  };
+  const html = renderToStaticMarkup(createElement(PrerequisitesGate, {
+    prerequisites: missingApp,
+    loading: false,
+    onRecheck: () => {},
+    isChecking: false,
+  }));
+  assert.ok(html.includes('Orca Prerequisites Required'));
+  assert.ok(html.includes('Orca not downloaded'));
+  assert.ok(html.includes('https://www.onorca.dev/'));
+  assert.ok(html.includes('Download Orca'));
+});
+
+test('PrerequisitesGate asks to download through Orca app when CLI or Orchestration skill is missing', () => {
+  const missingCliAndSkill: PrerequisitesStatus = {
+    orcaApp: true,
+    orcaCli: false,
+    orchestrationSkill: false,
+    ready: false,
+    version: '1.4.224',
+  };
+  const html = renderToStaticMarkup(createElement(PrerequisitesGate, {
+    prerequisites: missingCliAndSkill,
+    loading: false,
+    onRecheck: () => {},
+    isChecking: false,
+  }));
+  // Orca App is detected
+  assert.ok(html.includes('Detected (v1.4.224)'));
+  // CLI is missing and asks to download through Orca app
+  assert.ok(html.includes('Orca-cli not downloaded'));
+  assert.ok(html.includes('Open the Orca desktop app, go to'));
+  assert.ok(html.includes('Settings &gt; CLI'));
+  // Skill is missing and asks to install through Orca app
+  assert.ok(html.includes('Orchestration skill not downloaded'));
+  assert.ok(html.includes('Skills'));
+});
+
+test('PrerequisitesGate renders loading state when initially loading without data', () => {
+  const html = renderToStaticMarkup(createElement(PrerequisitesGate, {
+    prerequisites: null,
+    loading: true,
+    onRecheck: () => {},
+    isChecking: false,
+  }));
+  assert.ok(html.includes('Checking Orca Environment...'));
+  assert.ok(html.includes('prereq-spinner'));
 });
 

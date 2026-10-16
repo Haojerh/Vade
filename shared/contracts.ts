@@ -285,3 +285,12 @@ export interface SendMessageResponse {
   message?: string;
 }
 
+export interface PrerequisitesStatus {
+  orcaApp: boolean;
+  orcaCli: boolean;
+  orchestrationSkill: boolean;
+  ready: boolean;
+  version?: string | null;
+  issues?: string[];
+}
+

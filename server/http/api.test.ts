@@ -24,6 +24,24 @@ describe('server/api', () => {
 
     const fakeRunner: CommandRunner = async (_exe, args) => {
       const cmd = args.join(' ');
+      if (cmd.includes('status')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: {
+              app: { running: true },
+              runtime: {
+                state: 'ready',
+                appVersion: '1.4.224',
+                capabilities: ['orchestration.contract.v1', 'orchestration.federation.v1'],
+              },
+            },
+            _meta: { runtimeId: 'rt-api', appVersion: '1.4.224' },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
       if (cmd.includes('project list')) {
         return {
           stdout: JSON.stringify({
@@ -159,6 +177,27 @@ describe('server/api', () => {
 
   test('GET /api/health with unexpected query returns 400', async () => {
     const res = await fetch(`${baseUrl}/api/health?unexpected=true`);
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.equal(body.error.code, 'INVALID_ARGUMENT');
+  });
+
+  test('GET /api/prerequisites returns 200 with readiness status', async () => {
+    const res = await fetch(`${baseUrl}/api/prerequisites`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(typeof body.orcaApp, 'boolean');
+    assert.equal(typeof body.orcaCli, 'boolean');
+    assert.equal(typeof body.orchestrationSkill, 'boolean');
+    assert.equal(typeof body.ready, 'boolean');
+    assert.equal(body.orcaApp, true);
+    assert.equal(body.orcaCli, true);
+    assert.equal(body.orchestrationSkill, true);
+    assert.equal(body.ready, true);
+  });
+
+  test('GET /api/prerequisites with unexpected query returns 400', async () => {
+    const res = await fetch(`${baseUrl}/api/prerequisites?foo=bar`);
     assert.equal(res.status, 400);
     const body = await res.json();
     assert.equal(body.error.code, 'INVALID_ARGUMENT');

@@ -9,6 +9,7 @@ import type {
   Section,
   ApiError,
   UsageData,
+  PrerequisitesStatus,
 } from '../../shared/contracts';
 
 export async function fetchUsage(signal?: AbortSignal): Promise<Section<UsageData>> {
@@ -50,6 +51,14 @@ export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse>
     signal,
   });
   return handleResponse<HealthResponse>(res);
+}
+
+export async function fetchPrerequisites(signal?: AbortSignal): Promise<PrerequisitesStatus> {
+  const res = await fetch('/api/prerequisites', {
+    headers: { Accept: 'application/json' },
+    signal,
+  });
+  return handleResponse<PrerequisitesStatus>(res);
 }
 
 export async function fetchProjects(signal?: AbortSignal): Promise<Section<Inventory>> {

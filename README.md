@@ -18,7 +18,9 @@ Open **http://127.0.0.1:5173** and select an Orca project. For GitHub activity, 
 ## Prerequisites
 
 - **Node.js**: Node.js 22.13+ with built-in `node:sqlite` support.
-- **Orca CLI**: Locally installed Orca CLI binary accessible via `PATH` or discovered automatically at `%LOCALAPPDATA%\Programs\orca\resources\bin\orca.exe` (can also be customized via `ORCA_PATH` environment variable). Commands are restricted to an internal allowlist; writes are limited to explicit agent messaging.
+- **Orca Desktop Application**: Locally installed Orca desktop application (available from [https://www.onorca.dev/](https://www.onorca.dev/)). If Orca is not detected on webapp startup, access is blocked and users are directed to download Orca from the official website.
+- **Orca CLI (`orca-cli`)**: Locally installed Orca CLI binary accessible via `PATH` or discovered automatically at `%LOCALAPPDATA%\Programs\orca\resources\bin\orca.exe` (can also be customized via `ORCA_PATH` environment variable). If missing, install it through the Orca desktop app (`Settings > CLI`).
+- **Orca Orchestration Skill**: Required for multi-agent run and task observation. If missing, install it through the Orca desktop app (`Skills > Orchestration`).
 - **Git**: Installed `git` binary (can also be specified via `GIT_PATH`).
 - **GitHub CLI (`gh`)**: Installed `gh` binary (can also be specified via `GH_PATH`).
   - **Authentication Prerequisite**: Run `gh auth login` in your terminal prior to running the application to grant read access to target repositories. No tokens, secrets, or credential values are configured or exposed in the app. If unauthenticated, GitHub panels report authentication required without failing the Orca graph collection.
