@@ -7,6 +7,18 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { LatestMessageCard } from '../features/workflow/LatestMessageCard';
 import { normalizeProvider, ProviderIcon } from '../components/providers/ProviderIcon';
 import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets';
+import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
+import type { Node } from '../../shared/contracts';
+
+test('workflow layout order remains stable when upstream activity reorders nodes', () => {
+  const main = { id: 'main', kind: 'worktree', path: 'C:\\project', state: 'idle' } as Node;
+  const child = { id: 'child', kind: 'worktree', path: 'C:/workspaces/project/test', state: 'working' } as Node;
+  const ids = (nodes: Node[]) => [...nodes].sort(compareWorkflowNodes).map((node) => node.id);
+  assert.deepEqual(ids([main, child]), ids([{ ...child, state: 'completed' }, { ...main, state: 'working' }]));
+  const a = { id: 'agent-a', kind: 'agent' } as Node;
+  const b = { id: 'agent-b', kind: 'agent' } as Node;
+  assert.deepEqual(ids([b, a]), ids([a, b]));
+});
 
 test('GitHub notifications baseline existing items and retain unread arrivals until acknowledged', () => {
   const baseline = observeGitHubItems(undefined, ['old']);

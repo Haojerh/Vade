@@ -2,6 +2,7 @@ import React, { useRef, useState, useLayoutEffect, useEffect, useMemo, useCallba
 import type { Node, Edge } from '../../../shared/contracts';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
 import { NodeMessagePreview } from './NodeMessagePreview';
+import { compareWorkflowNodes } from './workflowOrder';
 
 interface WorkflowGraphProps {
   projectId: string | null;
@@ -127,6 +128,11 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         allAgents.push(n);
       }
     }
+
+    // Runtime inventory order can change with activity; layout order must not.
+    worktrees.sort(compareWorkflowNodes);
+    orchestrators.sort(compareWorkflowNodes);
+    allAgents.sort(compareWorkflowNodes);
 
     // Map worktreeId or contains edges to group agents
     // Contains edges: source is worktree, target is agent
