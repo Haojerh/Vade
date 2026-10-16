@@ -1110,6 +1110,8 @@ button {
   gap: 12px;
   min-width: 240px;
   width: max-content;
+  max-width: 560px;
+  box-sizing: border-box;
   box-shadow: var(--shadow-sm);
   z-index: 1;
 }
@@ -1157,17 +1159,38 @@ button {
 }
 .worktree-title-group {
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
-  flex-wrap: wrap;
   min-width: 0;
+  flex: 1;
+}
+.worktree-title-group .drag-grip-icon {
+  flex-shrink: 0;
+}
+.worktree-title-group .worktree-title-label {
+  flex: 1 1 200px;
+}
+.worktree-title-group .worktree-branch-badge {
+  flex: 0 1 160px;
+  box-sizing: border-box;
 }
 .worktree-title-label {
   color: var(--text-main);
   font-size: 12px;
   font-weight: 600;
+  max-width: 200px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .worktree-branch-badge {
+  max-width: 180px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: 1px 5px;
   border-radius: 4px;
   background: var(--surface-2);

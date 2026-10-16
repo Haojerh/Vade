@@ -1129,17 +1129,12 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                     >
                       <div className="worktree-title-group">
                         <span className="drag-grip-icon" title="Drag to move worktree" aria-hidden="true">⋮⋮</span>
-                        <span className="worktree-title-label font-bold text-sm">
+                        <span className="worktree-title-label font-bold text-sm" title={`Worktree: ${wt.label}`}>
                           Worktree: {wt.label}
                         </span>
                         {wt.branch && (
-                          <span className="worktree-branch-badge font-mono text-xs">
+                          <span className="worktree-branch-badge font-mono text-xs" title={wt.branch}>
                             ⎇ {wt.branch}
-                          </span>
-                        )}
-                        {wt.workspaceStatus && (
-                          <span className="badge badge-neutral text-xs">
-                            {wt.workspaceStatus}
                           </span>
                         )}
                       </div>
