@@ -27,9 +27,9 @@
   --edge-idle: #3a3a3a;
   --edge-active: #3b82f6;
 
-  --state-working-bg: rgba(16, 185, 129, 0.12);
-  --state-working-text: #34d399;
-  --state-working-border: rgba(16, 185, 129, 0.3);
+  --state-working-bg: rgba(59, 130, 246, 0.12);
+  --state-working-text: #60a5fa;
+  --state-working-border: rgba(59, 130, 246, 0.3);
 
   --state-waiting-bg: rgba(245, 158, 11, 0.12);
   --state-waiting-text: #fbbf24;
@@ -104,9 +104,9 @@
   --edge-idle: #d1d5db;
   --edge-active: #2563eb;
 
-  --state-working-bg: #ecfdf5;
-  --state-working-text: #047857;
-  --state-working-border: #a7f3d0;
+  --state-working-bg: #eff6ff;
+  --state-working-text: #1d4ed8;
+  --state-working-border: #93c5fd;
 
   --state-waiting-bg: #fffbeb;
   --state-waiting-text: #b45309;
@@ -325,6 +325,7 @@ button {
   from { transform: rotate(0deg); }
   to { transform: rotate(360deg); }
 }
+.refresh-icon.spin { animation-duration: 600ms; }
 
 /* 4. Root Application Layout */
 .dashboard-app-root {
@@ -1828,10 +1829,57 @@ button {
   flex-shrink: 0;
 }
 .rail-footer-controls {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 8px;
 }
+.rail-usage {
+  border-top: 1px solid var(--border-subtle);
+  padding-top: 10px;
+  color: var(--text-main);
+  font-size: 12px;
+  min-width: 0;
+}
+.usage-header, .usage-provider-heading, .usage-compact-windows, .usage-meter {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.usage-header { margin-bottom: 6px; }
+.usage-display-label { margin-left: auto; font-size: 11px; color: var(--text-secondary); }
+.usage-refresh { width: 28px; height: 28px; padding: 0; flex-shrink: 0; background: transparent; }
+.usage-status-row, .usage-status-trigger, .usage-status-provider { display: flex; align-items: center; gap: 6px; }
+.usage-status-row { justify-content: space-between; }
+.usage-status-trigger { border: 0; background: transparent; color: var(--text-main); cursor: pointer; padding: 4px 0; flex-wrap: wrap; gap: 8px 12px; text-align: left; font-size: 11px; }
+.usage-status-provider { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.usage-status-trigger:hover { color: var(--state-working-text); }
+.usage-status-trigger:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; border-radius: 3px; }
+.usage-popover { position: fixed; z-index: 150; display: flex; flex-direction: column; padding: 14px 16px; background: var(--surface-1); color: var(--text-main); border: 1px solid var(--border-strong); border-radius: 14px; font-size: 12px; box-shadow: var(--shadow-lg); }
+.usage-popover:focus { outline: none; }
+.usage-popover .usage-header { flex-shrink: 0; }
+.usage-popover .usage-header > .font-semibold { font-size: 14px; }
+.usage-provider-list { min-height: 0; overflow-y: auto; scrollbar-gutter: stable; }
+.usage-provider { padding: 8px 0; }
+.usage-provider + .usage-provider { border-top: 1px solid var(--border-subtle); }
+.usage-unavailable summary { cursor: pointer; border-radius: 4px; }
+.usage-unavailable summary:focus-visible {
+  outline: 2px solid var(--focus-ring); outline-offset: 3px;
+}
+.usage-compact-windows { flex-wrap: wrap; gap: 6px 12px; }
+.usage-meter { display: grid; grid-template-columns: minmax(0, 1fr) 44px 4ch; min-width: 0; font-size: 11px; }
+.usage-meter-compact { grid-template-columns: max-content 44px 4ch; }
+.usage-window-label { color: var(--text-secondary); overflow-wrap: anywhere; }
+.usage-track { height: 5px; width: 44px; background: var(--border-strong); border-radius: 3px; overflow: hidden; }
+.usage-track > span { display: block; height: 100%; background: var(--state-working-text); border-radius: inherit; }
+.usage-track.usage-high > span { background: var(--state-failed-text); }
+.usage-percent { font-variant-numeric: tabular-nums; white-space: nowrap; text-align: right; }
+.usage-provider-details { padding-left: 21px; display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.usage-note { color: var(--text-secondary); font-size: 11px; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
+.usage-stale { color: var(--state-waiting-text); font-size: 10px; }
+.usage-source { color: var(--text-secondary); font-size: 10px; margin-top: 6px; }
+.usage-unavailable { color: var(--text-secondary); font-size: 11px; margin-top: 6px; }
+.usage-unavailable .usage-note { margin-top: 6px; }
 .footer-settings-popover {
   position: absolute;
   bottom: calc(100% + 8px);
@@ -1856,6 +1904,7 @@ button {
   justify-content: space-between;
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-main);
 }
 .footer-settings-popover .settings-option-row {
   display: flex;
@@ -1879,6 +1928,23 @@ button {
   justify-content: space-between;
   align-items: center;
   cursor: default;
+}
+
+.usage-popover,
+.footer-settings-popover,
+.settings-popover {
+  transform-origin: bottom left;
+  animation: popoverEnter 180ms var(--ease-out);
+}
+@keyframes popoverEnter {
+  from { opacity: 0; transform: translateY(6px) scale(0.98); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-popover,
+  .footer-settings-popover,
+  .settings-popover,
+  .usage-refresh .spin { animation: none; }
 }
 
 /* 10. Right Sidebar: GitHubPanel */

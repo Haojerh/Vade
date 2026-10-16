@@ -1,4 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { observeGitHubItems, type UnreadHistory } from '../githubUnread';
+import { RefreshIcon } from './RefreshIcon';
 import type {
   GitHubData,
   GitHubQuery,
@@ -10,6 +12,7 @@ import type {
 } from '../../shared/contracts';
 
 interface GitHubPanelProps {
+  projectId: string | null;
   data: GitHubData | null;
   loading: boolean;
   error: string | null;
@@ -23,6 +26,7 @@ interface GitHubPanelProps {
 type TabKey = 'commits' | 'prs' | 'issues';
 
 export const GitHubPanel: React.FC<GitHubPanelProps> = ({
+  projectId,
   data,
   loading,
   error,
@@ -33,6 +37,49 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   onCollapse,
 }) => {
   const [activeTab, setActiveTab] = useState<TabKey>('commits');
+  const history = useRef(new Map<string, UnreadHistory>());
+  const [unread, setUnread] = useState<Record<TabKey, Set<string>>>({ commits: new Set(), prs: new Set(), issues: new Set() });
+  const repositoryKey = `${projectId}::${data?.repository?.url ?? ''}`;
+  const scopeKey = `${data?.scope.kind}::${data?.scope.nodeId}::${data?.scope.branch}`;
+  const keys = { commits: `${repositoryKey}::commits::${scopeKey}`, prs: `${repositoryKey}::prs::${scopeKey}`, issues: `${repositoryKey}::issues` };
+
+  useEffect(() => {
+    const next = { commits: new Set<string>(), prs: new Set<string>(), issues: new Set<string>() };
+    if (data?.repository) {
+      const sections = { commits: data.commits, prs: data.pullRequests, issues: data.issues };
+      for (const tab of ['commits', 'prs', 'issues'] as const) {
+        const section = sections[tab];
+        let stored = history.current.get(keys[tab]);
+        if (!section.meta.stale && !section.meta.issue && ['ready', 'empty'].includes(section.meta.availability) && section.data) {
+          const ids = tab === 'commits' ? data.commits.data?.map((item) => item.sha) ?? [] :
+            tab === 'prs' ? data.pullRequests.data?.map((item) => String(item.number)) ?? [] :
+              data.issues.data?.map((item) => String(item.number)) ?? [];
+          stored = observeGitHubItems(stored, ids);
+          history.current.set(keys[tab], stored);
+        }
+        next[tab] = stored?.unread ?? new Set();
+      }
+    }
+    setUnread(next);
+  }, [data, projectId]);
+
+  const acknowledge = (tab: TabKey, id?: string) => {
+    const stored = history.current.get(keys[tab]);
+    if (!stored) return;
+    const remaining = new Set(stored.unread);
+    if (id) remaining.delete(id); else remaining.clear();
+    history.current.set(keys[tab], { ...stored, unread: remaining });
+    setUnread((prev) => ({ ...prev, [tab]: remaining }));
+  };
+  const selectTab = (tab: TabKey) => { setActiveTab(tab); acknowledge(tab); };
+  const notification = (tab: TabKey) => unread[tab].size > 0 ? (
+    <span className="github-new-indicator" title={`${unread[tab].size} new items`}>
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
+      </svg>
+      <span className="sr-only">{unread[tab].size} new items</span>
+    </span>
+  ) : null;
 
   const repo = data?.repository;
   const auth = data?.auth ?? 'unknown';
@@ -100,6 +147,28 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const commits = data?.commits?.data ?? [];
   const prs = data?.pullRequests?.data ?? [];
   const issues = data?.issues?.data ?? [];
+  const tabsRef = useRef<HTMLDivElement>(null);
+  const [tabLine, setTabLine] = useState({ left: 0, width: 0 });
+  useLayoutEffect(() => {
+    const bar = tabsRef.current;
+    if (!bar) return;
+    const measure = () => {
+      const tab = bar.querySelector<HTMLButtonElement>('[aria-selected="true"]');
+      if (!tab) return;
+      const style = getComputedStyle(tab);
+      const paddingLeft = parseFloat(style.paddingLeft);
+      const paddingRight = parseFloat(style.paddingRight);
+      const left = tab.offsetLeft + tab.clientLeft + paddingLeft;
+      const width = Math.max(0, tab.clientWidth - paddingLeft - paddingRight);
+      setTabLine((current) => current.left === left && current.width === width
+        ? current : { left, width });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    bar.querySelectorAll('button').forEach((tab) => observer.observe(tab));
+    return () => observer.disconnect();
+  }, [activeTab]);
 
   return (
     <section className="dashboard-panel github-panel" aria-labelledby="github-panel-title">
@@ -132,20 +201,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
               aria-label="Refresh GitHub activity"
               title="Refresh GitHub activity"
             >
-              <svg
-                className={loading ? 'spin' : ''}
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-              </svg>
+              <RefreshIcon busy={loading} />
             </button>
             {onCollapse && (
               <button
@@ -239,17 +295,21 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
       </div>
 
       {/* Tabs: Commits, Pull Requests, Issues */}
-      <div className="github-tabs-nav" role="tablist" aria-label="GitHub activity views">
+      <div ref={tabsRef} className="github-tabs-nav" role="tablist" aria-label="GitHub activity views">
+        <span className="github-tab-indicator" aria-hidden="true" style={{
+          transform: `translateX(${tabLine.left}px) scaleX(${tabLine.width})`, opacity: tabLine.width ? 1 : 0,
+        }} />
         <button
           type="button"
           role="tab"
           id="tab-commits"
           aria-selected={activeTab === 'commits'}
           aria-controls="panel-commits"
-          className={`tab-btn ${activeTab === 'commits' ? 'active' : ''}`}
-          onClick={() => setActiveTab('commits')}
+          className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${unread.commits.size ? 'github-has-new' : ''}`}
+          onClick={() => selectTab('commits')}
         >
           Commits
+          {notification('commits')}
           <span className="tab-count font-mono">{commits.length}</span>
         </button>
 
@@ -259,10 +319,11 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           id="tab-prs"
           aria-selected={activeTab === 'prs'}
           aria-controls="panel-prs"
-          className={`tab-btn ${activeTab === 'prs' ? 'active' : ''}`}
-          onClick={() => setActiveTab('prs')}
+          className={`tab-btn ${activeTab === 'prs' ? 'active' : ''} ${unread.prs.size ? 'github-has-new' : ''}`}
+          onClick={() => selectTab('prs')}
         >
           PR History
+          {notification('prs')}
           <span className="tab-count font-mono">{prs.length}</span>
         </button>
 
@@ -272,10 +333,11 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           id="tab-issues"
           aria-selected={activeTab === 'issues'}
           aria-controls="panel-issues"
-          className={`tab-btn ${activeTab === 'issues' ? 'active' : ''}`}
-          onClick={() => setActiveTab('issues')}
+          className={`tab-btn ${activeTab === 'issues' ? 'active' : ''} ${unread.issues.size ? 'github-has-new' : ''}`}
+          onClick={() => selectTab('issues')}
         >
           Issues
+          {notification('issues')}
           <span className="tab-count font-mono">{issues.length}</span>
         </button>
       </div>
@@ -302,7 +364,8 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             ) : (
               <ul className="github-item-list" role="list">
                 {commits.map((c: Commit) => (
-                  <li key={c.sha} className="github-item">
+                  <li key={c.sha} className={`github-item ${unread.commits.has(c.sha) ? 'github-has-new' : ''}`} onClick={() => acknowledge('commits', c.sha)}>
+                    {unread.commits.has(c.sha) && notification('commits')}
                     <div className="item-row-header">
                       <span className="font-mono commit-sha">
                         {c.sha.slice(0, 7)}
@@ -356,7 +419,8 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             ) : (
               <ul className="github-item-list" role="list">
                 {prs.map((pr: PullRequest) => (
-                  <li key={pr.number} className="github-item">
+                  <li key={pr.number} className={`github-item ${unread.prs.has(String(pr.number)) ? 'github-has-new' : ''}`} onClick={() => acknowledge('prs', String(pr.number))}>
+                    {unread.prs.has(String(pr.number)) && notification('prs')}
                     <div className="item-row-header">
                       <div className="item-badges">
                         <span className={`badge badge-pr-${pr.state}`}>
@@ -426,7 +490,8 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             ) : (
               <ul className="github-item-list" role="list">
                 {issues.map((issue: GitHubIssue) => (
-                  <li key={issue.number} className="github-item">
+                  <li key={issue.number} className={`github-item ${unread.issues.has(String(issue.number)) ? 'github-has-new' : ''}`} onClick={() => acknowledge('issues', String(issue.number))}>
+                    {unread.issues.has(String(issue.number)) && notification('issues')}
                     <div className="item-row-header">
                       <div className="item-badges">
                         <span className={`badge badge-issue-${issue.state}`}>

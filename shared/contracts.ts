@@ -50,6 +50,24 @@ export interface Inventory {
   projects: Project[];
 }
 
+export interface UsageWindow {
+  label: string;
+  usedPercent: number;
+  resetsAt: ISO | null;
+}
+
+export interface ProviderUsage {
+  provider: string;
+  label: string;
+  windows: UsageWindow[];
+  buckets: UsageWindow[];
+  meta: SourceMeta;
+}
+
+export interface UsageData {
+  providers: ProviderUsage[];
+}
+
 export interface Run {
   id: Id;
   sourceRunId: string;

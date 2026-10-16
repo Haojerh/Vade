@@ -16,6 +16,7 @@ import { CommandRunner, defaultCommandRunner, CliError } from './cli.js';
 import { collectInventory, globalSourceMaps } from './orca.js';
 import { collectGitHubData } from './github.js';
 import { SnapshotManager, defaultSnapshotManager } from './snapshot.js';
+import { UsageCollector } from './usage.js';
 
 export interface ApiServerOptions {
   runner?: CommandRunner;
@@ -23,6 +24,7 @@ export interface ApiServerOptions {
   distDir?: string;
   allowedOrigins?: string[];
   devMode?: boolean;
+  usageCollector?: UsageCollector;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -40,6 +42,7 @@ const MIME_TYPES: Record<string, string> = {
 export function createApiHandler(options: ApiServerOptions = {}) {
   const runner = options.runner ?? defaultCommandRunner;
   const snapshotManager = options.snapshotManager ?? defaultSnapshotManager;
+  const usageCollector = options.usageCollector ?? new UsageCollector();
   const distDir = options.distDir ?? path.resolve(process.cwd(), 'dist');
   const allowedOrigins = new Set(
     options.allowedOrigins ?? [
@@ -138,6 +141,16 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           return;
         }
 
+        // GET /api/usage: shared host quota snapshot, independent of project selection.
+        if (pathname === '/api/usage') {
+          if (Object.keys(query).length) {
+            sendError(400, 'INVALID_ARGUMENT', 'Usage endpoint does not accept query parameters');
+            return;
+          }
+          sendJson(200, await usageCollector.get());
+          return;
+        }
+
         // GET /api/projects
         if (pathname === '/api/projects') {
           if (Object.keys(query).length > 0) {
@@ -189,14 +202,6 @@ export function createApiHandler(options: ApiServerOptions = {}) {
             'X-Accel-Buffering': 'no',
           });
 
-          // Send immediate initial snapshot
-          try {
-            const initialSnapshot = await snapshotManager.getSnapshot(projectId, runId, runner);
-            res.write(`event: snapshot\nid: ${initialSnapshot.revision}\ndata: ${JSON.stringify(initialSnapshot)}\n\n`);
-          } catch (err: any) {
-            // Error represented in stream or initial response
-          }
-
           // Comment heartbeat every 15s
           const heartbeatTimer = setInterval(() => {
             res.write(': heartbeat\n\n');
@@ -217,6 +222,20 @@ export function createApiHandler(options: ApiServerOptions = {}) {
             clearInterval(heartbeatTimer);
             if (unsubscribe) unsubscribe();
           });
+
+          // Send cached evidence immediately; collect fresh data without blanking the graph.
+          try {
+            const cachedSnapshot = snapshotManager.getCachedSnapshot(projectId, runId);
+            if (cachedSnapshot) {
+              res.write(`event: snapshot\nid: ${cachedSnapshot.revision}\ndata: ${JSON.stringify(cachedSnapshot)}\n\n`);
+            }
+            const initialSnapshot = await snapshotManager.getSnapshot(projectId, runId, runner);
+            if (!res.destroyed) {
+              res.write(`event: snapshot\nid: ${initialSnapshot.revision}\ndata: ${JSON.stringify(initialSnapshot)}\n\n`);
+            }
+          } catch (err: any) {
+            // Background polling can recover transient collection failures.
+          }
           return;
         }
 

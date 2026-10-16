@@ -26,6 +26,7 @@ Implemented in [`server/api.ts`](file:///C:/Users/inter/orca/orca-visualization/
 | Endpoint | Query Parameters | Response / Behavior | Description |
 |---|---|---|---|
 | `GET /api/health` | None | `HealthResponse` (`{ status: 'ok', readOnly: true }`) | Process liveness check for backend server. |
+| `GET /api/usage` | None | `Section<UsageData>` | Normalized host-wide provider quota windows and buckets, read from Orca's cached runtime snapshot; no account identities or credentials. |
 | `GET /api/projects` | None | `Section<Inventory>` | Lists registered Orca projects (Git repos and folder workspaces). |
 | `GET /api/projects/:projectId/snapshot` | `runId` (optional) | `DashboardSnapshot` | Full project dashboard graph, runtime metadata, nodes, edges, tasks, progress, and activity. |
 | `GET /api/projects/:projectId/events` | `runId` (optional) | SSE stream (`text/event-stream`) | Pushes full snapshot updates as `event: snapshot` with `id: <revision>` on collection changes. 15s comment heartbeats (`: heartbeat`). |

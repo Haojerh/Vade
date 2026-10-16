@@ -5,10 +5,12 @@ import { createServer } from './api.js';
 import { CommandRunner } from './cli.js';
 import { SnapshotManager } from './snapshot.js';
 import { hashId, globalSourceMaps } from './orca.js';
+import { UsageCollector } from './usage.js';
 
 describe('server/api', () => {
   let server: http.Server;
   let baseUrl: string;
+  let graphGate: Promise<void> | null = null;
 
   const projApiId = hashId('proj', 'github:testowner/testrepo');
   const nodeApiId = hashId('node', 'wt-api-1');
@@ -63,6 +65,7 @@ describe('server/api', () => {
         return { stdout: JSON.stringify({ ok: true, result: [] }), stderr: '', exitCode: 0 };
       }
       if (cmd.includes('worktree ps')) {
+        if (graphGate) await graphGate;
         return {
           stdout: JSON.stringify({
             ok: true,
@@ -118,7 +121,11 @@ describe('server/api', () => {
     };
 
     const snapshotManager = new SnapshotManager(fakeRunner);
-    server = createServer({ runner: fakeRunner, snapshotManager });
+    server = createServer({ runner: fakeRunner, snapshotManager, usageCollector: new UsageCollector(async () => ({
+      accounts: [{ email: 'private@example.test', token: 'secret' }],
+      rateLimits: { codex: { provider: 'codex', status: 'ok', updatedAt: Date.now(),
+        session: { usedPercent: 8, resetsAt: Date.now() + 3600000 } } },
+    })) });
 
     await new Promise<void>((resolve) => {
       server.listen(0, '127.0.0.1', () => {
@@ -179,6 +186,18 @@ describe('server/api', () => {
     assert.ok(body.data);
     assert.ok(Array.isArray(body.data.projects));
     assert.equal(body.meta.availability, 'ready');
+  });
+
+  test('GET /api/usage returns only normalized quotas and rejects arbitrary RPC input', async () => {
+    const res = await fetch(`${baseUrl}/api/usage`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.data.providers[0].windows[0].usedPercent, 8);
+    assert.ok(!JSON.stringify(body).includes('private@example.test'));
+    assert.ok(!JSON.stringify(body).includes('secret'));
+    assert.equal((await fetch(`${baseUrl}/api/usage?method=accounts.selectCodex`)).status, 400);
+    assert.equal((await fetch(`${baseUrl}/api/usage`, { method: 'POST' })).status, 405);
+    assert.equal((await fetch(`${baseUrl}/api/usage`, { headers: { Origin: 'https://example.test' } })).status, 403);
   });
 
   test('GET /api/projects/:projectId/snapshot returns DashboardSnapshot', async () => {
@@ -292,5 +311,25 @@ describe('server/api', () => {
     assert.match(text, /data: \{/);
 
     reader.cancel();
+  });
+
+  test('SSE sends cached snapshot before a blocked fresh collection finishes', async () => {
+    await fetch(`${baseUrl}/api/projects/${projApiId}/snapshot`);
+    let release!: () => void;
+    graphGate = new Promise<void>((resolve) => { release = resolve; });
+    const abort = new AbortController();
+    const timeout = setTimeout(() => abort.abort(), 1000);
+    try {
+      const res = await fetch(`${baseUrl}/api/projects/${projApiId}/events`, { signal: abort.signal });
+      const reader = res.body!.getReader();
+      const { value } = await reader.read();
+      assert.match(new TextDecoder().decode(value), /event: snapshot/);
+      await reader.cancel();
+    } finally {
+      clearTimeout(timeout);
+      graphGate = null;
+      release();
+      abort.abort();
+    }
   });
 });

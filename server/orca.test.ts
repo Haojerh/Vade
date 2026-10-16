@@ -24,8 +24,147 @@ import path from 'node:path';
 import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
 import { CommandRunner, CliError } from './cli.js';
+import { readAntigravityModel } from './antigravity.js';
 
 describe('server/orca', () => {
+  test('resumed Antigravity uses latest exact-conversation generation metadata without launch settings', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-antigravity-model-'));
+    const oldAppData = process.env.ORCA_APPDATA_DIR;
+    const oldGemini = process.env.GEMINI_APPDATA_DIR;
+    process.env.ORCA_APPDATA_DIR = dir;
+    process.env.GEMINI_APPDATA_DIR = dir;
+    let db: DatabaseSync | null = null;
+    const varint = (value: number) => {
+      const bytes: number[] = [];
+      do { bytes.push((value & 127) | (value > 127 ? 128 : 0)); value = Math.floor(value / 128); } while (value);
+      return Buffer.from(bytes);
+    };
+    const field = (number: number, value: Uint8Array | string) => {
+      const data = Buffer.from(value);
+      return Buffer.concat([varint(number * 8 + 2), varint(data.length), data]);
+    };
+    try {
+      fs.mkdirSync(path.join(dir, 'conversations'));
+      const hooks = path.join(dir, 'orca', 'agent-hooks');
+      fs.mkdirSync(hooks, { recursive: true });
+      db = new DatabaseSync(path.join(dir, 'conversations', 'resumed-session.db'));
+      db.exec(`CREATE TABLE trajectory_meta (cascade_id TEXT); INSERT INTO trajectory_meta VALUES ('resumed-session');
+        CREATE TABLE gen_metadata (idx INTEGER PRIMARY KEY, data BLOB);`);
+      const insert = db.prepare('INSERT INTO gen_metadata VALUES (?, ?)');
+      insert.run(1, field(3, field(28, 'gemini-3.8-flash-low')));
+      insert.run(2, Buffer.concat([
+        field(3, field(28, 'gemini-4-argon-high')),
+        field(9, 'Prompt mentions claude-opus-5-5-low; this is not metadata'),
+      ]));
+      fs.writeFileSync(path.join(hooks, 'last-status.json'), JSON.stringify({ entries: {
+        'resumed-pane': { source: 'antigravity', worktreeId: 'ag-wt', payload: {},
+          providerSession: { key: 'conversation_id', id: 'resumed-session' } },
+      } }));
+      const projectId = hashId('proj', 'antigravity-resumed');
+      globalSourceMaps.projectSourceMap.set(projectId, { sourceId: 'antigravity-resumed', repoIds: ['ag-repo'], paths: [] });
+      const runner: CommandRunner = async (_exe, args) => {
+        const result = args[0] === 'worktree' ? { worktrees: [{
+          worktreeId: 'ag-wt', repoId: 'ag-repo', agents: [{ paneKey: 'resumed-pane', agentType: 'antigravity' }],
+        }] } : args[0] === 'terminal' ? { terminals: [] } : { runs: [] };
+        return { stdout: JSON.stringify({ ok: true, result }), stderr: '', exitCode: 0 };
+      };
+      const graph = (await collectGraph(projectId, null, runner)).graph;
+      const node = graph.nodes.find((n) => n.agentType === 'antigravity')!;
+      assert.equal(node.model, 'gemini-4-argon');
+      assert.equal(node.effort, 'high');
+      assert.equal(readAntigravityModel('resumed-session', () => false), null, 'Reject disallowed paths');
+      assert.equal(readAntigravityModel('../resumed-session', () => true), null, 'Reject traversal');
+      db.exec("UPDATE trajectory_meta SET cascade_id = 'another-session'");
+      assert.equal(readAntigravityModel('resumed-session', () => true), null, 'Reject cross-session DB');
+      db.exec("UPDATE trajectory_meta SET cascade_id = 'resumed-session'");
+      insert.run(3, field(1, field(19, 'backend-model')));
+      assert.deepEqual(readAntigravityModel('resumed-session', () => true), { model: 'backend-model', effort: null });
+      insert.run(4, Buffer.from([0x1a, 0xff]));
+      assert.equal(readAntigravityModel('resumed-session', () => true), null, 'Malformed current metadata cannot reuse older settings');
+      insert.run(5, Buffer.alloc(2097153));
+      assert.equal(readAntigravityModel('resumed-session', () => true), null, 'Bound metadata reads');
+    } finally {
+      db?.close();
+      if (oldAppData === undefined) delete process.env.ORCA_APPDATA_DIR;
+      else process.env.ORCA_APPDATA_DIR = oldAppData;
+      if (oldGemini === undefined) delete process.env.GEMINI_APPDATA_DIR;
+      else process.env.GEMINI_APPDATA_DIR = oldGemini;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('standalone Codex nodes get current model and effort from exact pane hooks and recent turn context', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-standalone-model-'));
+    const oldAppData = process.env.ORCA_APPDATA_DIR;
+    process.env.ORCA_APPDATA_DIR = dir;
+    try {
+      const hooks = path.join(dir, 'orca', 'agent-hooks');
+      fs.mkdirSync(hooks, { recursive: true });
+      const transcript = path.join(dir, 'session.jsonl');
+      const turn = (model: string, effort: string) => JSON.stringify({ type: 'turn_context', payload: { model, effort } }) + '\n';
+      fs.writeFileSync(transcript, turn('old-model', 'low') + ' '.repeat(600 * 1024) + '\n' + turn('current-model', 'high'));
+      const entries = {
+        'standalone-pane': { paneKey: 'standalone-pane', source: 'codex', worktreeId: 'standalone-wt',
+          payload: { model: 'hook-model' }, providerSession: { id: 'exact-session', transcriptPath: transcript } },
+        'effort-pane': { paneKey: 'effort-pane', source: 'codex', payload: { effort: 'medium' } },
+        'wrong-pane': { source: 'codex', worktreeId: 'other-wt', payload: { model: 'wrong-model', effort: 'low' } },
+      };
+      fs.writeFileSync(path.join(hooks, 'last-status.json'), JSON.stringify({ entries }));
+      const projectId = hashId('proj', 'standalone-model');
+      globalSourceMaps.projectSourceMap.set(projectId, { sourceId: 'standalone-model', repoIds: ['standalone-repo'], paths: [] });
+      const runner: CommandRunner = async (_exe, args) => {
+        const result = args[0] === 'worktree' ? { worktrees: [{
+          worktreeId: 'standalone-wt', repoId: 'standalone-repo',
+          agents: ['standalone-pane', 'effort-pane', 'wrong-pane'].map((paneKey) => ({ paneKey, agentType: 'codex' })),
+        }] } : args[0] === 'terminal' ? { terminals: [] } : { runs: [] };
+        return { stdout: JSON.stringify({ ok: true, result }), stderr: '', exitCode: 0 };
+      };
+      const first = await collectGraph(projectId, null, runner);
+      const node = first.graph.nodes.find((n) => n.id === hashId('node', 'standalone-pane'))!;
+      assert.equal(node.model, 'current-model');
+      assert.equal(node.effort, 'high');
+      const effortOnly = first.graph.nodes.find((n) => n.id === hashId('node', 'effort-pane'))!;
+      assert.equal(effortOnly.model, null);
+      assert.equal(effortOnly.effort, 'medium');
+      assert.equal(first.graph.nodes.find((n) => n.id === hashId('node', 'wrong-pane'))?.model, null);
+      fs.appendFileSync(transcript, turn('changed-model', 'xhigh'));
+      const next = await collectGraph(projectId, null, runner);
+      assert.equal(next.graph.nodes.find((n) => n.id === node.id)?.model, 'changed-model');
+      assert.equal(next.graph.nodes.find((n) => n.id === node.id)?.effort, 'xhigh');
+    } finally {
+      if (oldAppData === undefined) delete process.env.ORCA_APPDATA_DIR;
+      else process.env.ORCA_APPDATA_DIR = oldAppData;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('collectGraph discovers terminals concurrently with at most four CLI calls in flight', async () => {
+    const projectId = hashId('proj', 'parallel-terminals');
+    globalSourceMaps.projectSourceMap.set(projectId, { sourceId: 'parallel-terminals', repoIds: ['parallel-repo'], paths: [] });
+    let inFlight = 0;
+    let peak = 0;
+    let terminalCalls = 0;
+    const runner: CommandRunner = async (_exe, args) => {
+      let result: object = {};
+      if (args[0] === 'worktree') {
+        result = { worktrees: Array.from({ length: 6 }, (_, i) => ({ worktreeId: `parallel-${i}`, repoId: 'parallel-repo', agents: [] })) };
+      } else if (args[0] === 'terminal') {
+        terminalCalls++;
+        peak = Math.max(peak, ++inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        inFlight--;
+        result = { terminals: [] };
+      } else {
+        result = { runs: [] };
+      }
+      return { stdout: JSON.stringify({ ok: true, result }), stderr: '', exitCode: 0 };
+    };
+    const { graph } = await collectGraph(projectId, null, runner);
+    assert.equal(graph.nodes.length, 6);
+    assert.equal(terminalCalls, 6);
+    assert.equal(peak, 4);
+  });
+
   test('Antigravity recent window counts public chat turns before limiting and skips tool/thinking records', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-chat-window-'));
     const file = path.join(dir, 'transcript.jsonl');
@@ -1543,6 +1682,31 @@ describe('server/orca', () => {
       );
       assert.equal(detailsPage3.conversation.data?.messages.length, 0);
       assert.equal(detailsPage3.conversation.data?.nextCursor, null);
+
+      // The same exact pane provenance works for Codex outside orchestration.
+      const standaloneGraph = {
+        ...mockGraph,
+        runs: [],
+        selectedRunId: null,
+        nodes: [{ ...mockCoordNode, kind: 'agent' as const, runId: null }],
+      };
+      fs.appendFileSync(transcriptFile, '\n' + JSON.stringify({
+        type: 'response_item', payload: { role: 'assistant', channel: 'analysis',
+          content: [{ type: 'output_text', text: 'Private reasoning' }] },
+      }) + '\n');
+      const standalone = await collectNodeDetails(projId, coordNodeId, { preloadedGraph: standaloneGraph });
+      assert.equal(standalone.conversation.meta.availability, 'ready');
+      assert.equal(standalone.conversation.data?.provider, 'codex');
+      assert.ok(standalone.conversation.data?.messages.some((m) => m.text === 'New user message'));
+      assert.ok(!standalone.conversation.data?.messages.some((m) => m.text === 'Private reasoning'));
+      const continuation = await collectNodeDetails(projId, coordNodeId, {
+        preloadedGraph: standaloneGraph, cursor: standalone.conversation.data?.nextCursor,
+      });
+      assert.equal(continuation.conversation.data?.messages.length, 0);
+
+      globalSourceMaps.nodeSourceMap.set(coordNodeId, { paneKey: 'different-pane' });
+      const unbound = await collectNodeDetails(projId, coordNodeId, { preloadedGraph: standaloneGraph });
+      assert.equal(unbound.conversation.meta.availability, 'unsupported');
     } finally {
       if (oldAppData !== undefined) {
         process.env.ORCA_APPDATA_DIR = oldAppData;

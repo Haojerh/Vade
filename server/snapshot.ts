@@ -37,6 +37,10 @@ export class SnapshotManager {
     return `${projectId}::${runId ?? 'default'}`;
   }
 
+  public getCachedSnapshot(projectId: Id, runId?: Id | null): DashboardSnapshot | null {
+    return this.projects.get(this.getCacheKey(projectId, runId))?.lastSnapshot ?? null;
+  }
+
   private evictIfNecessary(): void {
     if (this.projects.size < MAX_PROJECTS) return;
     // Evict oldest accessed project without subscribers

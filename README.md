@@ -75,6 +75,7 @@ npm test
 - Executes only fixed, allowlisted read commands, including `orchestration worker-show` for effective launch metadata and `worker-read --source transcript` for supported conversation sources.
 - Spawns CLI commands directly with `shell: false`, bounded execution timeouts (8s for Orca, 12s for Git/gh), stdout caps (4 MiB), and global concurrency limits (maximum 3 concurrent processes).
 - Never performs mutations, sends orchestration messages, creates runs, or modifies runtime metadata.
+- **Provider usage**: The bottom of the left sidebar shows compact usage percentages; clicking opens quota windows, model pools, and reset times. `/api/usage` reads Orca's local `accounts.list` snapshot with `refreshUsage: false` over its authenticated local pipe/socket. Only normalized quotas reach the browser; account credentials and identities are omitted. Reads are capped at 1 MiB, time out after 5s, and are cached for 10s. The UI rereads every minute, independent of project switches; Orca owns provider polling. Missing or failed observations stay unavailable or stale.
 
 ### Polling Cadence & Freshness
 - Graph and runtime status are periodically polled by the backend snapshot manager (e.g., active worktree/agent processes every 3s, run tasks/workers every 5s, metadata and terminal joins every 15s, project inventory every 30s).

@@ -25,6 +25,7 @@ import {
   ErrorCode,
 } from '../shared/contracts.js';
 import { runOrca, CommandRunner, defaultCommandRunner, CliError, cleanErrorMessage } from './cli.js';
+import { readAntigravityModel } from './antigravity.js';
 
 export function hashId(prefix: string, key: string): Id {
   const h = crypto.createHash('sha256').update(key).digest('base64url').slice(0, 20);
@@ -669,6 +670,19 @@ export async function collectGraph(
     const terminalHandleToNodeId = new Map<string, Id>();
     const worktreeIdToNodeId = new Map<string, Id>();
 
+    // Bound concurrent CLI processes while avoiding one terminal-list delay per worktree.
+    const terminalsByWorktree = new Map<string, any[]>();
+    for (let start = 0; start < projectWorktrees.length; start += 4) {
+      await Promise.all(projectWorktrees.slice(start, start + 4).map(async (wt) => {
+        try {
+          const termRes = await runOrca<any>(['terminal', 'list', '--worktree', `id:${wt.worktreeId}`, '--limit', '100', '--json'], runner);
+          terminalsByWorktree.set(wt.worktreeId, termRes.result?.terminals ?? []);
+        } catch {
+          partial = true;
+        }
+      }));
+    }
+
     // B. Build worktree nodes and fetch terminals for each worktree
     for (const wt of projectWorktrees) {
       const wtNodeId = hashId('node', wt.worktreeId || wt.path || wt.displayName);
@@ -703,14 +717,7 @@ export async function collectGraph(
       globalSourceMaps.nodeSourceMap.set(wtNodeId, { worktreeId: wt.worktreeId });
 
       // Fetch terminals in this worktree
-      let terminals: any[] = [];
-      try {
-        const termRes = await runOrca<any>(['terminal', 'list', '--worktree', `id:${wt.worktreeId}`, '--limit', '100', '--json'], runner);
-        terminals = termRes.result?.terminals ?? [];
-      } catch {
-        // partial terminal discovery
-        partial = true;
-      }
+      const terminals = terminalsByWorktree.get(wt.worktreeId) ?? [];
 
       // Index terminals by tabId:leafId and by handle
       const terminalByPane = new Map<string, any>();
@@ -1437,6 +1444,54 @@ export async function collectGraph(
       }
     }
 
+    // Pane hooks cover agents launched outside orchestration as well as workers.
+    try {
+      const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
+      const statusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
+      const entries = JSON.parse(fs.readFileSync(statusPath, 'utf-8')).entries ?? {};
+      for (const node of nodes) {
+        if (node.kind !== 'agent' && node.kind !== 'orchestrator') continue;
+        const paneKey = globalSourceMaps.nodeSourceMap.get(node.id)?.paneKey;
+        const entry = paneKey ? entries[paneKey] : null;
+        if (!entry || (entry.worktreeId && entry.worktreeId !== node.worktreeId) ||
+          (entry.source && node.agentType && entry.source !== node.agentType)) continue;
+        const model = entry.payload?.model;
+        const effort = entry.payload?.effort;
+        if (typeof model === 'string' && model.trim()) node.model = model;
+        if (typeof effort === 'string' && effort.trim()) node.effort = effort;
+
+        if (node.agentType === 'antigravity' && entry.providerSession?.key === 'conversation_id' &&
+          typeof entry.providerSession.id === 'string') {
+          const observed = readAntigravityModel(entry.providerSession.id,
+            (file) => isPathInsideRoots(file, getAllowedTranscriptRoots()));
+          if (observed) {
+            node.model = observed.model;
+            node.effort = observed.effort;
+          }
+        }
+
+        // Codex records effective settings per turn. Inspect the recent bounded
+        // window so model/effort changes are reflected rather than the first turn.
+        const transcriptPath = entry.providerSession?.transcriptPath;
+        if (node.agentType !== 'codex' || !entry.providerSession?.id ||
+          typeof transcriptPath !== 'string' || !isPathInsideRoots(transcriptPath, getAllowedTranscriptRoots())) continue;
+        try {
+          const recent = await readBoundedTranscriptLines(transcriptPath, null, 1, 512 * 1024, false, (line) => {
+            try { return JSON.parse(line).type === 'turn_context'; } catch { return false; }
+          });
+          if (recent.lines.length) {
+            const context = JSON.parse(recent.lines[0]).payload;
+            if (typeof context?.model === 'string' && context.model.trim()) node.model = context.model;
+            if (typeof context?.effort === 'string' && context.effort.trim()) node.effort = context.effort;
+          }
+        } catch {
+          // Keep other observed metadata when the transcript is unavailable.
+        }
+      }
+    } catch {
+      // Hooks are optional; CLI metadata remains available.
+    }
+
     // J. Progress calculation
     let completed = 0;
     let failed = 0;
@@ -1554,15 +1609,15 @@ export async function collectGraph(
   }
 }
 
-// Helper to resolve coordinator transcript via local exact-source metadata
-// Helper to resolve coordinator transcript via local exact-source metadata
+// Resolve Codex transcripts from exact coordinator or standalone pane metadata.
 export async function resolveCoordinatorConversation(
   projectId: Id,
   node: Node,
   activeRun: Run | null,
-  options?: { cursor?: string | null; limit?: number }
+  options?: { cursor?: string | null; limit?: number },
+  standaloneAgent = false
 ): Promise<Section<ConversationPage>> {
-  if (!activeRun) {
+  if (!activeRun && !standaloneAgent) {
     return {
       data: null,
       meta: {
@@ -1581,7 +1636,7 @@ export async function resolveCoordinatorConversation(
   }
 
   // Validate actual node-associated run
-  if (node.runId && activeRun.id && node.runId !== activeRun.id) {
+  if (node.runId && activeRun?.id && node.runId !== activeRun.id) {
     return {
       data: null,
       meta: {
@@ -1608,7 +1663,7 @@ export async function resolveCoordinatorConversation(
   let coordHandle: string | null = null;
   let coordSessionId: string | null = null;
 
-  if (fs.existsSync(orchDbPath)) {
+  if (!standaloneAgent && activeRun && fs.existsSync(orchDbPath)) {
     let odb: DatabaseSync | null = null;
     try {
       odb = new DatabaseSync(orchDbPath, { readOnly: true });
@@ -1632,7 +1687,7 @@ export async function resolveCoordinatorConversation(
   }
 
   const nodeSource = globalSourceMaps.nodeSourceMap.get(node.id);
-  let isMatchingCoord = activeRun.coordinatorNodeId === node.id;
+  let isMatchingCoord = standaloneAgent || activeRun?.coordinatorNodeId === node.id;
   if (coordHandle && nodeSource?.handle === coordHandle) {
     isMatchingCoord = true;
   }
@@ -1651,7 +1706,7 @@ export async function resolveCoordinatorConversation(
         partial: false,
         issue: {
           code: 'CONVERSATION_UNSUPPORTED',
-          message: `Node ${node.id} is not the coordinator for run ${activeRun.sourceRunId}`,
+          message: `Node ${node.id} is not the coordinator for run ${activeRun?.sourceRunId}`,
           retryable: false,
         },
       },
@@ -1674,7 +1729,8 @@ export async function resolveCoordinatorConversation(
       const rawStatus = fs.readFileSync(lastStatusPath, 'utf-8');
       const statusData = JSON.parse(rawStatus);
       const entry = statusData.entries?.[coordPaneKey];
-      if (entry && entry.providerSession) {
+      if (entry && entry.providerSession && (!standaloneAgent ||
+        (entry.source === 'codex' && typeof entry.providerSession.id === 'string' && entry.providerSession.id.trim()))) {
         if (typeof entry.providerSession.transcriptPath === 'string') {
           transcriptPath = entry.providerSession.transcriptPath;
         }
@@ -1720,7 +1776,7 @@ export async function resolveCoordinatorConversation(
         partial: false,
         issue: {
           code: 'CONVERSATION_UNSUPPORTED',
-          message: 'Coordinator transcript provenance not found or unsupported',
+          message: standaloneAgent ? 'Agent transcript provenance not found or unsupported' : 'Coordinator transcript provenance not found or unsupported',
           retryable: false,
         },
       },
@@ -1835,6 +1891,7 @@ export async function resolveCoordinatorConversation(
       const line = lines[idx];
       try {
         const obj = JSON.parse(line);
+        if (obj.payload?.role === 'assistant' && obj.payload?.channel === 'analysis') continue;
         if (obj.type === 'response_item' && (obj.payload?.type === 'message' || Boolean(obj.payload?.role))) {
           const payloadRole = obj.payload.role;
           if (payloadRole !== 'assistant' && payloadRole !== 'user') {
@@ -1953,6 +2010,7 @@ export function isCodexChatRecord(line: string): boolean {
   try {
     const record = JSON.parse(line);
     const payload = record.payload;
+    if (payload?.role === 'assistant' && payload?.channel === 'analysis') return false;
     if (record.type !== 'response_item' || !['user', 'assistant'].includes(payload?.role)) return false;
     return Array.isArray(payload.content) && payload.content.some((block: any) => {
       if (!['input_text', 'output_text', 'text'].includes(block?.type) || typeof block.text !== 'string') return false;
@@ -2450,8 +2508,9 @@ export async function collectNodeDetails(
 
   let conversationSection: Section<ConversationPage>;
 
-  if (isCoordinator || storedCursorObj?.sourceMode === 'coordinator-transcript') {
-    conversationSection = await resolveCoordinatorConversation(projectId, node, activeRun, options);
+  if (isCoordinator || storedCursorObj?.sourceMode === 'coordinator-transcript' ||
+    (node.agentType === 'codex' && !binding?.ambiguous && !binding?.dispatchId)) {
+    conversationSection = await resolveCoordinatorConversation(projectId, node, activeRun, options, !isCoordinator);
     return {
       node,
       tasks,

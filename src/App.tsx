@@ -7,6 +7,8 @@ import { ProgressPanel } from './components/ProgressPanel';
 import { ActivityPanel } from './components/ActivityPanel';
 import { GitHubPanel } from './components/GitHubPanel';
 import { ResizableSidebar } from './components/ResizableSidebar';
+import { RefreshIcon } from './components/RefreshIcon';
+import './activity.css';
 
 export const App: React.FC = () => {
   const {
@@ -536,20 +538,7 @@ export const App: React.FC = () => {
               aria-label="Refresh all data"
               title="Refresh all data"
             >
-              <svg
-                className={`refresh-icon ${snapshotLoading ? 'spin' : ''}`}
-                width="13"
-                height="13"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-              </svg>
+              <RefreshIcon busy={snapshotLoading || projectsLoading} size={13} />
               <span className="btn-label">Refresh</span>
             </button>
 
@@ -606,6 +595,9 @@ export const App: React.FC = () => {
           {/* Graph Viewport (Self-contained scrollable canvas) */}
           <div className="stage-graph-container">
             <WorkflowGraph
+              projectId={selectedProjectId}
+              runId={selectedRunId}
+              loading={!snapshot && (snapshotLoading || projectsLoading)}
               nodes={graph?.nodes ?? []}
               edges={graph?.edges ?? []}
               selectedNodeId={selectedNodeId}
@@ -745,6 +737,7 @@ export const App: React.FC = () => {
         ariaLabel="GitHub Activity Sidebar"
       >
         <GitHubPanel
+          projectId={selectedProjectId}
           data={gitHubData}
           loading={gitHubLoading}
           error={gitHubError}

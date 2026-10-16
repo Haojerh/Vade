@@ -1,13 +1,17 @@
 import React, { useRef, useState, useLayoutEffect, useEffect, useMemo, useCallback } from 'react';
 import type { Node, Edge } from '../../shared/contracts';
 import { ProviderIcon } from './ProviderIcon';
+import { NodeMessagePreview } from './NodeMessagePreview';
 
 interface WorkflowGraphProps {
+  projectId: string | null;
+  runId: string | null;
   nodes: Node[];
   edges: Edge[];
   selectedNodeId: string | null;
   onSelectNode: (id: string) => void;
   isLocallyStale: boolean;
+  loading: boolean;
 }
 
 interface AnchorBox {
@@ -58,13 +62,46 @@ function usePrefersReducedMotion(): boolean {
 }
 
 export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
+  projectId,
+  runId,
   nodes,
   edges,
   selectedNodeId,
   onSelectNode,
   isLocallyStale,
+  loading,
 }) => {
   const prefersReducedMotion = usePrefersReducedMotion();
+  const [preview, setPreview] = useState<{ nodeId: string; anchor: HTMLElement } | null>(null);
+  const suppressPreviewRef = useRef(false);
+  const closePreview = useCallback(() => setPreview(null), []);
+  const showPreview = (nodeId: string, anchor: HTMLElement) => {
+    setPreview((current) => current?.nodeId === nodeId ? current : { nodeId, anchor });
+  };
+  const previewEvents = (node: Node) => ({
+    onPointerEnter: (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (!selectedNodeId && !suppressPreviewRef.current && event.pointerType !== 'touch') showPreview(node.id, event.currentTarget);
+    },
+    onPointerMove: (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (selectedNodeId || event.pointerType === 'touch') return;
+      suppressPreviewRef.current = false;
+      showPreview(node.id, event.currentTarget);
+    },
+    onPointerLeave: (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (!selectedNodeId) suppressPreviewRef.current = false;
+      if (!(event.relatedTarget instanceof Element) || !event.relatedTarget.closest('.node-message-preview')) closePreview();
+    },
+    onFocus: (event: React.FocusEvent<HTMLButtonElement>) => {
+      if (!selectedNodeId && !suppressPreviewRef.current) showPreview(node.id, event.currentTarget);
+    },
+    onKeyDown: (event: React.KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key === 'Tab') suppressPreviewRef.current = false;
+    },
+    onClickCapture: () => { suppressPreviewRef.current = true; closePreview(); },
+    onBlur: closePreview,
+    onPointerDown: closePreview,
+    'aria-describedby': preview?.nodeId === node.id ? 'node-message-preview' : undefined,
+  });
   const containerRef = useRef<HTMLDivElement>(null);
   const layoutRef = useRef<HTMLDivElement>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
@@ -397,6 +434,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
   return (
     <section className="workflow-graph-wrapper" aria-label="Workflow relationship graph">
+      {projectId && !selectedNodeId && preview && nodes.some((node) => node.id === preview.nodeId) &&
+        <NodeMessagePreview key={`${projectId}:${runId}:${preview.nodeId}`} projectId={projectId} runId={runId}
+          nodeId={preview.nodeId} anchor={preview.anchor} onLeave={closePreview} />}
       {/* Graph Toolbar */}
       <div className="graph-toolbar">
         <div className="toolbar-title-group">
@@ -446,9 +486,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
         {nodes.length === 0 ? (
           <div className="graph-empty-state">
-            <div className="empty-title">No Workflow Nodes Discovered</div>
+            <div className="empty-title" role="status">{loading ? 'Loading Workflow Nodes…' : 'No Workflow Nodes Discovered'}</div>
             <div className="empty-description">
-              No active worktrees, orchestrators, or agents found for this project snapshot.
+              {loading ? 'Reading project worktrees, orchestrators, and agents.' : 'No active worktrees, orchestrators, or agents found for this project snapshot.'}
             </div>
           </div>
         ) : (
@@ -469,6 +509,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                     const isSelected = orch.id === selectedNodeId;
                     return (
                       <button
+                        {...previewEvents(orch)}
                         key={orch.id}
                         ref={(el) => registerRef(orch.id, el)}
                         type="button"
@@ -504,14 +545,14 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                               {orch.taskIds.length > 0 ? `${orch.taskIds.length} tasks` : orch.liveness}
                             </span>
                           </div>
-                          {orch.model && orch.model !== 'unknown' && (
+                          {((orch.model && orch.model !== 'unknown') || (orch.effort && orch.effort !== 'unknown')) && (
                             <div
                               className="node-footer-right"
-                              title={`${orch.model}${orch.effort && orch.effort !== 'unknown' ? ` • effort: ${orch.effort}` : ''}`}
+                              title={`${orch.model && orch.model !== 'unknown' ? orch.model : 'Model unavailable'}${orch.effort && orch.effort !== 'unknown' ? ` • effort: ${orch.effort}` : ''}`}
                             >
-                              <span className="node-model-name font-mono text-xs">
+                              {orch.model && orch.model !== 'unknown' && <span className="node-model-name font-mono text-xs">
                                 {orch.model}
-                              </span>
+                              </span>}
                               {orch.effort && orch.effort !== 'unknown' && (
                                 <span className="node-effort-badge font-mono text-xs">
                                   {orch.effort}
@@ -581,6 +622,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                           const isAgSelected = ag.id === selectedNodeId;
                           return (
                             <button
+                              {...previewEvents(ag)}
                               key={ag.id}
                               ref={(el) => registerRef(ag.id, el)}
                               type="button"
@@ -618,14 +660,14 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                                   </span>
                                   {ag.stale && <span className="badge-stale-tag">Stale</span>}
                                 </div>
-                                {ag.model && ag.model !== 'unknown' && (
+                                {((ag.model && ag.model !== 'unknown') || (ag.effort && ag.effort !== 'unknown')) && (
                                   <div
                                     className="node-footer-right"
-                                    title={`${ag.model}${ag.effort && ag.effort !== 'unknown' ? ` • effort: ${ag.effort}` : ''}`}
+                                    title={`${ag.model && ag.model !== 'unknown' ? ag.model : 'Model unavailable'}${ag.effort && ag.effort !== 'unknown' ? ` • effort: ${ag.effort}` : ''}`}
                                   >
-                                    <span className="node-model-name font-mono text-xs">
+                                    {ag.model && ag.model !== 'unknown' && <span className="node-model-name font-mono text-xs">
                                       {ag.model}
-                                    </span>
+                                    </span>}
                                     {ag.effort && ag.effort !== 'unknown' && (
                                       <span className="node-effort-badge font-mono text-xs">
                                         {ag.effort}
@@ -656,6 +698,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                       const isAgSelected = ag.id === selectedNodeId;
                       return (
                         <button
+                          {...previewEvents(ag)}
                           key={ag.id}
                           ref={(el) => registerRef(ag.id, el)}
                           type="button"
@@ -686,14 +729,14 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                                 {ag.taskIds.length > 0 ? `${ag.taskIds.length} tasks` : ag.liveness}
                               </span>
                             </div>
-                            {ag.model && ag.model !== 'unknown' && (
+                            {((ag.model && ag.model !== 'unknown') || (ag.effort && ag.effort !== 'unknown')) && (
                               <div
                                 className="node-footer-right"
-                                title={`${ag.model}${ag.effort && ag.effort !== 'unknown' ? ` • effort: ${ag.effort}` : ''}`}
+                                title={`${ag.model && ag.model !== 'unknown' ? ag.model : 'Model unavailable'}${ag.effort && ag.effort !== 'unknown' ? ` • effort: ${ag.effort}` : ''}`}
                               >
-                                <span className="node-model-name font-mono text-xs">
+                                {ag.model && ag.model !== 'unknown' && <span className="node-model-name font-mono text-xs">
                                   {ag.model}
-                                </span>
+                                </span>}
                                 {ag.effort && ag.effort !== 'unknown' && (
                                   <span className="node-effort-badge font-mono text-xs">
                                     {ag.effort}

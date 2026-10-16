@@ -71,6 +71,9 @@ describe('server/snapshot', () => {
     assert.ok(s1.revision.startsWith('rev_'));
     assert.equal(s1.projectId, projApiId);
     assert.equal(s1.graph.data?.nodes.length, 1);
+    assert.equal(manager.getCachedSnapshot(projApiId), s1);
+    assert.equal(manager.getCachedSnapshot('other-project'), null);
+    assert.equal(manager.getCachedSnapshot(projApiId, 'other-run'), null);
   });
 
   test('R2: Preserves last successful graph as stale on failure and does not hardcode version', async () => {

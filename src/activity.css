@@ -1,0 +1,95 @@
+:root {
+  --notification-text: #fb923c;
+  --notification-bg: rgba(249, 115, 22, 0.14);
+}
+:root[data-theme="light"] {
+  --notification-text: #c2410c;
+  --notification-bg: #fff7ed;
+}
+.tab-btn.github-has-new,
+.github-item.github-has-new {
+  background: var(--notification-bg);
+  border: 1px solid var(--notification-text);
+  border-radius: 6px;
+}
+.github-new-indicator { color: var(--notification-text); display: inline-flex; align-items: center; flex-shrink: 0; }
+.github-has-new .tab-count { color: var(--notification-text); background: var(--notification-bg); }
+.node-message-preview {
+  position: fixed;
+  z-index: 160;
+  width: min(380px, calc(100vw - 24px));
+  max-height: min(240px, calc(100vh - 24px));
+  overflow-y: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  box-shadow: var(--shadow-lg);
+  background: var(--surface-1);
+  color: var(--text-main);
+  animation: popoverEnter 180ms var(--ease-out);
+}
+.latest-message-heading { font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+.node-message-preview-text,
+.latest-message-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; line-height: 1.6; }
+.node-message-preview-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; margin-bottom: 8px; }
+.latest-message-text { max-height: 280px; overflow-y: auto; margin-bottom: 8px; }
+.refresh-icon.spin { transform-box: fill-box; transform-origin: center; }
+.usage-popover.is-closing,
+.footer-settings-popover.is-closing {
+  animation: popoverExit 150ms var(--ease-in-out) forwards;
+  pointer-events: none;
+}
+@keyframes popoverExit {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(6px) scale(0.98); }
+}
+.github-tabs-nav { position: relative; }
+.github-tabs-nav .tab-btn.active { border-bottom-color: transparent; }
+.github-tab-indicator {
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  width: 1px;
+  height: 2px;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 220ms var(--ease-out);
+  pointer-events: none;
+}
+.latest-message-card {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+.message-markdown { padding: 14px 16px; font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.message-collapsed { max-height: 210px; overflow: hidden; }
+.message-expanded { max-height: none; }
+.message-markdown > :first-child { margin-top: 0; }
+.message-markdown > :last-child { margin-bottom: 0; }
+.message-markdown p { margin: 8px 0; }
+.message-markdown h1, .message-markdown h2, .message-markdown h3,
+.message-markdown h4, .message-markdown h5, .message-markdown h6 {
+  font-size: 13px; line-height: 1.5; font-weight: 600; margin: 16px 0 8px;
+}
+.message-markdown ul, .message-markdown ol { padding-left: 20px; margin: 8px 0; }
+.message-markdown li + li { margin-top: 6px; }
+.message-markdown code { font-family: var(--font-mono); font-size: 11px; background: var(--surface-1); padding: 1px 4px; border-radius: 3px; }
+.message-markdown pre { padding: 10px; background: var(--surface-1); border-radius: 6px; overflow-x: auto; margin: 10px 0; }
+.message-markdown pre code { padding: 0; white-space: pre; }
+.message-markdown a { color: var(--state-working-text); text-decoration: underline; text-underline-offset: 2px; }
+.message-file-reference { color: var(--text-secondary); }
+.message-markdown hr { border: 0; border-top: 1px solid var(--border-subtle); margin: 16px 0; }
+.message-markdown blockquote { color: var(--text-secondary); padding: 8px 12px; background: var(--surface-1); margin: 10px 0; border-radius: 6px; }
+.message-markdown table { display: block; overflow-x: auto; border-collapse: collapse; margin: 10px 0; }
+.message-markdown th, .message-markdown td { border: 1px solid var(--border-main); padding: 5px 8px; }
+.latest-message-footer {
+  display: flex; align-items: center; gap: 8px; padding: 10px 14px;
+  border-top: 1px solid var(--border-subtle); color: var(--text-secondary); font-size: 11px;
+}
+.latest-message-footer button { margin-left: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .node-message-preview, .refresh-icon.spin,
+  .usage-popover.is-closing, .footer-settings-popover.is-closing { animation: none !important; }
+  .github-tab-indicator { transition: none; }
+}

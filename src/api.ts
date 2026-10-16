@@ -8,7 +8,14 @@ import type {
   NodeDetailsQuery,
   Section,
   ApiError,
+  UsageData,
 } from '../shared/contracts';
+
+export async function fetchUsage(signal?: AbortSignal): Promise<Section<UsageData>> {
+  return handleResponse<Section<UsageData>>(await fetch('/api/usage', {
+    headers: { Accept: 'application/json' }, signal,
+  }));
+}
 
 /**
  * Strips ANSI escape sequences and non-printable control characters from text.

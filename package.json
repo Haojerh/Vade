@@ -10,11 +10,13 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "start": "tsx server/index.ts",
-    "test": "node --import tsx --test server/cli.test.ts server/orca.test.ts server/github.test.ts server/api.test.ts server/snapshot.test.ts"
+    "test": "node --import tsx --test server/cli.test.ts server/orca.test.ts server/github.test.ts server/api.test.ts server/snapshot.test.ts server/usage.test.ts src/activity.test.ts"
   },
   "dependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "tsx": "^4.19.2"
   },
   "devDependencies": {

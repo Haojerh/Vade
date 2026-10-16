@@ -1,6 +1,9 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import type { NodeDetails as NodeDetailsType } from '../../shared/contracts';
 import { ProviderIcon } from './ProviderIcon';
+import { latestAgentMessage } from '../conversation';
+import { RefreshIcon } from './RefreshIcon';
+import { LatestMessageCard } from './LatestMessageCard';
 
 interface NodeDetailsProps {
   details: NodeDetailsType | null;
@@ -205,6 +208,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const convData = conversation?.data;
   const convMeta = conversation?.meta;
   const messages = convData?.messages ?? [];
+  const latestReply = latestAgentMessage(messages);
   const hasNewerCursor = Boolean(convData?.nextCursor && convData.nextCursor !== convData.cursor);
   const isWorktree = node?.kind === 'worktree';
 
@@ -287,20 +291,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
               aria-label="Refresh node facts"
               title="Refresh node facts"
             >
-              <svg
-                className={loading ? 'spin' : ''}
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-              </svg>
+              <RefreshIcon busy={loading} />
             </button>
             <button
               type="button"
@@ -388,6 +379,15 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                   </div>
                 </div>
               </div>
+
+              {!isWorktree && (
+                <div className="modal-section latest-message-section">
+                  <h3 className="section-title">Latest Agent Message</h3>
+                  {latestReply ? <LatestMessageCard key={latestReply.id} message={latestReply} stale={Boolean(convMeta?.stale)} />
+                    : <p className="text-xs text-muted">{convMeta?.availability === 'unsupported' || convMeta?.availability === 'unavailable'
+                    ? 'Agent message unavailable from this conversation source.' : 'No agent reply in recent history.'}</p>}
+                </div>
+              )}
 
               {/* Current Tool Activity (agents only) */}
               {!isWorktree && currentTool && (

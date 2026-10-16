@@ -255,7 +255,7 @@ export function useDashboard(): UseDashboardReturn {
       if (isAvailable && !isSourceStale && !hasIssue && graphMeta.observedAt) {
         const obsEpoch = new Date(graphMeta.observedAt).getTime();
         lastGraphObservedAtRef.current = isNaN(obsEpoch) ? Date.now() : obsEpoch;
-        setIsLocallyStale(false);
+        setIsLocallyStale(Date.now() - lastGraphObservedAtRef.current > 15000);
       } else {
         if (graphMeta.observedAt) {
           const obsEpoch = new Date(graphMeta.observedAt).getTime();
@@ -514,7 +514,24 @@ export function useDashboard(): UseDashboardReturn {
     if (selectedNodeId) {
       loadNodeDetails();
     }
-  }, [loadProjects, loadGitHub, selectedNodeId, loadNodeDetails]);
+    if (selectedProjectId) {
+      const generation = selectionGeneration.current;
+      setSnapshotLoading(true);
+      void fetchSnapshot(selectedProjectId, selectedRunId).then((next) => {
+        if (generation !== selectionGeneration.current) return;
+        setSnapshot(next);
+        setSnapshotError(null);
+        const observed = Date.parse(next.graph.meta.observedAt ?? '');
+        lastGraphObservedAtRef.current = Number.isFinite(observed) ? observed : 0;
+        setIsLocallyStale(next.graph.meta.stale || next.graph.meta.availability !== 'ready' ||
+          !Number.isFinite(observed) || Date.now() - observed > 15000);
+      }).catch((error) => {
+        if (generation === selectionGeneration.current) setSnapshotError(error.message || 'Snapshot refresh failed');
+      }).finally(() => {
+        if (generation === selectionGeneration.current) setSnapshotLoading(false);
+      });
+    }
+  }, [loadProjects, loadGitHub, selectedNodeId, loadNodeDetails, selectedProjectId, selectedRunId]);
 
   return {
     inventorySection,

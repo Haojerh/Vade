@@ -1,4 +1,6 @@
 import React from 'react';
+import { UsagePanel } from './UsagePanel';
+import { usePopoverState } from '../usePopoverState';
 import type { DashboardSnapshot, Inventory, Section } from '../../shared/contracts';
 
 export interface ProjectSelectorProps {
@@ -32,7 +34,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   cardStateColors,
   onToggleCardStateColors,
 }) => {
-  const [isSettingsOpen, setIsSettingsOpen] = React.useState(false);
+  const { present: isSettingsOpen, closing: isSettingsClosing, close: closeSettings, toggle: toggleSettings } = usePopoverState();
   const settingsRef = React.useRef<HTMLDivElement>(null);
 
   // Close settings popover on click outside or escape
@@ -40,12 +42,12 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
     if (!isSettingsOpen) return;
     const handleClickOutside = (e: MouseEvent) => {
       if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
-        setIsSettingsOpen(false);
+        closeSettings();
       }
     };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setIsSettingsOpen(false);
+        closeSettings();
       }
     };
     document.addEventListener('mousedown', handleClickOutside);
@@ -54,7 +56,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       document.removeEventListener('mousedown', handleClickOutside);
       document.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isSettingsOpen]);
+  }, [isSettingsOpen, closeSettings]);
 
   const projects = inventorySection?.data?.projects ?? [];
   const runtime = snapshot?.runtime?.data;
@@ -249,10 +251,10 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
           <button
             type="button"
             className={`btn btn-secondary btn-xs ${isSettingsOpen ? 'btn-active' : ''}`}
-            onClick={() => setIsSettingsOpen((prev) => !prev)}
+            onClick={toggleSettings}
             aria-label="Dashboard settings"
             aria-haspopup="dialog"
-            aria-expanded={isSettingsOpen}
+            aria-expanded={isSettingsOpen && !isSettingsClosing}
             title="Dashboard settings"
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
@@ -264,16 +266,16 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
 
           {isSettingsOpen && (
             <div
-              className="footer-settings-popover"
+              className={`footer-settings-popover ${isSettingsClosing ? 'is-closing' : ''}`}
               role="dialog"
               aria-label="Dashboard settings"
             >
               <div className="settings-popover-header">
-                <span className="font-semibold text-xs">Settings</span>
+                <span className="font-bold text-sm">Settings</span>
                 <button
                   type="button"
                   className="btn-close"
-                  onClick={() => setIsSettingsOpen(false)}
+                  onClick={closeSettings}
                   aria-label="Close settings"
                 >
                   ✕
@@ -338,6 +340,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             </div>
           )}
         </div>
+        <UsagePanel />
       </div>
     </nav>
   );
