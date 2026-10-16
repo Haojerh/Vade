@@ -14,7 +14,8 @@ import {
   Node,
   Graph,
 } from '../../shared/contracts.js';
-import { runGh, runGit, CommandRunner, defaultCommandRunner, CliError } from './cli.js';
+import { runGit, CommandRunner, defaultCommandRunner, CliError } from './cli.js';
+import { createGitHubAccountReader } from './githubAccounts.js';
 import { toIsoOrNull, collectGraph } from './orca.js';
 
 export interface ParsedRepo {
@@ -152,6 +153,21 @@ export async function collectGitHubData(
   preloadedGraph?: Graph
 ): Promise<GitHubData> {
   const attemptedAt = new Date().toISOString();
+  const readAccount = createGitHubAccountReader(runner);
+  const pagination: NonNullable<GitHubData['pagination']> = {
+    commits: { nextPage: null }, prs: { nextPage: null }, issues: { nextPage: null },
+  };
+  const page = query.page ?? 1;
+  if (!Number.isInteger(page) || page < 1 || page > 10000 || (query.page !== undefined && !query.activity)) {
+    throw new CliError('INVALID_ARGUMENT', 'Invalid GitHub page');
+  }
+  const readGitHub = async (endpoint: string) => {
+    const activity = endpoint.includes('/commits?') ? 'commits' : endpoint.includes('/pulls?') ? 'prs' : 'issues';
+    if (query.activity && activity !== query.activity) return [];
+    const result = await readAccount(endpoint + (page > 1 ? `&page=${page}` : ''));
+    if (Array.isArray(result) && result.length === 20 && page < 10000) pagination[activity].nextPage = page + 1;
+    return result;
+  };
 
   let targetWorktreeNode: Node | null = null;
   if (query.scope === 'worktree') {
@@ -248,7 +264,7 @@ export async function collectGitHubData(
 
     try {
       const issuesEndpoint = `repos/${owner}/${name}/issues?state=all&sort=updated&direction=desc&per_page=20`;
-      const issuesRes = await runGh(issuesEndpoint, runner);
+      const issuesRes = await readGitHub(issuesEndpoint);
       authStatus = 'available';
       if (!Array.isArray(issuesRes)) {
         issuesSection = {
@@ -332,6 +348,7 @@ export async function collectGitHubData(
       pullRequests: { data: null, meta: unavailableMeta },
       commits: { data: null, meta: unavailableMeta },
       issues: issuesSection,
+      pagination,
     };
   }
 
@@ -351,9 +368,9 @@ export async function collectGitHubData(
   }
 
   const [pullsRes, commitsRes, issuesRes] = await Promise.allSettled([
-    runGh(pullsEndpoint, runner),
-    runGh(commitsEndpoint, runner),
-    runGh(issuesEndpoint, runner),
+    readGitHub(pullsEndpoint),
+    readGitHub(commitsEndpoint),
+    readGitHub(issuesEndpoint),
   ]);
 
   let authStatus: 'available' | 'required' | 'unknown' = 'unknown';
@@ -639,5 +656,6 @@ export async function collectGitHubData(
     pullRequests: prSection,
     commits: commitSection,
     issues: issuesSection,
+    pagination,
   };
 }

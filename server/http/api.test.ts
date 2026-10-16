@@ -294,6 +294,12 @@ describe('server/api', () => {
     // 7. Invalid scope enum must be rejected with 400
     const badScopeRes = await fetch(`${baseUrl}/api/projects/${projApiId}/github?scope=other`);
     assert.equal(badScopeRes.status, 400);
+    for (const query of ['page=2', 'activity=other', 'activity=commits&page=0', 'activity=issues&page=10001']) {
+      const response = await fetch(`${baseUrl}/api/projects/${projApiId}/github?${query}`);
+      assert.equal(response.status, 400);
+    }
+    const paged = await fetch(`${baseUrl}/api/projects/${projApiId}/github?activity=commits&page=2`);
+    assert.equal(paged.status, 200);
   });
 
   test('Unrecognized /api route returns JSON 404, not HTML', async () => {

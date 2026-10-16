@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import fs from 'node:fs';
+import crypto from 'node:crypto';
 import { Issue, ErrorCode } from '../../shared/contracts.js';
 
 export interface CommandResult {
@@ -17,6 +18,7 @@ export type CommandRunner = (
     maxStdout?: number;
     maxStderr?: number;
     cwd?: string;
+    env?: NodeJS.ProcessEnv;
   }
 ) => Promise<CommandResult>;
 
@@ -104,6 +106,7 @@ export const defaultCommandRunner: CommandRunner = async (
         cwd: options.cwd,
         shell: false,
         windowsHide: true,
+        env: options.env ? { ...process.env, ...options.env } : process.env,
       });
 
       const timer = setTimeout(() => {
@@ -163,10 +166,11 @@ export const defaultCommandRunner: CommandRunner = async (
 export async function runDeduplicatedCommand(
   executable: string,
   args: string[],
-  options?: { timeoutMs?: number; maxStdout?: number; maxStderr?: number; cwd?: string },
+  options?: { timeoutMs?: number; maxStdout?: number; maxStderr?: number; cwd?: string; env?: NodeJS.ProcessEnv },
   runner: CommandRunner = defaultCommandRunner
 ): Promise<CommandResult> {
-  const cacheKey = `${executable}::${JSON.stringify(args)}::${options?.cwd ?? ''}`;
+  const environmentKey = options?.env ? crypto.createHash('sha256').update(JSON.stringify(options.env)).digest('hex') : '';
+  const cacheKey = `${executable}::${JSON.stringify(args)}::${options?.cwd ?? ''}::${environmentKey}`;
   const existing = inFlightRequests.get(cacheKey);
   if (existing) {
     return existing;
@@ -471,6 +475,11 @@ export async function runGit(
 }
 
 export function validateGhEndpoint(endpoint: string): void {
+  const paged = endpoint.match(/^(.*)&page=([1-9][0-9]{0,4})$/);
+  if (paged && !paged[1].includes('&page=') && Number(paged[2]) <= 10000) {
+    validateGhEndpoint(paged[1]);
+    return;
+  }
   // Allowed templates:
   // repos/{owner}/{repo}/commits?per_page=20
   // repos/{owner}/{repo}/commits?per_page=20&sha={encodedDiscoveredBranch}
@@ -532,15 +541,19 @@ export function validateGhEndpoint(endpoint: string): void {
 
 export async function runGh(
   endpoint: string,
-  runner: CommandRunner = defaultCommandRunner
+  runner: CommandRunner = defaultCommandRunner,
+  accountToken?: string
 ): Promise<any> {
   validateGhEndpoint(endpoint);
 
   const args = ['api', '--method', 'GET', endpoint];
-  const res = await runDeduplicatedCommand(GH_PATH, args, { timeoutMs: 12000 }, runner);
+  const res = await runDeduplicatedCommand(GH_PATH, args, { timeoutMs: 12000,
+    ...(accountToken ? { env: { GH_TOKEN: accountToken, GITHUB_TOKEN: '', GH_HOST: 'github.com', GH_DEBUG: '' } } : {}),
+  }, runner);
 
   if (res.exitCode !== 0) {
-    const errText = (res.stderr || res.stdout).trim();
+    const rawError = (res.stderr || res.stdout).trim();
+    const errText = accountToken ? rawError.replaceAll(accountToken, '[redacted]') : rawError;
     if (errText.includes('409') && (errText.includes('Git Repository is empty') || errText.includes('empty repository'))) {
       const err = new CliError('REMOTE_MISSING', 'Git Repository is empty.', false, 409);
       (err as any).httpStatus = 409;
@@ -564,6 +577,6 @@ export async function runGh(
   try {
     return JSON.parse(res.stdout);
   } catch (err: any) {
-    throw new CliError('INVALID_UPSTREAM', `Failed to parse GitHub JSON: ${err.message}`, false);
+    throw new CliError('INVALID_UPSTREAM', accountToken ? 'Failed to parse GitHub JSON' : `Failed to parse GitHub JSON: ${err.message}`, false);
   }
 }

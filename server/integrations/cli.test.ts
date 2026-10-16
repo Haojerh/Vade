@@ -5,12 +5,19 @@ import {
   runOrca,
   runGit,
   runGh,
+  validateGhEndpoint,
   runDeduplicatedCommand,
   CliError,
   CommandRunner,
 } from './cli.js';
 
 describe('server/cli', () => {
+  test('allows bounded GitHub pages and rejects extra or duplicate parameters', () => {
+    assert.doesNotThrow(() => validateGhEndpoint('repos/owner/repo/commits?per_page=20&page=2'));
+    for (const suffix of ['0', '-1', '10001', '2&page=3', '2&other=true']) {
+      assert.throws(() => validateGhEndpoint(`repos/owner/repo/commits?per_page=20&page=${suffix}`));
+    }
+  });
   test('validates Orca allowlisted commands', () => {
     // Valid commands
     assert.doesNotThrow(() => validateOrcaArgs(['status', '--json']));

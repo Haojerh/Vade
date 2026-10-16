@@ -10,6 +10,24 @@ import { CommandRunner } from './cli.js';
 import { Project, Graph } from '../../shared/contracts.js';
 
 describe('server/github', () => {
+  test('pages only the requested activity and advances past issue pages containing only PRs', async () => {
+    const endpoints: string[] = [];
+    const project: Project = { id: 'pagination', name: 'test', kind: 'git', sourceProjectId: 'github:owner/repo', repoIds: [], paths: [], hostIds: [] };
+    const runner: CommandRunner = async (_exe, args) => {
+      const endpoint = args.find((arg) => arg.startsWith('repos/'))!;
+      endpoints.push(endpoint);
+      return { stdout: JSON.stringify(Array.from({ length: 20 }, (_, index) => ({
+        number: index + 1, pull_request: {},
+      }))), stderr: '', exitCode: 0 };
+    };
+    const result = await collectGitHubData(project, { scope: 'general', activity: 'issues', page: 2 }, runner);
+    assert.deepEqual(endpoints, ['repos/owner/repo/issues?state=all&sort=updated&direction=desc&per_page=20&page=2']);
+    assert.deepEqual(result.issues.data, []);
+    assert.equal(result.pagination?.issues.nextPage, 3);
+    assert.equal(result.pagination?.commits.nextPage, null);
+    const last = await collectGitHubData(project, { scope: 'general', activity: 'issues', page: 10000 }, runner);
+    assert.equal(last.pagination?.issues.nextPage, null);
+  });
   test('parseGitHubUrl handles HTTPS, SSH and rejects unsupported hosts', () => {
     const httpsRes = parseGitHubUrl('https://github.com/Haojerh/orca-visualization.git');
     assert.equal(httpsRes.owner, 'Haojerh');

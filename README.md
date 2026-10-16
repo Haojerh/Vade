@@ -22,6 +22,7 @@ Open **http://127.0.0.1:5173** and select an Orca project. For GitHub activity, 
 - **Git**: Installed `git` binary (can also be specified via `GIT_PATH`).
 - **GitHub CLI (`gh`)**: Installed `gh` binary (can also be specified via `GH_PATH`).
   - **Authentication Prerequisite**: Run `gh auth login` in your terminal prior to running the application to grant read access to target repositories. No tokens, secrets, or credential values are configured or exposed in the app. If unauthenticated, GitHub panels report authentication required without failing the Orca graph collection.
+  - **Multiple accounts**: The dashboard tries the active `github.com` account first. On authentication/access failures, it tries other successful accounts already saved in `gh` (up to 10). Credentials are read from `gh` into backend memory and passed only through child-process environments. It never logs out, signs in, or changes the global active account. Tokens never reach the browser. Rate-limit and unrelated server errors do not trigger account fallback.
 
 ## Ports & Localhost Topology
 
@@ -119,6 +120,9 @@ Both the node-details composer and the inline card composer accept clipboard ima
 - An attachment-only message is supported. Failed sends preserve the draft. If delivery becomes uncertain after files are staged, inspect the agent before resending to avoid duplicates.
 
 ### GitHub Section
+- Commits, PRs, and issues load in batches of 20, with subsequent pages fetched as you scroll. Loaded history is retained during the minute refresh; historical pages do not create unread notifications. Count badges show loaded items with `+` while more pages are available. GitHub issue pages may contain fewer than 20 issues because PR entries are excluded.
+- Additional pages show animated shimmer skeletons while loading, or static placeholders with reduced motion enabled. A **Load 20 more** button also supports manual loading; failed requests retain existing results and offer **Retry loading**. Changing project or scope discards the previous pagination context.
+- Pagination requests use `activity=commits|prs|issues&page=N` on the GitHub endpoint, with pages bounded to 1–10000. The response includes per-activity `pagination.nextPage` values. Counts describe loaded results rather than a separately fetched repository total.
 - Unread notifications persist locally across page reloads and browser restarts, scoped to their repository and history scope. Clicking an item marks only that item read; switching tabs does not. Clearing browser site data resets this history.
 - Inspects repository remotes resolved from local project Git configuration or registered metadata.
 - Queries `gh api` for:

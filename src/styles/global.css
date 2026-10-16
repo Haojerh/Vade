@@ -2381,6 +2381,22 @@ button {
   flex: 1 1 auto;
   overflow-y: auto;
 }
+.github-pagination {
+  min-height: 48px;
+  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.github-skeleton-list { width: 100%; display: grid; gap: 8px; }
+.github-skeleton-row { padding: 12px 10px; background: var(--surface-2); border-radius: 6px; display: grid; gap: 10px; }
+.github-skeleton-line { height: 10px; border-radius: 3px; background: linear-gradient(100deg, var(--border-main) 25%, var(--border-strong) 45%, var(--surface-active) 55%, var(--border-main) 75%); background-size: 250% 100%; animation: github-skeleton-shimmer 1.6s linear infinite; }
+.github-skeleton-line.short { width: 35%; }
+.github-skeleton-line.medium { width: 65%; }
+@keyframes github-skeleton-shimmer { from { background-position: 150% 0; } to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) { .github-skeleton-line { animation: none; } }
 .github-item-list {
   display: flex;
   flex-direction: column;

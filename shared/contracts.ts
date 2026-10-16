@@ -199,9 +199,11 @@ export interface NodeDetailsQuery {
   limit?: number;
 }
 
-export type GitHubQuery =
+export type GitHubActivity = 'commits' | 'prs' | 'issues';
+export type GitHubQuery = (
   | { scope: 'general' }
-  | { scope: 'worktree'; nodeId: Id };
+  | { scope: 'worktree'; nodeId: Id }
+) & { activity?: GitHubActivity; page?: number };
 
 export interface GitHubScope {
   kind: 'general' | 'worktree';
@@ -244,6 +246,7 @@ export interface GitHubIssue {
 }
 
 export interface GitHubData {
+  pagination?: Record<GitHubActivity, { nextPage: number | null }>;
   projectKind?: 'git' | 'folder' | 'unknown';
   repository: {
     owner: string;

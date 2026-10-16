@@ -103,6 +103,8 @@ export async function fetchGitHub(
   signal?: AbortSignal,
 ): Promise<GitHubData> {
   const params = new URLSearchParams();
+  if (query.activity) params.set('activity', query.activity);
+  if (query.page) params.set('page', String(query.page));
   if (query.scope === 'worktree') {
     params.set('scope', 'worktree');
     params.set('nodeId', query.nodeId);

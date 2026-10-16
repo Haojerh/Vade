@@ -376,7 +376,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           const projectId = decodeURIComponent(githubMatch[1]);
 
           for (const k of Object.keys(query)) {
-            if (k !== 'scope' && k !== 'nodeId') {
+            if (!['scope', 'nodeId', 'activity', 'page'].includes(k)) {
               sendError(400, 'INVALID_ARGUMENT', `Unexpected query parameter '${k}'`);
               return;
             }
@@ -408,6 +408,16 @@ export function createApiHandler(options: ApiServerOptions = {}) {
             }
             githubQuery = { scope: 'worktree', nodeId: query.nodeId };
           }
+
+          if (query.activity !== undefined && !['commits', 'prs', 'issues'].includes(query.activity)) {
+            sendError(400, 'INVALID_ARGUMENT', 'Invalid GitHub activity');
+            return;
+          }
+          if (query.page !== undefined && (!/^[1-9][0-9]{0,4}$/.test(query.page) || Number(query.page) > 10000 || !query.activity)) {
+            sendError(400, 'INVALID_ARGUMENT', 'Page requires activity and must be between 1 and 10000');
+            return;
+          }
+          githubQuery = { ...githubQuery, activity: query.activity as GitHubQuery['activity'], page: query.page ? Number(query.page) : undefined };
 
           // Lookup project in inventory
           let project: any = null;

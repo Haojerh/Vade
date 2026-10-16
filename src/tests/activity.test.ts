@@ -10,11 +10,20 @@ import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets
 import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
 import { separateWorkflowBoxes } from '../features/workflow/workflowCollision';
 import { GitHubPanel } from '../features/github/GitHubPanel';
+import { mergeGitHubItems } from '../features/github/useGitHubPagination';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/NodeDetails';
 import { buildGitHubPrompt } from '../features/workflow/WorkflowGraph';
 import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
 import type { Node, NodeDetails as NodeDetailsType } from '../../shared/contracts';
+
+test('GitHub pagination deduplicates page boundaries and prefers refreshed item values', () => {
+  const item = (sha: string, message: string) => ({ sha, message, url: '', author: null, committedAt: null });
+  const first = [item('new', 'new'), item('boundary', 'updated')];
+  const result = mergeGitHubItems(first, [item('boundary', 'old'), item('older', 'older')]);
+  assert.deepEqual(result.map((entry) => entry.sha), ['new', 'boundary', 'older']);
+  assert.equal(result[1].message, 'updated');
+});
 
 test('workflow collision layout separates dragged boxes and only moves later boxes on chat expansion', () => {
   const above = { id: 'above', x: 0, y: 0, width: 260, height: 100 };
