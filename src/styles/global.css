@@ -2380,6 +2380,27 @@ dialog.node-modal-dialog {
   outline: none;
 }
 
+dialog.reset-layout-dialog {
+  width: min(420px, calc(100vw - 32px));
+  height: fit-content;
+  padding: 24px;
+  box-sizing: border-box;
+}
+.reset-layout-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+.reset-layout-dialog p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.reset-layout-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
 dialog.node-modal-dialog[open] {
   animation: modalEnter 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
