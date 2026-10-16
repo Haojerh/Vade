@@ -689,6 +689,16 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     }
 
     const currentOffset = nodeOffsets[id] || { x: 0, y: 0 };
+    const draggedElement = elementRefs.current.get(id);
+    const boundedElement = draggedElement?.matches('.worktree-box-container')
+      ? draggedElement : draggedElement?.closest<HTMLElement>('.orchestrator-group');
+    const canvas = containerRef.current;
+    const minimumX = boundedElement && canvas
+      ? currentOffset.x - (boundedElement.getBoundingClientRect().left - canvas.getBoundingClientRect().left - canvas.clientLeft + canvas.scrollLeft)
+      : -Infinity;
+    const minimumY = boundedElement && canvas
+      ? currentOffset.y - (boundedElement.getBoundingClientRect().top - canvas.getBoundingClientRect().top - canvas.clientTop + canvas.scrollTop)
+      : -Infinity;
     dragNodeInfoRef.current = {
       id,
       startX: e.clientX,
@@ -709,8 +719,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         setDraggingNodeId(id);
       }
       if (dragNodeInfoRef.current.hasMoved) {
-        const newX = dragNodeInfoRef.current.originX + dx;
-        const newY = dragNodeInfoRef.current.originY + dy;
+        const newX = Math.max(minimumX, dragNodeInfoRef.current.originX + dx);
+        const newY = Math.max(minimumY, dragNodeInfoRef.current.originY + dy);
         setNodeOffsets((prev) => ({
           ...prev,
           [id]: { x: newX, y: newY },
