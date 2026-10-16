@@ -356,4 +356,43 @@ describe('server/api', () => {
     const json = await res.json();
     assert.equal(json.ok, true);
   });
+
+  test('image uploads bind to a local project agent, reject remote and invalid payloads, and stage before sending', async () => {
+    const attachment = { name: 'test.png', mimeType: 'image/png', dataBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX2kAAAAASUVORK5CYII=' };
+    let host = 'local';
+    const calls: string[][] = [];
+    globalSourceMaps.nodeSourceMap.set('upload_agent', { handle: 'term_upload_agent', worktreeId: 'wt-upload' });
+    const uploadServer = createServer({
+      snapshotManager: { getSnapshot: async () => ({ graph: { data: { nodes: [{ id: 'upload_agent', kind: 'agent', agentType: 'codex' }] } } }) } as any,
+      runner: async (_exe, args) => {
+        calls.push(args);
+        return { stdout: JSON.stringify({ ok: true, result: args[1] === 'list'
+          ? { terminals: [{ handle: 'term_upload_agent', connected: true, executionHostId: host }] }
+          : { send: { accepted: true } } }), stderr: '', exitCode: 0 };
+      },
+    });
+    await new Promise<void>((resolve) => uploadServer.listen(0, '127.0.0.1', resolve));
+    const endpoint = `http://127.0.0.1:${(uploadServer.address() as any).port}/api/projects/project/nodes/upload_agent/message`;
+    const post = (body: unknown, headers: Record<string, string> = {}) => fetch(endpoint, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body),
+    });
+    try {
+      assert.equal((await post({ message: '', attachments: [attachment] })).status, 200);
+      assert.equal(calls.length, 4);
+      assert.match(calls[1][5], /^\x1b\[200~/);
+      assert.equal(calls[1].includes('--enter'), false);
+      assert.equal(calls[2].includes('--enter'), false);
+      assert.equal(calls[3].includes('--enter'), true);
+      calls.length = 0;
+      host = 'remote-host';
+      assert.equal((await post({ message: 'Look', attachments: [attachment] })).status, 400);
+      assert.equal(calls.some((args) => args[1] === 'send'), false);
+      assert.equal((await post({ message: '', attachments: [{ ...attachment, dataBase64: 'bad!' }] })).status, 400);
+      assert.equal((await post({ message: '', attachments: [] })).status, 400);
+      assert.equal((await post({ message: 'Look', attachments: [attachment] }, { Origin: 'https://other.example' })).status, 403);
+    } finally {
+      globalSourceMaps.nodeSourceMap.delete('upload_agent');
+      await new Promise<void>((resolve) => uploadServer.close(() => resolve()));
+    }
+  });
 });

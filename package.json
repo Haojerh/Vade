@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "start": "tsx server/index.ts",
-    "test": "node --import tsx --test src/tests/activity.test.ts server/http/api.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/orca.test.ts server/providers/transcripts.test.ts server/services/snapshot.test.ts server/services/progress.test.ts server/integrations/usage.test.ts"
+    "test": "node --import tsx --test src/tests/activity.test.ts server/http/api.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/orca.test.ts server/providers/transcripts.test.ts server/services/snapshot.test.ts server/services/progress.test.ts server/services/attachments.test.ts server/integrations/usage.test.ts"
   },
   "dependencies": {
     "react": "^19.0.0",

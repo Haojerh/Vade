@@ -241,15 +241,16 @@ export function validateOrcaArgs(args: string[]): void {
   }
 
   if (sub === 'terminal' && args[1] === 'send') {
+    if (args.length === 6 && args[2] === '--terminal' && /^term_[a-zA-Z0-9_-]+$/.test(args[3]) &&
+      args[4] === '--enter' && args[5] === '--json') return;
     // terminal send --terminal <handle> --text <text> --enter --json
     if (
       args[2] === '--terminal' &&
       /^term_[a-zA-Z0-9_-]+$/.test(args[3]) &&
       args[4] === '--text' &&
       typeof args[5] === 'string' &&
-      args[6] === '--enter' &&
-      args[7] === '--json' &&
-      args.length === 8
+      ((args[6] === '--enter' && args[7] === '--json' && args.length === 8) ||
+        (args[6] === '--json' && args.length === 7))
     ) {
       return;
     }

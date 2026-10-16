@@ -265,6 +265,16 @@ export interface HealthResponse {
 
 export interface SendMessageRequest {
   message: string;
+  attachments?: MessageAttachment[];
+}
+
+export const MAX_MESSAGE_ATTACHMENTS = 8;
+export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+export const MAX_MESSAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export interface MessageAttachment {
+  name: string;
+  mimeType: string;
+  dataBase64: string;
 }
 
 export interface SendMessageResponse {

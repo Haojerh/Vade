@@ -5,7 +5,7 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 ## Project Scope & Conventions
 
 - **Application Type**: Local React 19 + TypeScript frontend with a lightweight native Node HTTP backend.
-- **Read-Only Nature**: The dashboard is strictly observational. No runtime mutations, run injections, mail sends, or task status modifications are performed.
+- **Runtime scope**: Collection is observational. The explicit agent-message endpoint may send user-authored messages and attachments to discovered agent terminals. Never create runs or modify task status from the dashboard.
 - **Contract-First Design**: The backend and frontend communicate through normative types defined in [`shared/contracts.ts`](shared/contracts.ts). Any updates to data models must originate or be mirrored in `shared/contracts.ts`.
 - **Zero Raw CLI Passthrough**: The server strictly validates all CLI invocation arguments against an internal allowlist in [`server/integrations/cli.ts`](server/integrations/cli.ts). Never accept arbitrary command flags or user inputs as executable commands.
 - **Localhost & Origin Constraints**:
@@ -21,7 +21,7 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 
 ## HTTP Endpoints & API Contract
 
-Implemented in [`server/http/api.ts`](server/http/api.ts). All requests use `GET` or `HEAD`. Mutation methods (`POST`, `PUT`, `DELETE`, `PATCH`) return `405 METHOD_NOT_ALLOWED`.
+Implemented in [`server/http/api.ts`](server/http/api.ts). Collection uses `GET` or `HEAD`. Only the explicit agent-message endpoint permits `POST`; other mutations return `405 METHOD_NOT_ALLOWED`.
 
 | Endpoint | Query Parameters | Response / Behavior | Description |
 |---|---|---|---|
@@ -32,6 +32,7 @@ Implemented in [`server/http/api.ts`](server/http/api.ts). All requests use `GET
 | `GET /api/projects/:projectId/events` | `runId` (optional) | SSE stream (`text/event-stream`) | Pushes full snapshot updates as `event: snapshot` with `id: <revision>` on collection changes. 15s comment heartbeats (`: heartbeat`). |
 | `GET /api/projects/:projectId/nodes/:nodeId` | `runId` (optional), `cursor` (optional, <= 512 chars), `limit` (optional, 1..200, default 100; UI requests 20) | `NodeDetails` | Node facts, tool/tasks/activity metadata and a source-bound conversation section. Worktrees and terminal nodes do not expose conversation history. |
 | `GET /api/projects/:projectId/github` | `scope=general` (default) or `scope=worktree&nodeId=<discovered worktree node>` | `GitHubData` | Scoped commits/PRs, repository-wide issues and explicit coverage metadata. |
+| `POST /api/projects/:projectId/nodes/:nodeId/message` | JSON `SendMessageRequest` | `SendMessageResponse` | User-authored text and optional bounded base64 attachments. Uploads require a discovered agent and a connected local terminal; never accept client-supplied host paths. |
 
 ## Error Responses
 

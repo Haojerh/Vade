@@ -156,7 +156,18 @@ export async function sendNodeMessage(
   nodeId: string,
   message: string,
   signal?: AbortSignal,
+  files: File[] = [],
 ): Promise<{ ok: boolean; message?: string }> {
+  const attachments = await Promise.all(files.map(async (file) => ({
+    name: file.name,
+    mimeType: file.type || 'application/octet-stream',
+    dataBase64: await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = () => reject(new Error(`Cannot read ${file.name}`));
+      reader.readAsDataURL(file);
+    }),
+  })));
   const res = await fetch(
     `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/message`,
     {
@@ -165,7 +176,7 @@ export async function sendNodeMessage(
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, ...(attachments.length ? { attachments } : {}) }),
       signal,
     },
   );
