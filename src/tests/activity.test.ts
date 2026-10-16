@@ -8,11 +8,91 @@ import { LatestMessageCard } from '../features/workflow/LatestMessageCard';
 import { normalizeProvider, ProviderIcon } from '../components/providers/ProviderIcon';
 import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets';
 import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
+import { separateWorkflowBoxes } from '../features/workflow/workflowCollision';
 import { GitHubPanel } from '../features/github/GitHubPanel';
+import { mergeGitHubItems, retainGitHubHistory } from '../features/github/useGitHubPagination';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/NodeDetails';
 import { buildGitHubPrompt } from '../features/workflow/WorkflowGraph';
-import type { Node, NodeDetails as NodeDetailsType } from '../../shared/contracts';
+import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
+import type { GitHubData, Node, NodeDetails as NodeDetailsType } from '../../shared/contracts';
+
+test('GitHub refresh preserves the previous first-page boundary across all activity types', () => {
+  const meta = { availability: 'ready' as const, observedAt: null, attemptedAt: '2026-10-16T00:00:00Z', stale: false, partial: true, issue: null };
+  const commit = (number: number) => ({ sha: String(number), message: String(number), url: '', author: null, committedAt: null });
+  const issue = (number: number) => ({ number, title: String(number), url: '', author: null, updatedAt: null, state: 'open' as const, labels: [] });
+  const pr = (number: number) => ({ ...issue(number), draft: false, mergedAt: null, headRef: null, baseRef: null });
+  const snapshot = (start: number): GitHubData => ({
+    repository: null, auth: 'available', scope: { kind: 'general', nodeId: null, branch: null, commits: 'default-branch', pullRequests: 'repository', issues: 'repository' },
+    commits: { data: Array.from({ length: 20 }, (_, i) => commit(start - i)), meta },
+    pullRequests: { data: Array.from({ length: 20 }, (_, i) => pr(start - i)), meta },
+    issues: { data: Array.from({ length: 20 }, (_, i) => issue(start - i)), meta },
+  });
+  let cached = retainGitHubHistory({ commits: [], prs: [], issues: [] }, snapshot(40));
+  cached = {
+    commits: mergeGitHubItems(cached.commits, snapshot(20).commits.data!),
+    prs: mergeGitHubItems(cached.prs, snapshot(20).pullRequests.data!),
+    issues: mergeGitHubItems(cached.issues, snapshot(20).issues.data!),
+  };
+  cached = retainGitHubHistory(cached, snapshot(41));
+  assert.deepEqual(cached.commits.map((item) => item.sha), Array.from({ length: 41 }, (_, i) => String(41 - i)));
+  for (const items of [cached.prs, cached.issues]) {
+    assert.deepEqual(items.map((item) => item.number), Array.from({ length: 41 }, (_, i) => 41 - i));
+  }
+  const updated = snapshot(42);
+  updated.pullRequests.data![1].title = 'Updated PR';
+  cached = retainGitHubHistory(cached, updated);
+  assert.equal(cached.prs[1].title, 'Updated PR');
+  assert.equal(cached.prs.length, 42);
+  const stale = snapshot(50);
+  stale.commits.meta = { ...meta, stale: true };
+  assert.deepEqual(retainGitHubHistory(cached, stale).commits, cached.commits);
+});
+
+test('GitHub pagination deduplicates page boundaries and prefers refreshed item values', () => {
+  const item = (sha: string, message: string) => ({ sha, message, url: '', author: null, committedAt: null });
+  const first = [item('new', 'new'), item('boundary', 'updated')];
+  const result = mergeGitHubItems(first, [item('boundary', 'old'), item('older', 'older')]);
+  assert.deepEqual(result.map((entry) => entry.sha), ['new', 'boundary', 'older']);
+  assert.equal(result[1].message, 'updated');
+});
+
+test('workflow collision layout separates dragged boxes and only moves later boxes on chat expansion', () => {
+  const above = { id: 'above', x: 0, y: 0, width: 260, height: 100 };
+  const chat = { id: 'chat', x: 0, y: 120, width: 260, height: 100 };
+  const below = { id: 'below', x: 0, y: 240, width: 260, height: 100 };
+  const normal = separateWorkflowBoxes([below, chat, above]);
+  const expanded = separateWorkflowBoxes([above, { ...chat, height: 260 }, below]);
+  assert.deepEqual(expanded[0], above);
+  assert.equal(expanded[1].y, chat.y);
+  assert.equal(expanded[2].y, 396);
+  assert.deepEqual(separateWorkflowBoxes([above, chat, below]), normal);
+  const overlapped = separateWorkflowBoxes([
+    { ...above, x: -20, y: -10 }, { ...chat, y: 30 }, { ...below, y: 45 },
+    { id: 'separate-column', x: 350, y: 0, width: 260, height: 200 },
+  ]);
+  for (let index = 0; index < overlapped.length; index++) {
+    const a = overlapped[index];
+    assert.ok(a.x >= 0 && a.y >= 0);
+    for (const b of overlapped.slice(index + 1)) {
+      assert.ok(a.x + a.width <= b.x || b.x + b.width <= a.x || a.y + a.height <= b.y || b.y + b.height <= a.y);
+    }
+  }
+});
+
+test('message attachments accept pasted files and enforce count, type, and size limits', () => {
+  const image = new File(['test'], 'image.png', { type: 'image/png' });
+  assert.equal(validateMessageFiles([image]), null);
+  assert.match(validateMessageFiles(Array(9).fill(image))!, /8/);
+  assert.match(validateMessageFiles([new File([], 'empty.png')])!, /non-empty/);
+  assert.match(validateMessageFiles([new File(['test'], 'test.svg', { type: 'image/svg+xml' })])!, /PNG/);
+  const markup = renderToStaticMarkup(createElement(MessageAttachments, {
+    files: [image], onChange: () => {}, disabled: false, children: createElement('textarea'),
+  }));
+  assert.match(markup, /Remove image.png/);
+  assert.ok(markup.indexOf('Attached files') < markup.indexOf('<textarea'));
+  assert.match(markup, /Choose attachments/);
+});
 
 test('workflow layout order remains stable when upstream activity reorders nodes', () => {
   const main = { id: 'main', kind: 'worktree', path: 'C:\\project', state: 'idle' } as Node;
@@ -191,6 +271,141 @@ test('ProjectSelector renders settings controls in sidebar', () => {
   assert.ok(html.includes('Settings'));
 });
 
+test('ProjectSelector renders expandable chevron toggle and all projects when expanded', () => {
+  const inventory = {
+    meta: { availability: 'ready', stale: false, observedAt: null, attemptedAt: null, partial: false, issue: null },
+    data: {
+      version: '0.1.0',
+      projects: [
+        { id: 'proj-1', name: 'Alpha Project', kind: 'git', paths: ['/path/to/alpha'] },
+        { id: 'proj-2', name: 'Beta Project', kind: 'folder', paths: ['/path/to/beta'] },
+        { id: 'proj-3', name: 'Gamma Project', kind: 'git', paths: ['/path/to/gamma'] },
+      ],
+    },
+  } as unknown as any;
+
+  const html = renderToStaticMarkup(createElement(ProjectSelector, {
+    inventorySection: inventory,
+    loading: false,
+    error: null,
+    selectedProjectId: 'proj-2',
+    onSelectProject: () => {},
+    snapshot: null,
+    isLocallyStale: false,
+    connectionMode: 'sse',
+    theme: 'dark',
+    onToggleTheme: () => {},
+    cardStateColors: true,
+    onToggleCardStateColors: () => {},
+    visibleSections: DEFAULT_VISIBLE_SECTIONS,
+  }));
+
+  // By default, expanded: shows all projects, chevron has is-expanded, button has aria-expanded="true"
+  assert.ok(html.includes('rail-section-toggle-btn'));
+  assert.ok(html.includes('aria-expanded="true"'));
+  assert.ok(html.includes('rail-chevron-icon is-expanded'));
+  assert.ok(html.includes('Alpha Project'));
+  assert.ok(html.includes('Beta Project'));
+  assert.ok(html.includes('Gamma Project'));
+  assert.equal(html.includes('is-collapsed-hidden'), false);
+});
+
+test('ProjectSelector marks non-current projects as collapsed-hidden for smooth animation when collapsed', () => {
+  const inventory = {
+    meta: { availability: 'ready', stale: false, observedAt: null, attemptedAt: null, partial: false, issue: null },
+    data: {
+      version: '0.1.0',
+      projects: [
+        { id: 'proj-1', name: 'Alpha Project', kind: 'git', paths: ['/path/to/alpha'] },
+        { id: 'proj-2', name: 'Beta Project', kind: 'folder', paths: ['/path/to/beta'] },
+        { id: 'proj-3', name: 'Gamma Project', kind: 'git', paths: ['/path/to/gamma'] },
+      ],
+    },
+  } as unknown as any;
+
+  const store = new Map<string, string>();
+  store.set('orca-projects-expanded', 'false');
+  const originalLocalStorage = (globalThis as any).localStorage;
+  (globalThis as any).localStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, val: string) => store.set(key, String(val)),
+    removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear(),
+  };
+
+  try {
+    const html = renderToStaticMarkup(createElement(ProjectSelector, {
+      inventorySection: inventory,
+      loading: false,
+      error: null,
+      selectedProjectId: 'proj-2',
+      onSelectProject: () => {},
+      snapshot: null,
+      isLocallyStale: false,
+      connectionMode: 'sse',
+      theme: 'dark',
+      onToggleTheme: () => {},
+      cardStateColors: true,
+      onToggleCardStateColors: () => {},
+      visibleSections: DEFAULT_VISIBLE_SECTIONS,
+    }));
+
+    // When collapsed: button has aria-expanded="false", chevron is not rotated
+    assert.ok(html.includes('aria-expanded="false"'));
+    assert.ok(!html.includes('rail-chevron-icon is-expanded'));
+
+    const listHtml = html.slice(html.indexOf('id="rail-project-list"'));
+
+    // Beta Project is current and visible (not is-collapsed-hidden)
+    const betaIndex = listHtml.indexOf('Beta Project');
+    const betaSnippet = listHtml.slice(Math.max(0, betaIndex - 250), betaIndex);
+    assert.equal(betaSnippet.includes('is-collapsed-hidden'), false);
+
+    // Alpha and Gamma are hidden via is-collapsed-hidden with aria-hidden
+    const alphaIndex = listHtml.indexOf('Alpha Project');
+    const alphaSnippet = listHtml.slice(Math.max(0, alphaIndex - 250), alphaIndex);
+    assert.ok(alphaSnippet.includes('is-collapsed-hidden'));
+    assert.ok(alphaSnippet.includes('aria-hidden="true"'));
+
+    const gammaIndex = listHtml.indexOf('Gamma Project');
+    const gammaSnippet = listHtml.slice(Math.max(0, gammaIndex - 250), gammaIndex);
+    assert.ok(gammaSnippet.includes('is-collapsed-hidden'));
+    assert.ok(gammaSnippet.includes('aria-hidden="true"'));
+
+    // If selectedProjectId is null, falls back to first project (Alpha Project) as visible
+    const htmlNoSelection = renderToStaticMarkup(createElement(ProjectSelector, {
+      inventorySection: inventory,
+      loading: false,
+      error: null,
+      selectedProjectId: null,
+      onSelectProject: () => {},
+      snapshot: null,
+      isLocallyStale: false,
+      connectionMode: 'sse',
+      theme: 'dark',
+      onToggleTheme: () => {},
+      cardStateColors: true,
+      onToggleCardStateColors: () => {},
+      visibleSections: DEFAULT_VISIBLE_SECTIONS,
+    }));
+    const listHtmlNoSelection = htmlNoSelection.slice(htmlNoSelection.indexOf('id="rail-project-list"'));
+
+    const alphaNoSelectionIndex = listHtmlNoSelection.indexOf('Alpha Project');
+    const alphaNoSelection = listHtmlNoSelection.slice(Math.max(0, alphaNoSelectionIndex - 250), alphaNoSelectionIndex);
+    assert.equal(alphaNoSelection.includes('is-collapsed-hidden'), false);
+
+    const betaNoSelectionIndex = listHtmlNoSelection.indexOf('Beta Project');
+    const betaNoSelection = listHtmlNoSelection.slice(Math.max(0, betaNoSelectionIndex - 250), betaNoSelectionIndex);
+    assert.ok(betaNoSelection.includes('is-collapsed-hidden'));
+  } finally {
+    if (originalLocalStorage !== undefined) {
+      (globalThis as any).localStorage = originalLocalStorage;
+    } else {
+      delete (globalThis as any).localStorage;
+    }
+  }
+});
+
 test('NodeDetails does not render settings button and respects visibleSections', () => {
   const node = { id: 'agent-1', kind: 'agent', label: 'Coder', state: 'working', liveness: 'live', taskIds: [] } as unknown as Node;
   const details = {
@@ -207,7 +422,6 @@ test('NodeDetails does not render settings button and respects visibleSections',
     selectedNodeId: 'agent-1',
     onClose: () => {},
     onRefresh: () => {},
-    onCheckNewerMessages: () => {},
     visibleSections: DEFAULT_VISIBLE_SECTIONS,
   }));
   // Settings button is removed from NodeDetails (it is now on the sidebar settings)
@@ -224,7 +438,6 @@ test('NodeDetails does not render settings button and respects visibleSections',
     selectedNodeId: 'agent-1',
     onClose: () => {},
     onRefresh: () => {},
-    onCheckNewerMessages: () => {},
     visibleSections: { ...DEFAULT_VISIBLE_SECTIONS, status: false },
   }));
   assert.equal(htmlHidden.includes('Status &amp; Workspace'), false);

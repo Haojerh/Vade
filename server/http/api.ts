@@ -17,6 +17,8 @@ import { collectInventory, globalSourceMaps, sendAgentMessage } from '../integra
 import { collectGitHubData } from '../integrations/github.js';
 import { SnapshotManager, defaultSnapshotManager } from '../services/snapshot.js';
 import { UsageCollector } from '../integrations/usage.js';
+import { decodeAttachments, storeAttachments } from '../services/attachments.js';
+import { runOrca } from '../integrations/cli.js';
 
 export interface ApiServerOptions {
   runner?: CommandRunner;
@@ -41,19 +43,20 @@ const MIME_TYPES: Record<string, string> = {
 
 async function parseJsonBody<T = any>(req: http.IncomingMessage, maxBytes = 64 * 1024): Promise<T> {
   return new Promise((resolve, reject) => {
-    let raw = '';
+    const chunks: Buffer[] = [];
     let bytes = 0;
     req.on('data', (chunk: Buffer) => {
       bytes += chunk.length;
       if (bytes > maxBytes) {
-        req.destroy();
         reject(new CliError('INVALID_ARGUMENT', 'Request payload too large'));
         return;
       }
-      raw += chunk.toString('utf8');
+      chunks.push(chunk);
     });
     req.on('end', () => {
+      if (bytes > maxBytes) return;
       try {
+        const raw = Buffer.concat(chunks).toString('utf8');
         if (!raw) {
           reject(new CliError('INVALID_ARGUMENT', 'Request body cannot be empty'));
           return;
@@ -64,6 +67,7 @@ async function parseJsonBody<T = any>(req: http.IncomingMessage, maxBytes = 64 *
       }
     });
     req.on('error', (err) => reject(err));
+    req.on('aborted', () => reject(new CliError('INVALID_ARGUMENT', 'Upload was interrupted')));
   });
 }
 
@@ -332,12 +336,36 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           }
           const projectId = decodeURIComponent(messageMatch[1]);
           const nodeId = decodeURIComponent(messageMatch[2]);
-          const body = await parseJsonBody<{ message?: string }>(req);
-          if (!body || typeof body.message !== 'string' || body.message.trim().length === 0) {
-            sendError(400, 'INVALID_ARGUMENT', 'Field "message" must be a non-empty string');
+          if (!req.headers['content-type']?.startsWith('application/json')) {
+            sendError(400, 'INVALID_ARGUMENT', 'Messaging requires application/json');
             return;
           }
-          const result = await sendAgentMessage(projectId, nodeId, body.message, runner);
+          const body = await parseJsonBody<{ message?: string; attachments?: unknown }>(req, 29 * 1024 * 1024);
+          if (!body || typeof body.message !== 'string' || body.message.length > 10000) {
+            sendError(400, 'INVALID_ARGUMENT', 'Field "message" must be a string up to 10000 characters');
+            return;
+          }
+          const decoded = decodeAttachments(body.attachments);
+          if (!body.message.trim() && !decoded.length) {
+            sendError(400, 'INVALID_ARGUMENT', 'Add a message or attachment');
+            return;
+          }
+          let attachments: Parameters<typeof sendAgentMessage>[4];
+          if (decoded.length) {
+            const snapshot = await snapshotManager.getSnapshot(projectId, null, runner);
+            const node = snapshot.graph.data?.nodes.find((candidate) => candidate.id === nodeId);
+            const source = globalSourceMaps.nodeSourceMap.get(nodeId);
+            if (!node || !['agent', 'orchestrator'].includes(node.kind) || !source?.handle || !source.worktreeId) {
+              throw new CliError('INVALID_ARGUMENT', 'Attachments require a discovered agent in this project');
+            }
+            const terminals = await runOrca<any>(['terminal', 'list', '--worktree', `id:${source.worktreeId}`, '--limit', '100', '--json'], runner);
+            const terminal = terminals.result?.terminals?.find((item: any) => item.handle === source.handle);
+            if (!terminal?.connected || terminal.executionHostId !== 'local') {
+              throw new CliError('INVALID_ARGUMENT', 'Attachment delivery currently requires a connected local terminal; remote uploads are not supported');
+            }
+            attachments = { provider: node.agentType, files: await storeAttachments(decoded) };
+          }
+          const result = await sendAgentMessage(projectId, nodeId, body.message.trim() || 'Please inspect the attached files.', runner, attachments);
           sendJson(200, result);
           return;
         }
@@ -348,7 +376,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           const projectId = decodeURIComponent(githubMatch[1]);
 
           for (const k of Object.keys(query)) {
-            if (k !== 'scope' && k !== 'nodeId') {
+            if (!['scope', 'nodeId', 'activity', 'page'].includes(k)) {
               sendError(400, 'INVALID_ARGUMENT', `Unexpected query parameter '${k}'`);
               return;
             }
@@ -380,6 +408,16 @@ export function createApiHandler(options: ApiServerOptions = {}) {
             }
             githubQuery = { scope: 'worktree', nodeId: query.nodeId };
           }
+
+          if (query.activity !== undefined && !['commits', 'prs', 'issues'].includes(query.activity)) {
+            sendError(400, 'INVALID_ARGUMENT', 'Invalid GitHub activity');
+            return;
+          }
+          if (query.page !== undefined && (!/^[1-9][0-9]{0,4}$/.test(query.page) || Number(query.page) > 10000 || !query.activity)) {
+            sendError(400, 'INVALID_ARGUMENT', 'Page requires activity and must be between 1 and 10000');
+            return;
+          }
+          githubQuery = { ...githubQuery, activity: query.activity as GitHubQuery['activity'], page: query.page ? Number(query.page) : undefined };
 
           // Lookup project in inventory
           let project: any = null;

@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { acknowledgeGitHubItem, observeGitHubItems, readUnreadHistory, saveUnreadHistory, type UnreadHistory } from './githubUnread';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
+import { useGitHubPagination } from './useGitHubPagination';
 import type {
   GitHubData,
   GitHubQuery,
@@ -168,11 +169,6 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             Data is stale. Last observed: {formatDateTime(meta.observedAt)}
           </div>
         )}
-        {meta.partial && (
-          <div className="meta-alert-item alert-partial">
-            Capped window: partial {label.toLowerCase()} data returned (20 items max).
-          </div>
-        )}
         {meta.availability === 'empty' && !meta.issue && (
           <div className="meta-alert-item alert-info">
             Repository reported empty {label.toLowerCase()}.
@@ -182,9 +178,27 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     );
   };
 
-  const commits = data?.commits?.data ?? [];
-  const prs = data?.pullRequests?.data ?? [];
-  const issues = data?.issues?.data ?? [];
+  const pagination = useGitHubPagination(projectId, data, query, (tab, ids) => {
+    const stored = history.current.get(keys[tab]) ?? readUnreadHistory(keys[tab]);
+    const next = { seen: new Set([...(stored?.seen ?? []), ...ids]), unread: stored?.unread ?? new Set<string>() };
+    history.current.set(keys[tab], next);
+    saveUnreadHistory(keys[tab], next);
+  });
+  const { commits, prs, issues } = pagination;
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
+  const more = pagination.nextPage(activeTab);
+  const loadingMore = pagination.loading.includes(activeTab);
+  const pageError = pagination.errors[activeTab];
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!sentinel || !more || loading || loadingMore || pageError || error) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) void pagination.loadMore(activeTab);
+    }, { root: scrollRef.current, rootMargin: '160px' });
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [activeTab, more, loading, loadingMore, pageError, error, data]);
 
   const openPrCount = prs.filter((p) => p.state === 'open').length;
   const closedPrCount = prs.filter((p) => p.state === 'closed' || p.state === 'merged').length;
@@ -396,7 +410,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         >
           Commits
           {unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
-          <span className="tab-count font-mono">{commits.length}</span>
+          <span className="tab-count font-mono" title={`${commits.length} loaded`}>{commits.length}{pagination.nextPage('commits') ? '+' : ''}</span>
         </button>
 
         <button
@@ -410,7 +424,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         >
           PR History
           {unread.prs.size > 0 && <span className="sr-only">{unread.prs.size} new items</span>}
-          <span className="tab-count font-mono">{prs.length}</span>
+          <span className="tab-count font-mono" title={`${prs.length} loaded`}>{prs.length}{pagination.nextPage('prs') ? '+' : ''}</span>
         </button>
 
         <button
@@ -424,12 +438,12 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         >
           Issues
           {unread.issues.size > 0 && <span className="sr-only">{unread.issues.size} new items</span>}
-          <span className="tab-count font-mono">{issues.length}</span>
+          <span className="tab-count font-mono" title={`${issues.length} loaded`}>{issues.length}{pagination.nextPage('issues') ? '+' : ''}</span>
         </button>
       </div>
 
       {/* Tab Panels */}
-      <div className="panel-content github-tab-content">
+      <div className="panel-content github-tab-content" ref={scrollRef}>
         {/* Commits Tab */}
         {activeTab === 'commits' && (
           <div
@@ -740,6 +754,21 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             )}
           </div>
         )}
+        <div ref={sentinelRef} className="github-pagination" aria-live="polite" aria-busy={loadingMore}>
+          {pageError && <span role="alert">{pageError}</span>}
+          {loadingMore ? <div className="github-skeleton-list" role="status" aria-label="Loading more activity">
+            <span className="sr-only">Loading more activity</span>
+            {[0, 1, 2].map((row) => <div className="github-skeleton-row" key={row} aria-hidden="true">
+              <div className="github-skeleton-line short" />
+              <div className="github-skeleton-line" />
+              <div className="github-skeleton-line medium" />
+            </div>)}
+          </div> : more ? (
+            <button className="btn btn-sm" disabled={loading} onClick={() => void pagination.loadMore(activeTab)}>
+              {pageError ? 'Retry loading' : 'Load 20 more'}
+            </button>
+          ) : (commits.length + prs.length + issues.length > 0 && <span className="text-muted text-xs">All available activity loaded</span>)}
+        </div>
       </div>
     </>
   )}

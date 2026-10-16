@@ -31,7 +31,6 @@ export const App: React.FC = () => {
     nodeDetailsLoading,
     nodeDetailsError,
     refreshNodeDetails,
-    loadNewerConversation,
 
     snapshot,
     snapshotLoading,
@@ -800,7 +799,6 @@ export const App: React.FC = () => {
         selectedNodeId={selectedNodeId}
         onClose={() => setSelectedNodeId(null)}
         onRefresh={refreshNodeDetails}
-        onCheckNewerMessages={loadNewerConversation}
         visibleSections={visibleSections}
       />
     </div>

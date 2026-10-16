@@ -73,6 +73,41 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   const runtimeMeta = snapshot?.runtime?.meta;
   const activeVisibleSections = visibleSections ?? DEFAULT_VISIBLE_SECTIONS;
 
+  const [isProjectsExpanded, setIsProjectsExpanded] = React.useState<boolean>(() => {
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const saved = localStorage.getItem('orca-projects-expanded');
+        if (saved !== null) {
+          return saved === 'true';
+        }
+      }
+    } catch {
+      // Storage unavailable fallback
+    }
+    return true;
+  });
+
+  const toggleProjectsExpanded = React.useCallback(() => {
+    setIsProjectsExpanded((prev) => {
+      const next = !prev;
+      try {
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('orca-projects-expanded', String(next));
+        }
+      } catch {
+        // Storage unavailable
+      }
+      return next;
+    });
+  }, []);
+
+  const currentProjectId = React.useMemo(() => {
+    if (selectedProjectId && projects.some((p) => p.id === selectedProjectId)) {
+      return selectedProjectId;
+    }
+    return projects[0]?.id ?? null;
+  }, [projects, selectedProjectId]);
+
   const renderRuntimeStatus = () => {
     const graphMeta = snapshot?.graph?.meta;
     const isUnavailable = graphMeta ? graphMeta.availability !== 'ready' : false;
@@ -199,11 +234,37 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
         </div>
       </div>
 
-      {/* Project Navigation List (Only this section scrolls) */}
-      <div className="rail-section rail-projects-scrollable">
+      {/* Project Navigation Section */}
+      <div className="rail-section rail-projects-section">
         <div className="rail-section-header">
-          <span className="rail-section-label">Projects</span>
-          <span className="rail-section-badge font-mono">{projects.length}</span>
+          <button
+            type="button"
+            className="rail-section-toggle-btn"
+            onClick={toggleProjectsExpanded}
+            aria-expanded={isProjectsExpanded}
+            aria-controls="rail-project-list"
+            aria-label={isProjectsExpanded ? 'Collapse projects list' : 'Expand projects list'}
+            title={isProjectsExpanded ? 'Collapse projects list' : 'Expand projects list'}
+          >
+            <span className="rail-section-toggle-left">
+              <span className="rail-section-label">Projects</span>
+              <span className="rail-section-badge font-mono">{projects.length}</span>
+            </span>
+            <svg
+              className={`rail-chevron-icon ${isProjectsExpanded ? 'is-expanded' : ''}`}
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
         </div>
 
         {loading && <div className="rail-empty-hint">Scanning projects…</div>}
@@ -218,39 +279,50 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
           <div className="rail-empty-hint">No registered projects found.</div>
         )}
 
-        <ul className="project-list" role="list">
-          {projects.map((proj) => {
-            const isSelected = proj.id === selectedProjectId;
-            const primaryPath = proj.paths[0] || '';
-            const displayPath = primaryPath.length > 32
-              ? '…' + primaryPath.slice(-30)
-              : primaryPath;
+        <div className="rail-projects-scrollable">
+          <ul id="rail-project-list" className="project-list" role="list">
+            {projects.map((proj) => {
+              const isSelected = proj.id === selectedProjectId;
+              const isCurrent = proj.id === currentProjectId;
+              const isHidden = !isProjectsExpanded && !isCurrent;
+              const primaryPath = proj.paths[0] || '';
+              const displayPath = primaryPath.length > 32
+                ? '…' + primaryPath.slice(-30)
+                : primaryPath;
 
-            return (
-              <li key={proj.id} className="project-item">
-                <button
-                  type="button"
-                  className={`project-button ${isSelected ? 'active' : ''}`}
-                  onClick={() => onSelectProject(proj.id)}
-                  aria-pressed={isSelected}
-                  aria-label={`Select project ${proj.name}, kind: ${proj.kind}`}
+              return (
+                <li
+                  key={proj.id}
+                  className={`project-item ${isHidden ? 'is-collapsed-hidden' : ''}`}
+                  aria-hidden={isHidden ? true : undefined}
                 >
-                  <div className="project-button-main">
-                    <span className="project-name">{proj.name}</span>
-                    <span className={`project-kind-badge kind-${proj.kind}`}>
-                      {proj.kind}
-                    </span>
+                  <div className="project-item-inner">
+                    <button
+                      type="button"
+                      className={`project-button ${isSelected ? 'active' : ''}`}
+                      onClick={() => onSelectProject(proj.id)}
+                      aria-pressed={isSelected}
+                      aria-label={`Select project ${proj.name}, kind: ${proj.kind}`}
+                      tabIndex={isHidden ? -1 : 0}
+                    >
+                      <div className="project-button-main">
+                        <span className="project-name">{proj.name}</span>
+                        <span className={`project-kind-badge kind-${proj.kind}`}>
+                          {proj.kind}
+                        </span>
+                      </div>
+                      {primaryPath && (
+                        <div className="project-path font-mono" title={primaryPath}>
+                          {displayPath}
+                        </div>
+                      )}
+                    </button>
                   </div>
-                  {primaryPath && (
-                    <div className="project-path font-mono" title={primaryPath}>
-                      {displayPath}
-                    </div>
-                  )}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       </div>
 
       {/* Rail Footer: Anchored to viewport bottom with SSE status & monitor text */}

@@ -3,8 +3,10 @@ import type { Node, Edge } from '../../../shared/contracts';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
 import { NodeMessagePreview } from './NodeMessagePreview';
 import { compareWorkflowNodes } from './workflowOrder';
+import { separateWorkflowBoxes, type LayoutBox } from './workflowCollision';
 import { sendNodeMessage } from '../../api/client';
 import { usePopoverState } from '../../hooks/usePopoverState';
+import { MessageAttachments, validateMessageFiles } from './MessageAttachments';
 
 interface WorkflowGraphProps {
   projectId: string | null;
@@ -139,6 +141,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   const [dropHoverNodeId, setDropHoverNodeId] = useState<string | null>(null);
   const [chatOpenNodeId, setChatOpenNodeId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<Record<string, string>>({});
+  const [chatFiles, setChatFiles] = useState<Record<string, File[]>>({});
+  useEffect(() => { setChatFiles({}); }, [projectId]);
   const [chatSending, setChatSending] = useState<Record<string, boolean>>({});
   const [chatStatuses, setChatStatuses] = useState<Record<string, { type: 'success' | 'error'; text: string } | null>>({});
 
@@ -152,9 +156,25 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       return {};
     }
   });
+  const [collisionOffsets, setCollisionOffsets] = useState<Record<string, { x: number; y: number }>>({});
+  const collisionOffsetsRef = useRef(collisionOffsets);
+  collisionOffsetsRef.current = collisionOffsets;
+  const layoutAnchorsRef = useRef(new Map<string, { x: number; y: number }>());
+  const nodeOffsetsRef = useRef(nodeOffsets);
+  nodeOffsetsRef.current = nodeOffsets;
+  const effectiveOffsets = useMemo(() => {
+    const result = { ...nodeOffsets };
+    for (const [id, correction] of Object.entries(collisionOffsets)) {
+      const requested = nodeOffsets[id] || { x: 0, y: 0 };
+      result[id] = { x: requested.x + correction.x, y: requested.y + correction.y };
+    }
+    return result;
+  }, [nodeOffsets, collisionOffsets]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
+    setCollisionOffsets({});
+    layoutAnchorsRef.current.clear();
     try {
       const saved = localStorage.getItem(`orca-workflow-node-offsets:${projectId || 'default'}`);
       setNodeOffsets(saved ? JSON.parse(saved) : {});
@@ -235,16 +255,17 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       return;
     }
     const text = (chatMessages[nodeId] || '').trim();
-    if (!text) return;
+    if ((!text && !chatFiles[nodeId]?.length) || chatSending[nodeId]) return;
 
     setChatSending((prev) => ({ ...prev, [nodeId]: true }));
     setChatStatuses((prev) => ({ ...prev, [nodeId]: null }));
 
     try {
-      const res = await sendNodeMessage(projectId, nodeId, text);
+      const res = await sendNodeMessage(projectId, nodeId, text, undefined, chatFiles[nodeId] || []);
       if (res.ok) {
         setChatStatuses((prev) => ({ ...prev, [nodeId]: { type: 'success', text: 'Sent!' } }));
         setChatMessages((prev) => ({ ...prev, [nodeId]: '' }));
+        setChatFiles((prev) => ({ ...prev, [nodeId]: [] }));
         setTimeout(() => {
           setChatOpenNodeId((curr) => (curr === nodeId ? null : curr));
           setChatStatuses((prev) => ({ ...prev, [nodeId]: null }));
@@ -258,10 +279,10 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     } finally {
       setChatSending((prev) => ({ ...prev, [nodeId]: false }));
     }
-  }, [projectId, chatMessages]);
+  }, [projectId, chatMessages, chatFiles, chatSending]);
 
   const handleDragOver = useCallback((e: React.DragEvent, nodeId: string) => {
-    if (isDraggingGitHubItem || e.dataTransfer.types.includes('application/json')) {
+    if (isDraggingGitHubItem || e.dataTransfer.types.includes('application/json') || e.dataTransfer.types.includes('Files')) {
       e.preventDefault();
       e.dataTransfer.dropEffect = 'copy';
       if (dropHoverNodeId !== nodeId) {
@@ -283,6 +304,17 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     setIsDraggingGitHubItem(false);
     setDropHoverNodeId(null);
 
+    if (e.dataTransfer.files.length) {
+      if (chatSending[nodeId]) return;
+      const files = [...(chatFiles[nodeId] || []), ...Array.from(e.dataTransfer.files)];
+      const error = validateMessageFiles(files);
+      closePreview();
+      setChatOpenNodeId(nodeId);
+      if (error) setChatStatuses((prev) => ({ ...prev, [nodeId]: { type: 'error', text: error } }));
+      else setChatFiles((prev) => ({ ...prev, [nodeId]: files }));
+      return;
+    }
+
     let item = draggedItem;
     if (!item) {
       try {
@@ -301,7 +333,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       setChatOpenNodeId(nodeId);
       setChatMessages((prev) => ({ ...prev, [nodeId]: prompt }));
     }
-  }, [draggedItem, closePreview]);
+  }, [draggedItem, closePreview, chatFiles, chatSending]);
 
   const previewEvents = (node: Node) => ({
     onPointerEnter: (event: React.PointerEvent<HTMLElement>) => {
@@ -345,23 +377,11 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         onMouseDown={(e) => e.stopPropagation()}
         onContextMenu={(e) => e.stopPropagation()}
       >
-        <textarea
-          className="node-card-chat-textarea"
-          placeholder={`Message ${node.label}... (Enter to send)`}
-          value={currentMsg}
-          onChange={(e) => setChatMessages((prev) => ({ ...prev, [node.id]: e.target.value }))}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              handleSendChatMessage(node.id);
-            }
-          }}
-          rows={currentMsg.includes('\n') ? 5 : 2}
-          disabled={isSending}
-          autoFocus
-        />
-        <div className="node-card-chat-actions">
-          {status ? (
+        <MessageAttachments files={chatFiles[node.id] || []} disabled={isSending}
+          onChange={(files) => setChatFiles((prev) => ({ ...prev, [node.id]: files }))}
+          renderControls={(attachButton) => (<div className="node-card-chat-actions">
+          {attachButton}
+          {status && (
             <span
               className={`font-mono text-xs font-semibold ${
                 status.type === 'error' ? 'text-danger' : 'text-success'
@@ -369,8 +389,6 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
             >
               {status.text}
             </span>
-          ) : (
-            <span className="text-muted text-xs font-mono">Right-click toggles</span>
           )}
           <div className="node-card-chat-actions-right">
             <button
@@ -385,7 +403,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
               type="button"
               className="btn btn-primary btn-xs btn-chat-send"
               onClick={() => handleSendChatMessage(node.id)}
-              disabled={isSending || !currentMsg.trim()}
+              disabled={isSending || (!currentMsg.trim() && !chatFiles[node.id]?.length)}
             >
               {isSending ? (
                 <span>Sending…</span>
@@ -400,7 +418,22 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
               )}
             </button>
           </div>
-        </div>
+        </div>)}>
+        <textarea
+          className="node-card-chat-textarea"
+          placeholder={`Message ${node.label}... (Enter to send)`}
+          value={currentMsg}
+          onChange={(e) => setChatMessages((prev) => ({ ...prev, [node.id]: e.target.value }))}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              handleSendChatMessage(node.id);
+            }
+          }}
+          rows={currentMsg.includes('\n') ? 5 : 2}
+          disabled={isSending}
+        />
+        </MessageAttachments>
       </div>
     );
   };
@@ -412,6 +445,11 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   const [canvasSize, setCanvasSize] = useState<{ width: number; height: number }>({ width: 0, height: 0 });
 
   const rafIdRef = useRef<number | null>(null);
+  useLayoutEffect(() => {
+    if (chatOpenNodeId) {
+      elementRefs.current.get(chatOpenNodeId)?.querySelector('textarea')?.focus({ preventScroll: true });
+    }
+  }, [chatOpenNodeId]);
 
   // 1. Separate orchestrators, worktrees, and member agents. Filter out terminals completely.
   const { orchestrators, worktrees, worktreeAgentsMap, unassignedAgents } = useMemo(() => {
@@ -547,6 +585,38 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     const containerRect = container.getBoundingClientRect();
     const scrollLeft = container.scrollLeft;
     const scrollTop = container.scrollTop;
+
+    const boxes: LayoutBox[] = [];
+    const flowPositions = new Map<string, { x: number; y: number }>();
+    elementRefs.current.forEach((element, id) => {
+      if (!element.isConnected) return;
+      const worktree = element.closest('.worktree-box-container');
+      if (worktree && worktree !== element && !worktree.classList.contains('unassigned-box-container')) return;
+      const group = element.closest('.orchestrator-group') || element;
+      const rect = group.getBoundingClientRect();
+      const correction = collisionOffsetsRef.current[id] || { x: 0, y: 0 };
+      const flow = { x: rect.left - containerRect.left + scrollLeft - correction.x,
+        y: rect.top - containerRect.top + scrollTop - correction.y };
+      flowPositions.set(id, flow);
+      const offset = nodeOffsetsRef.current[id] || { x: 0, y: 0 };
+      if (!layoutAnchorsRef.current.has(id)) {
+        layoutAnchorsRef.current.set(id, { x: flow.x - offset.x, y: flow.y - offset.y });
+      }
+      const anchor = layoutAnchorsRef.current.get(id)!;
+      boxes.push({ id, x: anchor.x + offset.x, y: anchor.y + offset.y, width: rect.width, height: rect.height });
+    });
+    for (const id of layoutAnchorsRef.current.keys()) {
+      if (!flowPositions.has(id)) layoutAnchorsRef.current.delete(id);
+    }
+    const corrections: Record<string, { x: number; y: number }> = {};
+    for (const box of separateWorkflowBoxes(boxes)) {
+      const original = flowPositions.get(box.id)!;
+      corrections[box.id] = { x: box.x - original.x, y: box.y - original.y };
+    }
+    setCollisionOffsets((previous) => Object.keys(previous).length === Object.keys(corrections).length &&
+      Object.entries(corrections).every(([id, value]) => previous[id] &&
+        Math.abs(previous[id].x - value.x) < 0.5 && Math.abs(previous[id].y - value.y) < 0.5)
+      ? previous : corrections);
 
     const newPositions = new Map<string, AnchorBox>();
 
@@ -688,11 +758,17 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       return;
     }
 
-    const currentOffset = nodeOffsets[id] || { x: 0, y: 0 };
     const draggedElement = elementRefs.current.get(id);
     const boundedElement = draggedElement?.matches('.worktree-box-container')
       ? draggedElement : draggedElement?.closest<HTMLElement>('.orchestrator-group');
     const canvas = containerRef.current;
+    const anchor = layoutAnchorsRef.current.get(id);
+    const rect = (boundedElement || draggedElement)?.getBoundingClientRect();
+    const currentOffset = anchor && rect && canvas ? {
+      x: rect.left - canvas.getBoundingClientRect().left + canvas.scrollLeft - anchor.x,
+      y: rect.top - canvas.getBoundingClientRect().top + canvas.scrollTop - anchor.y,
+    } : nodeOffsets[id] || { x: 0, y: 0 };
+    setNodeOffsets((previous) => ({ ...previous, [id]: currentOffset }));
     const minimumX = boundedElement && canvas
       ? currentOffset.x - (boundedElement.getBoundingClientRect().left - canvas.getBoundingClientRect().left - canvas.clientLeft + canvas.scrollLeft)
       : -Infinity;
@@ -764,8 +840,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   }, [closePreview, nodeOffsets, projectId, scheduleUpdate]);
 
   useLayoutEffect(() => {
-    scheduleUpdate();
-  }, [nodes, edges, orchestrators, worktrees, worktreeAgentsMap, unassignedAgents, scheduleUpdate]);
+    measurePositions();
+  }, [nodes, edges, orchestrators, worktrees, worktreeAgentsMap, unassignedAgents, nodeOffsets, collisionOffsets, chatOpenNodeId, measurePositions]);
 
   // Set ref helper: dynamically observe mounted elements, unobserve unmounted
   const registerRef = useCallback((id: string, el: HTMLElement | null) => {
@@ -792,7 +868,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     if (!container) return;
 
     const observer = new ResizeObserver(() => {
-      scheduleUpdate();
+      measurePositions();
     });
     resizeObserverRef.current = observer;
 
@@ -1036,7 +1112,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                 <div className="orchestrator-cards-list">
                   {orchestrators.map((orch) => {
                     const isSelected = orch.id === selectedNodeId;
-                    const offset = nodeOffsets[orch.id];
+                    const offset = effectiveOffsets[orch.id];
                     return (
                       <div
                         key={orch.id}
@@ -1158,8 +1234,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                       draggingNodeId === wt.id ? 'is-dragging-node' : ''
                     }`}
                     style={
-                      nodeOffsets[wt.id]
-                        ? { transform: `translate(${nodeOffsets[wt.id].x}px, ${nodeOffsets[wt.id].y}px)` }
+                      effectiveOffsets[wt.id]
+                        ? { transform: `translate(${effectiveOffsets[wt.id].x}px, ${effectiveOffsets[wt.id].y}px)` }
                         : undefined
                     }
                     aria-label={`Worktree container: ${wt.label}`}
@@ -1318,8 +1394,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                             draggingNodeId === ag.id ? 'is-dragging-node' : ''
                           }`}
                           style={
-                            nodeOffsets[ag.id]
-                              ? { transform: `translate(${nodeOffsets[ag.id].x}px, ${nodeOffsets[ag.id].y}px)` }
+                            effectiveOffsets[ag.id]
+                              ? { transform: `translate(${effectiveOffsets[ag.id].x}px, ${effectiveOffsets[ag.id].y}px)` }
                               : undefined
                           }
                           onPointerDown={(e) => handleNodeDragStart(ag.id, e)}

@@ -397,6 +397,14 @@ button {
   overflow-x: hidden;
 }
 
+.sidebar-left .sidebar-scrollable-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .sidebar-resizer-handle {
   position: absolute;
   top: 0;
@@ -1007,6 +1015,7 @@ button {
   flex: 1 1 0;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
   padding: 24px 32px;
   cursor: grab;
 }
@@ -1724,9 +1733,12 @@ button {
   display: flex;
   flex-direction: column;
   height: 100%;
+  max-height: 100%;
+  min-height: 0;
   padding: 14px;
   gap: 12px;
   overflow: hidden;
+  box-sizing: border-box;
 }
 .rail-brand {
   display: flex;
@@ -1768,16 +1780,6 @@ button {
   font-size: 11px;
   color: var(--text-muted);
   margin-top: 1px;
-}
-
-.rail-projects-scrollable {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow-y: auto;
-  overflow-x: hidden;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
 }
 
 .runtime-status-card {
@@ -1846,6 +1848,14 @@ button {
   flex-direction: column;
   gap: 8px;
 }
+.rail-projects-section {
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
 .rail-section-header {
   display: flex;
   align-items: center;
@@ -1855,7 +1865,56 @@ button {
   text-transform: uppercase;
   color: var(--text-muted);
   letter-spacing: 0.5px;
+  flex-shrink: 0;
 }
+.rail-section-toggle-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 0;
+  margin: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  user-select: none;
+}
+.rail-section-toggle-btn:hover {
+  background: transparent;
+  color: var(--text-muted);
+}
+.rail-section-toggle-btn:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+.rail-section-toggle-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.rail-chevron-icon {
+  color: var(--text-muted);
+  transition: transform 240ms var(--ease-drawer);
+  flex-shrink: 0;
+  transform: rotate(0deg);
+}
+.rail-chevron-icon.is-expanded {
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rail-chevron-icon,
+  .project-item,
+  .project-item-inner {
+    transition: none !important;
+  }
+}
+
 .rail-empty-hint {
   font-size: 11px;
   color: var(--text-muted);
@@ -1869,11 +1928,49 @@ button {
   background: var(--state-failed-bg);
 }
 
+.rail-projects-scrollable {
+  flex: 1 1 0;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-right: 2px;
+  scrollbar-gutter: stable;
+}
+
 .project-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
   list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.project-item {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 240ms var(--ease-drawer), opacity 180ms ease, margin-bottom 240ms var(--ease-drawer);
+  margin-bottom: 4px;
+}
+.project-item:last-child {
+  margin-bottom: 0;
+}
+.project-item.is-collapsed-hidden {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-bottom: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: grid-template-rows 240ms var(--ease-drawer), opacity 160ms ease, margin-bottom 240ms var(--ease-drawer), visibility 0s linear 240ms;
+}
+.project-item-inner {
+  min-height: 0;
+  overflow: hidden;
+  transition: transform 240ms var(--ease-drawer);
+  transform: translateY(0) scale(1);
+}
+.project-item.is-collapsed-hidden .project-item-inner {
+  transform: translateY(-4px) scale(0.98);
 }
 .project-button {
   width: 100%;
@@ -2284,6 +2381,22 @@ button {
   flex: 1 1 auto;
   overflow-y: auto;
 }
+.github-pagination {
+  min-height: 48px;
+  padding: 12px 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+.github-skeleton-list { width: 100%; display: grid; gap: 8px; }
+.github-skeleton-row { padding: 12px 10px; background: var(--surface-2); border-radius: 6px; display: grid; gap: 10px; }
+.github-skeleton-line { height: 10px; border-radius: 3px; background: linear-gradient(100deg, var(--border-main) 25%, var(--border-strong) 45%, var(--surface-active) 55%, var(--border-main) 75%); background-size: 250% 100%; animation: github-skeleton-shimmer 1.6s linear infinite; }
+.github-skeleton-line.short { width: 35%; }
+.github-skeleton-line.medium { width: 65%; }
+@keyframes github-skeleton-shimmer { from { background-position: 150% 0; } to { background-position: -150% 0; } }
+@media (prefers-reduced-motion: reduce) { .github-skeleton-line { animation: none; } }
 .github-item-list {
   display: flex;
   flex-direction: column;
@@ -2410,6 +2523,34 @@ dialog.reset-layout-dialog {
   background: var(--state-failed-bg);
   border-color: var(--state-failed-text);
 }
+.message-attachments { min-width: 0; width: 100%; }
+.message-attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 0;
+  margin: 8px 0;
+  list-style: none;
+}
+.message-attachment-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--border-main);
+  border-radius: 6px;
+  background: var(--surface-2);
+  font-size: 11px;
+}
+.message-attachment-list li > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.message-attachment-list button { flex-shrink: 0; }
+.message-attachment-preview { width: 32px; height: 32px; object-fit: cover; border-radius: 3px; }
+.message-attachment-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+.message-composer-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; }
+.message-composer-actions .message-attachment-controls { margin-top: 0; min-width: 0; }
+.message-composer-actions > button { flex-shrink: 0; }
 dialog.node-modal-dialog[open] {
   animation: modalEnter 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
@@ -3129,6 +3270,17 @@ dialog.node-modal-dialog.is-closing::backdrop {
 /* ==========================================================================
    Node Card Extended Chatbox (Right-click & Drop)
    ========================================================================== */
+.orchestrator-group:has(.node-chat-extended),
+.worktree-box-container:has(.node-chat-extended) {
+  position: relative;
+  z-index: 20;
+}
+.graph-node-card.node-chat-extended {
+  z-index: 20;
+}
+[data-card-colors] .graph-node-card.node-chat-extended {
+  background: var(--surface-2);
+}
 .node-card-chat-extension {
   margin-top: 10px;
   padding-top: 10px;

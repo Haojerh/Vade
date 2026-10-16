@@ -6,6 +6,7 @@ import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { LatestMessageCard } from './LatestMessageCard';
 import { MessageMarkdown } from './MessageMarkdown';
 import { sendNodeMessage } from '../../api/client';
+import { MessageAttachments } from './MessageAttachments';
 
 export interface NodeDetailsVisibleSections {
   status: boolean;
@@ -33,7 +34,6 @@ interface NodeDetailsProps {
   selectedNodeId: string | null;
   onClose: () => void;
   onRefresh: () => void;
-  onCheckNewerMessages: () => void;
   visibleSections?: NodeDetailsVisibleSections;
 }
 
@@ -109,7 +109,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   selectedNodeId,
   onClose,
   onRefresh,
-  onCheckNewerMessages,
   visibleSections,
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -122,6 +121,8 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
 
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const [chatMessage, setChatMessage] = useState<string>('');
+  const [chatFiles, setChatFiles] = useState<File[]>([]);
+  useEffect(() => { setChatFiles([]); setChatMessage(''); }, [projectId, selectedNodeId]);
   const [chatSending, setChatSending] = useState<boolean>(false);
   const [chatStatus, setChatStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
@@ -132,15 +133,16 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   };
 
   const handleSendMessage = async () => {
-    if (!projectId || !details?.node || !chatMessage.trim() || chatSending) return;
+    if (!projectId || !details?.node || (!chatMessage.trim() && !chatFiles.length) || chatSending) return;
     setChatSending(true);
     setChatStatus(null);
     try {
-      await sendNodeMessage(projectId, details.node.id, chatMessage.trim());
+      await sendNodeMessage(projectId, details.node.id, chatMessage.trim(), undefined, chatFiles);
       setChatStatus({ type: 'success', text: 'Message sent!' });
       setChatMessage('');
+      setChatFiles([]);
       setTimeout(() => setChatStatus(null), 3000);
-      onCheckNewerMessages();
+      onRefresh();
     } catch (err: any) {
       setChatStatus({ type: 'error', text: err?.message || 'Failed to send message' });
     } finally {
@@ -324,7 +326,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const convMeta = conversation?.meta;
   const messages = convData?.messages ?? [];
   const latestReply = latestAgentMessage(messages);
-  const hasNewerCursor = Boolean(convData?.nextCursor && convData.nextCursor !== convData.cursor);
   const isWorktree = node?.kind === 'worktree';
   const assignedTasks = (details?.tasks ?? []).filter(
     (t) => t.assigneeNodeId === node?.id || (node?.taskIds && node.taskIds.includes(t.id))
@@ -752,23 +753,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         </div>
                       )}
 
-                      {/* Check for newer messages button */}
-                      {hasNewerCursor && (
-                        <div className="conv-actions-footer mt-3">
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={onCheckNewerMessages}
-                            disabled={loading}
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <polyline points="7 13 12 18 17 13" />
-                              <polyline points="7 6 12 11 17 6" />
-                            </svg>
-                            <span>Check for newer messages</span>
-                          </button>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
@@ -793,6 +777,27 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         handleSendMessage();
                       }}
                     >
+                      <MessageAttachments files={chatFiles} onChange={setChatFiles} disabled={chatSending}
+                        renderControls={(attachButton) => (<div className="message-composer-actions">
+                        <div className="message-attachment-controls">{attachButton}<span className="text-xs text-muted">Paste or drop files - 5 MiB each</span></div>
+                        <button
+                          type="submit"
+                          className="btn btn-primary btn-sm btn-chat-send"
+                          disabled={chatSending || (!chatMessage.trim() && !chatFiles.length)}
+                        >
+                          {chatSending ? (
+                            <span>Sending...</span>
+                          ) : (
+                            <>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <line x1="22" y1="2" x2="11" y2="13" />
+                                <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                              </svg>
+                              <span>Send</span>
+                            </>
+                          )}
+                        </button>
+                      </div>)}>
                       <textarea
                         className="chatbox-textarea"
                         placeholder={`Message ${node.label}... (Enter to send, Shift+Enter for new line)`}
@@ -807,25 +812,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         rows={3}
                         disabled={chatSending}
                       />
-                      <div className="chatbox-actions-row flex justify-end items-center mt-2">
-                        <button
-                          type="submit"
-                          className="btn btn-primary btn-sm btn-chat-send"
-                          disabled={chatSending || !chatMessage.trim()}
-                        >
-                          {chatSending ? (
-                            <span>Sending...</span>
-                          ) : (
-                            <>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <line x1="22" y1="2" x2="11" y2="13" />
-                                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                              </svg>
-                              <span>Send</span>
-                            </>
-                          )}
-                        </button>
-                      </div>
+                      </MessageAttachments>
                     </form>
                   </div>
                 </div>

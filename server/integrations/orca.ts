@@ -27,6 +27,7 @@ import {
 import { runOrca, CommandRunner, defaultCommandRunner, CliError, cleanErrorMessage } from './cli.js';
 import { readAntigravityModel } from '../providers/antigravity.js';
 import { taskProgress } from '../services/progress.js';
+import { attachmentPaste, attachmentReference, usesNativeImageAttachment } from '../services/attachments.js';
 import { localTranscriptProviders, publicTranscriptRecord, transcriptSettings, openCodeDatabase, readOpenCodePage, readOpenCodeModel } from '../providers/transcripts.js';
 
 export function hashId(prefix: string, key: string): Id {
@@ -3005,11 +3006,14 @@ export async function collectNodeDetails(
   };
 }
 
+const sendingTerminals = new Set<string>();
+
 export async function sendAgentMessage(
   projectId: Id,
   nodeId: Id,
   message: string,
-  runner: CommandRunner = defaultCommandRunner
+  runner: CommandRunner = defaultCommandRunner,
+  attachments?: { provider: string | null; files: { path: string; name: string; image: boolean }[] }
 ): Promise<{ ok: boolean; message: string }> {
   if (!message || typeof message !== 'string' || message.trim().length === 0) {
     throw new CliError('INVALID_ARGUMENT', 'Message cannot be empty');
@@ -3024,11 +3028,43 @@ export async function sendAgentMessage(
   const handle = source?.handle;
 
   if (handle && /^term_[a-zA-Z0-9_-]+$/.test(handle)) {
-    const res = await runOrca<any>(['terminal', 'send', '--terminal', handle, '--text', cleanMessage, '--enter', '--json'], runner);
-    if (!res.ok) {
-      throw new CliError('CLI_FAILED', 'Failed to send message to agent terminal');
+    if (sendingTerminals.has(handle)) throw new CliError('RATE_LIMITED', 'A message is already being sent to this terminal');
+    sendingTerminals.add(handle);
+    try {
+      if (attachments?.files.length) {
+        for (const file of attachments.files) {
+          if (!usesNativeImageAttachment(attachments.provider, file)) continue;
+          const staged = await runOrca<any>(['terminal', 'send', '--terminal', handle, '--text', attachmentPaste(attachments.provider, file), '--json'], runner);
+          if (staged.result?.send?.accepted === false) throw new CliError('CLI_FAILED', 'The agent refused an attachment; the message was not submitted');
+        }
+        // Allow TUIs to register attachment chips before the text-plus-Enter submission.
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      }
+      if (attachments?.files.length) {
+        // The text-plus-Enter CLI route trims leading whitespace. Stage a raw
+        // multiline paste instead, then submit separately to preserve the break.
+        const references = attachments.files.filter((file) => !usesNativeImageAttachment(attachments.provider, file)).map(attachmentReference);
+        const text = `${references.join('\n')}\n${cleanMessage}`;
+        const prompt = `\x1b[200~${text.replace(/\x1b/g, '')}\x1b[201~`;
+        const staged = await runOrca<any>(['terminal', 'send', '--terminal', handle, '--text', prompt, '--json'], runner);
+        if (staged.result?.send?.accepted === false) throw new CliError('CLI_FAILED', 'The agent refused the message text');
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const args = attachments?.files.length
+        ? ['terminal', 'send', '--terminal', handle, '--enter', '--json']
+        : ['terminal', 'send', '--terminal', handle, '--text', cleanMessage, '--enter', '--json'];
+      const res = await runOrca<any>(args, runner);
+      if (!res.ok || res.result?.send?.accepted === false) {
+        throw new CliError('CLI_FAILED', 'Failed to send message to agent terminal');
+      }
+      return { ok: true, message: 'Message sent to agent terminal' };
+    } finally {
+      sendingTerminals.delete(handle);
     }
-    return { ok: true, message: 'Message sent to agent terminal' };
+  }
+
+  if (attachments?.files.length) {
+    throw new CliError('INVALID_ARGUMENT', 'Attachments require an exact local agent terminal');
   }
 
   // 2. Dispatch map lookup
