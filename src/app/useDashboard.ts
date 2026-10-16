@@ -34,7 +34,6 @@ export interface UseDashboardReturn {
   nodeDetailsLoading: boolean;
   nodeDetailsError: string | null;
   refreshNodeDetails: () => void;
-  loadNewerConversation: () => void;
 
   // Snapshot & Graph
   snapshot: DashboardSnapshot | null;
@@ -414,7 +413,7 @@ export function useDashboard(): UseDashboardReturn {
 
   // Load Node Details for selected node
   const loadNodeDetails = useCallback(
-    async (cursor?: string | null) => {
+    async () => {
       if (!selectedProjectId || !selectedNodeId) {
         setNodeDetails(null);
         return;
@@ -437,7 +436,6 @@ export function useDashboard(): UseDashboardReturn {
           selectedNodeId,
           {
             runId: selectedRunId,
-            cursor: cursor || undefined,
             limit: 20,
           },
           abort.signal,
@@ -445,32 +443,7 @@ export function useDashboard(): UseDashboardReturn {
 
         if (abort.signal.aborted || currentGen !== nodeGeneration.current) return;
 
-        if (cursor && nodeDetails && details.conversation?.data && nodeDetails.conversation?.data) {
-          // If source changed, reset to new page
-          if (details.conversation.data.sourceIdentity !== nodeDetails.conversation.data.sourceIdentity) {
-            setNodeDetails(details);
-          } else {
-            // Deduplicate by message ID and merge chronologically
-            const existing = nodeDetails.conversation.data.messages;
-            const incoming = details.conversation.data.messages;
-            const existingIds = new Set(existing.map((m) => m.id));
-            const newMessages = incoming.filter((m) => !existingIds.has(m.id));
-            const combined = [...existing, ...newMessages];
-
-            setNodeDetails({
-              ...details,
-              conversation: {
-                ...details.conversation,
-                data: {
-                  ...details.conversation.data,
-                  messages: combined,
-                },
-              },
-            });
-          }
-        } else {
-          setNodeDetails(details);
-        }
+        setNodeDetails(details);
       } catch (err: any) {
         if (!abort.signal.aborted && currentGen === nodeGeneration.current) {
           setNodeDetailsError(err.message || 'Failed to load node details');
@@ -481,7 +454,7 @@ export function useDashboard(): UseDashboardReturn {
         }
       }
     },
-    [selectedProjectId, selectedNodeId, selectedRunId, nodeDetails],
+    [selectedProjectId, selectedNodeId, selectedRunId],
   );
 
   useEffect(() => {
@@ -500,13 +473,6 @@ export function useDashboard(): UseDashboardReturn {
   const refreshNodeDetails = useCallback(() => {
     loadNodeDetails();
   }, [loadNodeDetails]);
-
-  const loadNewerConversation = useCallback(() => {
-    const nextCursor = nodeDetails?.conversation?.data?.nextCursor;
-    if (nextCursor) {
-      loadNodeDetails(nextCursor);
-    }
-  }, [nodeDetails, loadNodeDetails]);
 
   const refreshAll = useCallback(() => {
     loadProjects();
@@ -549,7 +515,6 @@ export function useDashboard(): UseDashboardReturn {
     nodeDetailsLoading,
     nodeDetailsError,
     refreshNodeDetails,
-    loadNewerConversation,
 
     snapshot,
     snapshotLoading,

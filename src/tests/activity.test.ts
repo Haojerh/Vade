@@ -390,7 +390,6 @@ test('NodeDetails does not render settings button and respects visibleSections',
     selectedNodeId: 'agent-1',
     onClose: () => {},
     onRefresh: () => {},
-    onCheckNewerMessages: () => {},
     visibleSections: DEFAULT_VISIBLE_SECTIONS,
   }));
   // Settings button is removed from NodeDetails (it is now on the sidebar settings)
@@ -407,7 +406,6 @@ test('NodeDetails does not render settings button and respects visibleSections',
     selectedNodeId: 'agent-1',
     onClose: () => {},
     onRefresh: () => {},
-    onCheckNewerMessages: () => {},
     visibleSections: { ...DEFAULT_VISIBLE_SECTIONS, status: false },
   }));
   assert.equal(htmlHidden.includes('Status &amp; Workspace'), false);

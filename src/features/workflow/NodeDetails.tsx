@@ -34,7 +34,6 @@ interface NodeDetailsProps {
   selectedNodeId: string | null;
   onClose: () => void;
   onRefresh: () => void;
-  onCheckNewerMessages: () => void;
   visibleSections?: NodeDetailsVisibleSections;
 }
 
@@ -110,7 +109,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   selectedNodeId,
   onClose,
   onRefresh,
-  onCheckNewerMessages,
   visibleSections,
 }) => {
   const dialogRef = useRef<HTMLDialogElement>(null);
@@ -144,7 +142,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
       setChatMessage('');
       setChatFiles([]);
       setTimeout(() => setChatStatus(null), 3000);
-      onCheckNewerMessages();
+      onRefresh();
     } catch (err: any) {
       setChatStatus({ type: 'error', text: err?.message || 'Failed to send message' });
     } finally {
@@ -328,7 +326,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const convMeta = conversation?.meta;
   const messages = convData?.messages ?? [];
   const latestReply = latestAgentMessage(messages);
-  const hasNewerCursor = Boolean(convData?.nextCursor && convData.nextCursor !== convData.cursor);
   const isWorktree = node?.kind === 'worktree';
   const assignedTasks = (details?.tasks ?? []).filter(
     (t) => t.assigneeNodeId === node?.id || (node?.taskIds && node.taskIds.includes(t.id))
@@ -756,23 +753,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         </div>
                       )}
 
-                      {/* Check for newer messages button */}
-                      {hasNewerCursor && (
-                        <div className="conv-actions-footer mt-3">
-                          <button
-                            type="button"
-                            className="btn btn-secondary btn-sm"
-                            onClick={onCheckNewerMessages}
-                            disabled={loading}
-                          >
-                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                              <polyline points="7 13 12 18 17 13" />
-                              <polyline points="7 6 12 11 17 6" />
-                            </svg>
-                            <span>Check for newer messages</span>
-                          </button>
-                        </div>
-                      )}
                     </div>
                   </div>
                 </div>
