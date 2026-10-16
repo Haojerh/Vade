@@ -15,6 +15,16 @@ export function mergeGitHubItems<T extends Commit | PullRequest | GitHubIssue>(f
   });
 }
 
+export function retainGitHubHistory(previous: Items, data: GitHubData): Items {
+  const retain = <T extends Commit | PullRequest | GitHubIssue>(section: { data: T[] | null; meta: { stale: boolean; issue: unknown } }, items: T[]) =>
+    section.data && !section.meta.stale && !section.meta.issue ? mergeGitHubItems(section.data, items) : items;
+  return {
+    commits: retain(data.commits, previous.commits),
+    prs: retain(data.pullRequests, previous.prs),
+    issues: retain(data.issues, previous.issues),
+  };
+}
+
 export function useGitHubPagination(projectId: string | null, data: GitHubData | null, query: GitHubQuery,
   onHistory: (tab: GitHubActivity, ids: string[]) => void) {
   const key = `${projectId}::${data?.repository?.url}::${query.scope}::${query.scope === 'worktree' ? query.nodeId : ''}::${data?.scope.branch}`;
@@ -27,6 +37,12 @@ export function useGitHubPagination(projectId: string | null, data: GitHubData |
     setState({ key, items: empty(), pages: {}, loading: [], errors: {} });
     return () => { requests.current.forEach((controller) => controller.abort()); requests.current.clear(); };
   }, [key]);
+  useEffect(() => {
+    if (!data) return;
+    setState((previous) => previous.key === key
+      ? { ...previous, items: retainGitHubHistory(previous.items, data) }
+      : previous);
+  }, [key, data]);
   const visible: Omit<typeof state, 'key'> = state.key === key ? state : { items: empty(), pages: {}, loading: [], errors: {} };
   const nextPage = (tab: GitHubActivity) => {
     const section = tab === 'prs' ? data?.pullRequests : data?.[tab];

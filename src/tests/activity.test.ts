@@ -10,12 +10,44 @@ import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets
 import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
 import { separateWorkflowBoxes } from '../features/workflow/workflowCollision';
 import { GitHubPanel } from '../features/github/GitHubPanel';
-import { mergeGitHubItems } from '../features/github/useGitHubPagination';
+import { mergeGitHubItems, retainGitHubHistory } from '../features/github/useGitHubPagination';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/NodeDetails';
 import { buildGitHubPrompt } from '../features/workflow/WorkflowGraph';
 import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
-import type { Node, NodeDetails as NodeDetailsType } from '../../shared/contracts';
+import type { GitHubData, Node, NodeDetails as NodeDetailsType } from '../../shared/contracts';
+
+test('GitHub refresh preserves the previous first-page boundary across all activity types', () => {
+  const meta = { availability: 'ready' as const, observedAt: null, attemptedAt: '2026-10-16T00:00:00Z', stale: false, partial: true, issue: null };
+  const commit = (number: number) => ({ sha: String(number), message: String(number), url: '', author: null, committedAt: null });
+  const issue = (number: number) => ({ number, title: String(number), url: '', author: null, updatedAt: null, state: 'open' as const, labels: [] });
+  const pr = (number: number) => ({ ...issue(number), draft: false, mergedAt: null, headRef: null, baseRef: null });
+  const snapshot = (start: number): GitHubData => ({
+    repository: null, auth: 'available', scope: { kind: 'general', nodeId: null, branch: null, commits: 'default-branch', pullRequests: 'repository', issues: 'repository' },
+    commits: { data: Array.from({ length: 20 }, (_, i) => commit(start - i)), meta },
+    pullRequests: { data: Array.from({ length: 20 }, (_, i) => pr(start - i)), meta },
+    issues: { data: Array.from({ length: 20 }, (_, i) => issue(start - i)), meta },
+  });
+  let cached = retainGitHubHistory({ commits: [], prs: [], issues: [] }, snapshot(40));
+  cached = {
+    commits: mergeGitHubItems(cached.commits, snapshot(20).commits.data!),
+    prs: mergeGitHubItems(cached.prs, snapshot(20).pullRequests.data!),
+    issues: mergeGitHubItems(cached.issues, snapshot(20).issues.data!),
+  };
+  cached = retainGitHubHistory(cached, snapshot(41));
+  assert.deepEqual(cached.commits.map((item) => item.sha), Array.from({ length: 41 }, (_, i) => String(41 - i)));
+  for (const items of [cached.prs, cached.issues]) {
+    assert.deepEqual(items.map((item) => item.number), Array.from({ length: 41 }, (_, i) => 41 - i));
+  }
+  const updated = snapshot(42);
+  updated.pullRequests.data![1].title = 'Updated PR';
+  cached = retainGitHubHistory(cached, updated);
+  assert.equal(cached.prs[1].title, 'Updated PR');
+  assert.equal(cached.prs.length, 42);
+  const stale = snapshot(50);
+  stale.commits.meta = { ...meta, stale: true };
+  assert.deepEqual(retainGitHubHistory(cached, stale).commits, cached.commits);
+});
 
 test('GitHub pagination deduplicates page boundaries and prefers refreshed item values', () => {
   const item = (sha: string, message: string) => ({ sha, message, url: '', author: null, committedAt: null });
