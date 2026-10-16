@@ -43,6 +43,7 @@ export function mapToState(raw: string | null | undefined): State {
   if (lower === 'completed' || lower === 'done' || lower === 'succeeded' || lower === 'success') return 'completed';
   if (lower === 'failed' || lower === 'failure' || lower === 'error') return 'failed';
   if (lower === 'idle') return 'idle';
+  if (lower.includes('heads up') || lower.includes('5h limit') || lower.includes('limit left')) return 'working';
   return 'unknown';
 }
 
@@ -50,6 +51,7 @@ export function normalizeLiveness(raw: any): 'live' | 'exited' | 'unverifiable' 
   if (!raw || typeof raw !== 'string') return 'unknown';
   const lower = raw.toLowerCase().trim();
   if (lower === 'live' || lower === 'running' || lower === 'active') return 'live';
+  if (lower.includes('heads up') || lower.includes('5h limit') || lower.includes('limit left')) return 'live';
   if (lower === 'exited' || lower === 'dead' || lower === 'stopped' || lower === 'none') return 'exited';
   if (lower === 'unverifiable') return 'unverifiable';
   if (lower === 'unknown') return 'unknown';
@@ -751,8 +753,12 @@ export async function collectGraph(
         if (paneKey) paneKeyToNodeId.set(paneKey, agentNodeId);
         if (handle) terminalHandleToNodeId.set(handle, agentNodeId);
 
-        const agState = mapToState(ag.state);
-        const liveness = matchingTerminal?.connected ? 'live' : normalizeLiveness(wt.terminalVerdict);
+        let agState = mapToState(ag.state);
+        let liveness = matchingTerminal?.connected ? 'live' : normalizeLiveness(wt.terminalVerdict);
+        if ((agState === 'unknown' || liveness === 'unverifiable') && matchingTerminal?.preview && (matchingTerminal.preview.includes('5h limit') || matchingTerminal.preview.includes('heads up'))) {
+          agState = 'working';
+          liveness = 'live';
+        }
 
         const agNode: Node = {
           id: agentNodeId,
@@ -964,7 +970,6 @@ export async function collectGraph(
           const coordNode = nodeMap.get(coordinatorNodeId);
           if (coordNode) {
             coordNode.kind = 'orchestrator';
-            coordNode.runId = runApiId;
             try {
               const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
               const lastStatusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
@@ -1039,6 +1044,10 @@ export async function collectGraph(
 
     // Preserve selected-run worker evidence & delegation
     if (activeRun) {
+      // A terminal can coordinate multiple runs; bind it only after selection.
+      const coordinator = activeRun.coordinatorNodeId && nodeMap.get(activeRun.coordinatorNodeId);
+      if (coordinator) coordinator.runId = activeRun.id;
+
       // Invalidate existing dispatch bindings for this project and activeRun before discovering
       for (const key of Array.from(globalSourceMaps.dispatchMap.keys())) {
         if (key.startsWith(`${projectId}::${activeRun.id}::`)) {
@@ -1184,12 +1193,20 @@ export async function collectGraph(
             const targetNode = nodeMap.get(targetNodeId);
             if (targetNode) {
               targetNode.runId = activeRun.id;
-              if (w.projection?.stage?.activity) {
+              const stageState = mapToState(w.projection?.stage?.activity);
+              const workerMappedState = mapToState(w.workerState);
+              if (stageState !== 'unknown') {
                 targetNode.rawState = w.projection.stage.activity;
-                targetNode.state = mapToState(w.projection.stage.activity);
+                targetNode.state = stageState;
+              } else if (workerMappedState !== 'unknown') {
+                targetNode.rawState = w.workerState;
+                targetNode.state = workerMappedState;
+              } else if (w.projection?.stage?.activity) {
+                targetNode.rawState = w.projection.stage.activity;
+                targetNode.state = stageState;
               } else if (w.workerState) {
                 targetNode.rawState = w.workerState;
-                targetNode.state = mapToState(w.workerState);
+                targetNode.state = workerMappedState;
               }
 
               if (w.projection?.outcome) {
@@ -1199,7 +1216,20 @@ export async function collectGraph(
               }
 
               if (w.projection?.liveness?.verdict) {
-                targetNode.liveness = normalizeLiveness(w.projection.liveness.verdict);
+                const normLiveness = normalizeLiveness(w.projection.liveness.verdict);
+                if (normLiveness === 'unverifiable' && targetNode.liveness === 'live' && (w.projection.liveness?.reason === 'missing_status' || targetNode.preview?.includes('5h limit') || targetNode.preview?.includes('heads up'))) {
+                  // Retain live status proven by connected terminal or limit warning
+                } else {
+                  targetNode.liveness = normLiveness;
+                }
+              }
+              if (targetNode.preview && (targetNode.preview.includes('5h limit') || targetNode.preview.includes('heads up'))) {
+                if (targetNode.liveness === 'unverifiable' || targetNode.liveness === 'unknown') {
+                  targetNode.liveness = 'live';
+                }
+                if (targetNode.state === 'unknown') {
+                  targetNode.state = 'working';
+                }
               }
 
               if (w.projection?.liveness?.observedAt) {
@@ -2974,3 +3004,74 @@ export async function collectNodeDetails(
     conversation: conversationSection,
   };
 }
+
+export async function sendAgentMessage(
+  projectId: Id,
+  nodeId: Id,
+  message: string,
+  runner: CommandRunner = defaultCommandRunner
+): Promise<{ ok: boolean; message: string }> {
+  if (!message || typeof message !== 'string' || message.trim().length === 0) {
+    throw new CliError('INVALID_ARGUMENT', 'Message cannot be empty');
+  }
+  const cleanMessage = message.trim();
+  if (cleanMessage.length > 10000) {
+    throw new CliError('INVALID_ARGUMENT', 'Message length exceeds maximum of 10000 characters');
+  }
+
+  // 1. Direct handle from nodeSourceMap
+  const source = globalSourceMaps.nodeSourceMap.get(nodeId);
+  const handle = source?.handle;
+
+  if (handle && /^term_[a-zA-Z0-9_-]+$/.test(handle)) {
+    const res = await runOrca<any>(['terminal', 'send', '--terminal', handle, '--text', cleanMessage, '--enter', '--json'], runner);
+    if (!res.ok) {
+      throw new CliError('CLI_FAILED', 'Failed to send message to agent terminal');
+    }
+    return { ok: true, message: 'Message sent to agent terminal' };
+  }
+
+  // 2. Dispatch map lookup
+  const dispatchKey = `${projectId}::${nodeId}`;
+  const dispatchEntry = globalSourceMaps.dispatchMap.get(dispatchKey);
+  if (dispatchEntry?.dispatchId) {
+    const res = await runOrca<any>(
+      [
+        'orchestration',
+        'send',
+        '--subject',
+        cleanMessage.slice(0, 50),
+        '--body',
+        cleanMessage,
+        '--to',
+        `dispatch:${dispatchEntry.dispatchId}`,
+        '--json',
+      ],
+      runner
+    );
+    if (!res.ok) {
+      throw new CliError('CLI_FAILED', 'Failed to send message to worker dispatch');
+    }
+    return { ok: true, message: 'Message sent to worker dispatch' };
+  }
+
+  // 3. Fallback: search worktree terminals if worktree is known
+  if (source?.worktreeId) {
+    try {
+      const termRes = await runOrca<any>(['terminal', 'list', '--worktree', `id:${source.worktreeId}`, '--limit', '10', '--json'], runner);
+      const terminals = termRes.result?.terminals ?? [];
+      const activeTerm = terminals.find((t: any) => t.connected && t.handle);
+      if (activeTerm?.handle && /^term_[a-zA-Z0-9_-]+$/.test(activeTerm.handle)) {
+        const res = await runOrca<any>(['terminal', 'send', '--terminal', activeTerm.handle, '--text', cleanMessage, '--enter', '--json'], runner);
+        if (res.ok) {
+          return { ok: true, message: 'Message sent to active worktree terminal' };
+        }
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  throw new CliError('NODE_NOT_FOUND', `No active terminal or dispatch found for node ${nodeId}`);
+}
+

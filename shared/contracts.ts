@@ -244,6 +244,7 @@ export interface GitHubIssue {
 }
 
 export interface GitHubData {
+  projectKind?: 'git' | 'folder' | 'unknown';
   repository: {
     owner: string;
     name: string;
@@ -261,3 +262,13 @@ export interface HealthResponse {
   status: 'ok';
   readOnly: boolean;
 }
+
+export interface SendMessageRequest {
+  message: string;
+}
+
+export interface SendMessageResponse {
+  ok: boolean;
+  message?: string;
+}
+

@@ -205,6 +205,7 @@ describe('server/orca', () => {
     assert.equal(mapToState('failed'), 'failed');
     assert.equal(mapToState('error'), 'failed');
     assert.equal(mapToState('idle'), 'idle');
+    assert.equal(mapToState('⚠ Heads up, you have less than 10% of your 5h limit left. Run /status for a breakdown.'), 'working');
     assert.equal(mapToState('custom_unexpected_status'), 'unknown');
     assert.equal(mapToState(null), 'unknown');
     assert.equal(mapToState(undefined), 'unknown');
@@ -456,6 +457,11 @@ describe('server/orca', () => {
                   coordinator_handle: 'term_coord',
                 },
                 {
+                  id: 'run_older_shared_coordinator',
+                  objective: 'Older run using the same coordinator',
+                  coordinator_handle: 'term_coord',
+                },
+                {
                   id: 'run_foreign',
                   objective: 'Foreign run',
                   coordinator_handle: 'term_other',
@@ -542,8 +548,8 @@ describe('server/orca', () => {
     const { graph, meta } = await collectGraph(projApiId, null, fakeRunner);
     assert.equal(meta.availability, 'ready');
 
-    // Only associated run_1 is included, run_foreign is excluded
-    assert.equal(graph.runs.length, 1);
+    // Both coordinator-associated runs are included; the foreign run is excluded.
+    assert.equal(graph.runs.length, 2);
     assert.equal(graph.runs[0].sourceRunId, 'run_1');
     assert.equal(graph.runs[0].association, 'coordinator-terminal');
 
@@ -553,6 +559,8 @@ describe('server/orca', () => {
     const coordNode = graph.nodes.find((n) => n.kind === 'orchestrator');
     assert.ok(coordNode);
     assert.equal(coordNode.state, 'working');
+    assert.equal(coordNode.runId, graph.selectedRunId);
+    assert.equal(coordNode.runId, hashId('run', 'run_1'));
 
     const workerNode = graph.nodes.find((n) => n.label === 'Backend Worker');
     assert.ok(workerNode);
@@ -581,6 +589,10 @@ describe('server/orca', () => {
     assert.equal(graph.progress.completed, 1);
     assert.equal(graph.progress.working, 1);
     assert.equal(graph.progress.percent, 50);
+
+    const olderRunId = hashId('run', 'run_older_shared_coordinator');
+    const older = await collectGraph(projApiId, olderRunId, fakeRunner);
+    assert.equal(older.graph.nodes.find((n) => n.id === coordNode.id)?.runId, olderRunId);
 
     // R4: requesting an unknown run ID must reject with RUN_NOT_FOUND
     await assert.rejects(
@@ -999,6 +1011,7 @@ describe('server/orca', () => {
   test('normalizeLiveness preserves unverifiable and unknown verdicts (B5)', () => {
     assert.equal(normalizeLiveness('live'), 'live');
     assert.equal(normalizeLiveness('running'), 'live');
+    assert.equal(normalizeLiveness('⚠ Heads up, you have less than 10% of your 5h limit left. Run /status for a breakdown.'), 'live');
     assert.equal(normalizeLiveness('exited'), 'exited');
     assert.equal(normalizeLiveness('dead'), 'exited');
     assert.equal(normalizeLiveness('unverifiable'), 'unverifiable');

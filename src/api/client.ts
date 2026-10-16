@@ -150,3 +150,25 @@ export function subscribeProjectEvents(
     es.close();
   };
 }
+
+export async function sendNodeMessage(
+  projectId: string,
+  nodeId: string,
+  message: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/message`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ message }),
+      signal,
+    },
+  );
+  return handleResponse<{ ok: boolean; message?: string }>(res);
+}
+

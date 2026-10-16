@@ -535,6 +535,7 @@ button {
   border-radius: 6px;
   min-width: 0;
   box-sizing: border-box;
+  padding-right: 26px;
   transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
 }
 .custom-select-control:hover {
@@ -555,7 +556,8 @@ button {
   font-family: inherit;
   font-size: 11px;
   font-weight: 500;
-  padding: 4px 26px 4px 8px;
+  padding: 4px 0 4px 8px;
+  box-sizing: border-box;
   cursor: pointer;
   outline: none;
   text-overflow: ellipsis;
@@ -762,6 +764,9 @@ button {
   cursor: pointer;
   accent-color: var(--focus-ring);
 }
+.btn-link:hover {
+  color: var(--text-main);
+}
 
 /* Banners / Alerts */
 .dashboard-alerts-container {
@@ -966,6 +971,16 @@ button {
   color: var(--text-muted);
   line-height: 1.2;
 }
+.graph-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.btn-reset-layout {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
 .graph-legend {
   display: flex;
   align-items: center;
@@ -993,6 +1008,12 @@ button {
   min-height: 0;
   overflow: auto;
   padding: 24px 32px;
+  cursor: grab;
+}
+
+.graph-canvas-container.is-canvas-panning {
+  cursor: grabbing !important;
+  user-select: none;
 }
 
 .graph-empty-state {
@@ -1041,6 +1062,28 @@ button {
   color: var(--text-muted);
   padding-bottom: 4px;
 }
+.orchestrator-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 260px;
+  position: relative;
+  touch-action: none;
+}
+.orchestrator-group.is-dragging-node {
+  box-shadow: none !important;
+}
+.orchestrator-drag-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.orchestrator-drag-header:hover .drag-grip-icon {
+  opacity: 0.95;
+  color: var(--text-main);
+}
 .orchestrator-cards-list {
   display: flex;
   flex-direction: column;
@@ -1082,6 +1125,35 @@ button {
   gap: 12px;
   padding-bottom: 10px;
   border-bottom: 1px solid var(--border-subtle);
+}
+.worktree-drag-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.worktree-drag-handle:active {
+  cursor: grabbing !important;
+}
+.drag-grip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  letter-spacing: -1px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  transition: opacity 160ms var(--ease-out), color 160ms var(--ease-out);
+  margin-right: 4px;
+  user-select: none;
+  cursor: grab;
+}
+.drag-grip-icon:hover {
+  opacity: 0.95;
+  color: var(--text-main);
+  cursor: grab;
+}
+.drag-grip-icon:active {
+  cursor: grabbing !important;
 }
 .worktree-title-group {
   display: flex;
@@ -1150,6 +1222,30 @@ button {
 .graph-node-card.agent-card {
   width: 260px;
   max-width: 260px;
+}
+
+.node-draggable {
+  touch-action: none;
+}
+
+.graph-node-card.orchestrator-card {
+  cursor: pointer;
+}
+
+.graph-node-card.orchestrator-card .drag-grip-icon {
+  cursor: grab;
+}
+
+.is-dragging-node,
+.is-dragging-node * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.is-dragging-node {
+  z-index: 25 !important;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5) !important;
+  transition: none !important;
 }
 
 @media (pointer: fine) {
@@ -1870,23 +1966,32 @@ button {
 .usage-source { color: var(--text-secondary); font-size: 10px; margin-top: 6px; }
 .usage-unavailable { color: var(--text-secondary); font-size: 11px; margin-top: 6px; }
 .usage-unavailable .usage-note { margin-top: 6px; }
+.rail-footer-controls {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
 .footer-settings-popover {
   position: absolute;
   bottom: calc(100% + 8px);
   left: 0;
-  right: 0;
   width: 100%;
+  min-width: 220px;
   max-width: 100%;
+  max-height: 75vh;
+  overflow-y: auto;
   box-sizing: border-box;
   background: var(--surface-1);
   border: 1px solid var(--border-main);
   border-radius: 8px;
-  padding: 10px;
+  padding: 10px 12px;
   box-shadow: var(--shadow-lg);
   z-index: 60;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 10px;
 }
 .footer-settings-popover .settings-popover-header {
   display: flex;
@@ -1895,6 +2000,9 @@ button {
   padding-bottom: 6px;
   border-bottom: 1px solid var(--border-subtle);
   color: var(--text-main);
+}
+.settings-option-desc {
+  padding-bottom: 6px;
 }
 .footer-settings-popover .settings-option-row {
   display: flex;
@@ -1911,13 +2019,60 @@ button {
   gap: 2px;
 }
 .footer-settings-popover .settings-theme-row {
-  margin-top: 6px;
+  margin-top: 2px;
   padding-top: 8px;
   border-top: 1px solid var(--border-subtle);
   display: flex;
   justify-content: space-between;
   align-items: center;
   cursor: default;
+}
+.settings-sections-group {
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--text-main);
+}
+.settings-group-label {
+  font-size: 11px;
+  font-weight: 600;
+}
+.settings-checkboxes-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 2px;
+}
+.settings-checkbox-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-main);
+  cursor: pointer;
+  user-select: none;
+  padding: 3px 4px;
+  border-radius: 4px;
+  transition: background 120ms ease;
+}
+.settings-checkbox-item:hover {
+  background: var(--surface-hover);
+}
+.settings-checkbox-item .settings-checkbox {
+  accent-color: var(--focus-ring);
+  cursor: pointer;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  flex-shrink: 0;
 }
 
 .usage-popover,
@@ -1929,6 +2084,10 @@ button {
 @keyframes popoverEnter {
   from { opacity: 0; transform: translateY(6px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes popoverExit {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(6px) scale(0.98); }
 }
 @media (prefers-reduced-motion: reduce) {
   .usage-popover,
@@ -2356,19 +2515,25 @@ dialog.node-modal-dialog.is-closing::backdrop {
   flex-shrink: 0;
 }
 
+
+
 .modal-dialog-body {
   padding: 20px;
   overflow-y: auto;
+  overflow-x: hidden;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 20px;
+  min-width: 0;
 }
 
 .modal-section {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+  width: 100%;
 }
 .section-title {
   font-size: 12px;
@@ -2538,11 +2703,15 @@ dialog.node-modal-dialog.is-closing::backdrop {
   flex-direction: column;
   gap: 12px;
   margin-top: 8px;
+  min-width: 0;
+  width: 100%;
 }
 
 .chat-bubble-row {
   display: flex;
   width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
 }
 .row-agent {
   justify-content: flex-start;
@@ -2553,12 +2722,15 @@ dialog.node-modal-dialog.is-closing::backdrop {
 
 .chat-bubble {
   max-width: 82%;
+  min-width: 0;
+  box-sizing: border-box;
   padding: 10px 14px;
   border-radius: 8px;
   font-size: 12px;
   line-height: 1.5;
   border: 1px solid var(--border-subtle);
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .bubble-agent {
@@ -2583,6 +2755,7 @@ dialog.node-modal-dialog.is-closing::backdrop {
   margin-bottom: 4px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border-subtle);
+  min-width: 0;
 }
 .bubble-role {
   color: var(--text-secondary);
@@ -2592,6 +2765,10 @@ dialog.node-modal-dialog.is-closing::backdrop {
 }
 .chat-bubble-text {
   color: var(--text-main);
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .btn-read-more {
@@ -2718,3 +2895,351 @@ dialog.node-modal-dialog.is-closing::backdrop {
     min-width: 260px;
   }
 }
+
+/* ==========================================================================
+   Section Collapsible Headers & Transitions
+   ========================================================================== */
+.section-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.section-title-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  margin: -2px -4px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: inherit;
+  transition: background 140ms ease, color 140ms ease;
+  user-select: none;
+}
+
+.section-title-btn:hover {
+  background: var(--surface-hover);
+}
+
+.section-title-btn:hover .section-title {
+  color: var(--text-main);
+}
+
+.section-title-btn:hover .section-chevron-icon {
+  color: var(--text-main);
+}
+
+.section-chevron-icon {
+  color: var(--text-muted);
+  transition: transform 220ms cubic-bezier(0.4, 0, 0.2, 1), color 140ms ease;
+  transform: rotate(0deg);
+  flex-shrink: 0;
+}
+
+.section-chevron-icon.is-collapsed {
+  transform: rotate(-90deg);
+}
+
+.section-collapsible-body {
+  display: grid;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows 250ms cubic-bezier(0.4, 0, 0.2, 1), opacity 200ms ease;
+  opacity: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.section-collapsible-body.is-collapsed {
+  grid-template-rows: 0fr;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.section-collapsible-inner {
+  min-height: 0;
+  min-width: 0;
+  width: 100%;
+  overflow: hidden;
+}
+
+.section-collapsible-body:not(.is-collapsed) .section-collapsible-inner {
+  overflow-y: visible;
+  overflow-x: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .section-chevron-icon,
+  .section-collapsible-body {
+    transition: none !important;
+  }
+}
+
+/* ==========================================================================
+   GitHub PR / Issues Filter Pills & Draggable Items
+   ========================================================================== */
+.github-filter-pills {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0 10px 0;
+  flex-wrap: wrap;
+}
+
+.filter-pill-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: 12px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.filter-pill-btn:hover {
+  background: var(--surface-hover);
+  color: var(--text-main);
+  border-color: var(--border-main);
+}
+
+.filter-pill-btn.active {
+  background: var(--text-main);
+  color: var(--canvas-bg);
+  border-color: var(--text-main);
+  font-weight: 600;
+}
+
+.filter-pill-btn .pill-count,
+.filter-pill-count {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.filter-pill-btn.active .pill-count,
+.filter-pill-btn.active .filter-pill-count {
+  color: var(--canvas-bg);
+  opacity: 0.9;
+}
+
+.draggable-item {
+  cursor: grab;
+  user-select: none;
+}
+
+.draggable-item:active {
+  cursor: grabbing;
+}
+
+/* ==========================================================================
+   Node Drag & Drop Glowing Target Indicator
+   ========================================================================== */
+.node-drag-target-glow {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(59, 130, 246, 0.45) !important;
+  border-color: var(--accent) !important;
+  animation: pulse-node-glow 1.8s infinite ease-in-out;
+}
+
+@keyframes pulse-node-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 2px var(--accent), 0 0 10px rgba(59, 130, 246, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--accent), 0 0 22px rgba(59, 130, 246, 0.7);
+  }
+}
+
+.node-drop-hover {
+  box-shadow: 0 0 0 3px #10b981, 0 0 24px rgba(16, 185, 129, 0.7) !important;
+  border-color: #10b981 !important;
+  background: var(--surface-hover) !important;
+  transform: scale(1.02);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-drag-target-glow {
+    animation: none !important;
+  }
+  .node-drop-hover {
+    transform: none !important;
+  }
+}
+
+/* ==========================================================================
+   Node Card Extended Chatbox (Right-click & Drop)
+   ========================================================================== */
+.node-card-chat-extension {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  cursor: default;
+}
+
+.node-card-chat-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.4;
+  border-radius: 4px;
+  border: 1px solid var(--border-main);
+  background: var(--surface-1);
+  color: var(--text-main);
+  resize: vertical;
+  min-height: 64px;
+}
+
+.node-card-chat-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.node-card-chat-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.node-card-chat-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* ==========================================================================
+   Node Details Modal Chatbox & Assigned Tasks Card
+   ========================================================================== */
+.agent-chatbox-section {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.node-details-chatbox {
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.chatbox-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chatbox-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  font-size: 13px;
+  font-family: inherit;
+  line-height: 1.5;
+  border-radius: 6px;
+  border: 1px solid var(--border-main);
+  background: var(--surface-1);
+  color: var(--text-main);
+  resize: vertical;
+  min-height: 72px;
+}
+
+.chatbox-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.chatbox-actions-row {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.btn-chat-send {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.assigned-task-card {
+  padding: 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface-2);
+}
+
+.assigned-task-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.task-result-callout {
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+}
+
+/* ==========================================================================
+   GitHub Folder Empty State (Folder Type Not Git)
+   ========================================================================== */
+.github-folder-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 36px 20px;
+  margin: auto 0;
+  border-radius: 8px;
+  background: var(--surface-2);
+  border: 1px dashed var(--border-subtle);
+  color: var(--text-muted);
+}
+
+.github-folder-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  border: 1px solid var(--border-subtle);
+}
+
+.github-folder-empty-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 8px;
+}
+
+.github-folder-empty-desc {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  max-width: 250px;
+  margin: 0 auto;
+}
+

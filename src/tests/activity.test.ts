@@ -8,7 +8,11 @@ import { LatestMessageCard } from '../features/workflow/LatestMessageCard';
 import { normalizeProvider, ProviderIcon } from '../components/providers/ProviderIcon';
 import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets';
 import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
-import type { Node } from '../../shared/contracts';
+import { GitHubPanel } from '../features/github/GitHubPanel';
+import { ProjectSelector } from '../features/projects/ProjectSelector';
+import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/NodeDetails';
+import { buildGitHubPrompt } from '../features/workflow/WorkflowGraph';
+import type { Node, NodeDetails as NodeDetailsType } from '../../shared/contracts';
 
 test('workflow layout order remains stable when upstream activity reorders nodes', () => {
   const main = { id: 'main', kind: 'worktree', path: 'C:\\project', state: 'idle' } as Node;
@@ -106,3 +110,123 @@ test('provider icons distinguish Gemini and Antigravity and cover Orca’s bundl
   const ag = renderToStaticMarkup(createElement(ProviderIcon, { provider: 'antigravity' }));
   assert.ok(ag.includes('providers/orca/antigravity.png'));
 });
+
+test('GitHubPanel displays no github connected message for folder projects', () => {
+  const html = renderToStaticMarkup(createElement(GitHubPanel, {
+    projectId: 'proj_folder',
+    projectKind: 'folder',
+    data: null,
+    loading: false,
+    error: null,
+    query: { scope: 'general' },
+    onScopeChange: () => {},
+    availableWorktrees: [],
+    onRefresh: () => {},
+  }));
+  assert.ok(html.includes('No GitHub connected for project'));
+  assert.ok(html.includes('github-folder-empty-state'));
+  assert.ok(!html.includes('github-tabs-nav'));
+  assert.ok(!html.includes('github-scope-selector'));
+});
+
+test('DEFAULT_VISIBLE_SECTIONS has all sections visible by default', () => {
+  assert.equal(DEFAULT_VISIBLE_SECTIONS.status, true);
+  assert.equal(DEFAULT_VISIBLE_SECTIONS.tasks, true);
+  assert.equal(DEFAULT_VISIBLE_SECTIONS.latest, true);
+  assert.equal(DEFAULT_VISIBLE_SECTIONS.tool, true);
+  assert.equal(DEFAULT_VISIBLE_SECTIONS.conversation, true);
+  assert.equal(DEFAULT_VISIBLE_SECTIONS.chatbox, true);
+});
+
+test('buildGitHubPrompt formats detailed review instructions for PRs and issues', () => {
+  const prPrompt = buildGitHubPrompt({
+    type: 'pr',
+    number: 42,
+    title: 'Fix race condition in subscription',
+    url: 'https://github.com/org/repo/pull/42',
+    headRef: 'fix-race',
+    baseRef: 'main',
+    author: 'alice',
+    draft: false,
+  });
+  assert.ok(prPrompt.includes('Pull Request #42: "Fix race condition in subscription"'));
+  assert.ok(prPrompt.includes('https://github.com/org/repo/pull/42'));
+  assert.ok(prPrompt.includes('Branch: `fix-race` -> `main`'));
+  assert.ok(prPrompt.includes('Author: @alice'));
+  assert.ok(prPrompt.includes('Status: Ready for review'));
+
+  const issuePrompt = buildGitHubPrompt({
+    type: 'issue',
+    number: 99,
+    title: 'Memory leak in worker watcher',
+    url: 'https://github.com/org/repo/issues/99',
+    author: 'bob',
+    labels: ['bug', 'performance'],
+  });
+  assert.ok(issuePrompt.includes('Issue #99: "Memory leak in worker watcher"'));
+  assert.ok(issuePrompt.includes('https://github.com/org/repo/issues/99'));
+  assert.ok(issuePrompt.includes('Reported by: @bob'));
+  assert.ok(issuePrompt.includes('Labels: bug, performance'));
+});
+
+test('ProjectSelector renders settings controls in sidebar', () => {
+  const html = renderToStaticMarkup(createElement(ProjectSelector, {
+    inventorySection: null,
+    loading: false,
+    error: null,
+    selectedProjectId: null,
+    onSelectProject: () => {},
+    snapshot: null,
+    isLocallyStale: false,
+    connectionMode: 'sse',
+    theme: 'dark',
+    onToggleTheme: () => {},
+    cardStateColors: true,
+    onToggleCardStateColors: () => {},
+    visibleSections: DEFAULT_VISIBLE_SECTIONS,
+    onToggleVisibleSection: () => {},
+    onResetVisibleSections: () => {},
+  }));
+  assert.ok(html.includes('Dashboard settings'));
+  assert.ok(html.includes('Settings'));
+});
+
+test('NodeDetails does not render settings button and respects visibleSections', () => {
+  const node = { id: 'agent-1', kind: 'agent', label: 'Coder', state: 'working', liveness: 'live', taskIds: [] } as unknown as Node;
+  const details = {
+    node,
+    currentTool: null,
+    conversation: { meta: { availability: 'empty', stale: false, observedAt: null, attemptedAt: null, partial: false, issue: null }, data: { messages: [], cursor: null, nextCursor: null, source: 'test', sourceIdentity: null, provider: null, limited: false, hasMore: false, totalTurns: 0 } },
+    tasks: [],
+  } as unknown as NodeDetailsType;
+  const html = renderToStaticMarkup(createElement(NodeDetails, {
+    projectId: 'proj_1',
+    details,
+    loading: false,
+    error: null,
+    selectedNodeId: 'agent-1',
+    onClose: () => {},
+    onRefresh: () => {},
+    onCheckNewerMessages: () => {},
+    visibleSections: DEFAULT_VISIBLE_SECTIONS,
+  }));
+  // Settings button is removed from NodeDetails (it is now on the sidebar settings)
+  assert.equal(html.includes('node-details-settings-container'), false);
+  assert.equal(html.includes('Node details section visibility settings'), false);
+  assert.ok(html.includes('Status &amp; Workspace'));
+
+  // When status section is disabled via visibleSections, it is omitted
+  const htmlHidden = renderToStaticMarkup(createElement(NodeDetails, {
+    projectId: 'proj_1',
+    details,
+    loading: false,
+    error: null,
+    selectedNodeId: 'agent-1',
+    onClose: () => {},
+    onRefresh: () => {},
+    onCheckNewerMessages: () => {},
+    visibleSections: { ...DEFAULT_VISIBLE_SECTIONS, status: false },
+  }));
+  assert.equal(htmlHidden.includes('Status &amp; Workspace'), false);
+});
+

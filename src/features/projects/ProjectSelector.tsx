@@ -2,6 +2,10 @@ import React from 'react';
 import { UsagePanel } from '../usage/UsagePanel';
 import { usePopoverState } from '../../hooks/usePopoverState';
 import type { DashboardSnapshot, Inventory, Section } from '../../../shared/contracts';
+import {
+  type NodeDetailsVisibleSections,
+  DEFAULT_VISIBLE_SECTIONS,
+} from '../workflow/NodeDetails';
 
 export interface ProjectSelectorProps {
   inventorySection: Section<Inventory> | null;
@@ -17,6 +21,9 @@ export interface ProjectSelectorProps {
   onToggleTheme: () => void;
   cardStateColors: boolean;
   onToggleCardStateColors: (enabled: boolean) => void;
+  visibleSections?: NodeDetailsVisibleSections;
+  onToggleVisibleSection?: (key: keyof NodeDetailsVisibleSections) => void;
+  onResetVisibleSections?: () => void;
 }
 
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
@@ -33,6 +40,9 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   onToggleTheme,
   cardStateColors,
   onToggleCardStateColors,
+  visibleSections,
+  onToggleVisibleSection,
+  onResetVisibleSections,
 }) => {
   const { present: isSettingsOpen, closing: isSettingsClosing, close: closeSettings, toggle: toggleSettings } = usePopoverState();
   const settingsRef = React.useRef<HTMLDivElement>(null);
@@ -61,6 +71,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   const projects = inventorySection?.data?.projects ?? [];
   const runtime = snapshot?.runtime?.data;
   const runtimeMeta = snapshot?.runtime?.meta;
+  const activeVisibleSections = visibleSections ?? DEFAULT_VISIBLE_SECTIONS;
 
   const renderRuntimeStatus = () => {
     const graphMeta = snapshot?.graph?.meta;
@@ -335,6 +346,81 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                       </>
                     )}
                   </button>
+                </div>
+
+                <div className="settings-sections-group">
+                  <div className="settings-group-header">
+                    <span className="settings-group-label">Node Details Sections</span>
+                    {onResetVisibleSections && (
+                      <button
+                        type="button"
+                        className="btn-link text-xs text-muted"
+                        onClick={onResetVisibleSections}
+                        title="Reset to all visible"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </div>
+                  <span className="text-xs text-muted">
+                    Toggle visible sections in node details:
+                  </span>
+                  <div className="settings-checkboxes-list">
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        className="settings-checkbox"
+                        checked={activeVisibleSections.status}
+                        onChange={() => onToggleVisibleSection?.('status')}
+                      />
+                      <span>Status &amp; Workspace</span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        className="settings-checkbox"
+                        checked={activeVisibleSections.tasks}
+                        onChange={() => onToggleVisibleSection?.('tasks')}
+                      />
+                      <span>Assigned Tasks</span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        className="settings-checkbox"
+                        checked={activeVisibleSections.latest}
+                        onChange={() => onToggleVisibleSection?.('latest')}
+                      />
+                      <span>Latest Agent Message</span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        className="settings-checkbox"
+                        checked={activeVisibleSections.tool}
+                        onChange={() => onToggleVisibleSection?.('tool')}
+                      />
+                      <span>Current Tool Activity</span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        className="settings-checkbox"
+                        checked={activeVisibleSections.conversation}
+                        onChange={() => onToggleVisibleSection?.('conversation')}
+                      />
+                      <span>Conversation History</span>
+                    </label>
+                    <label className="settings-checkbox-item">
+                      <input
+                        type="checkbox"
+                        className="settings-checkbox"
+                        checked={activeVisibleSections.chatbox}
+                        onChange={() => onToggleVisibleSection?.('chatbox')}
+                      />
+                      <span>Message Agent (Chatbox)</span>
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>

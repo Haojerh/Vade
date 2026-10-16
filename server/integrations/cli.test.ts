@@ -77,6 +77,31 @@ describe('server/cli', () => {
         '--json',
       ])
     );
+    assert.doesNotThrow(() =>
+      validateOrcaArgs([
+        'terminal',
+        'send',
+        '--terminal',
+        'term_abc-123',
+        '--text',
+        'fix the issue',
+        '--enter',
+        '--json',
+      ])
+    );
+    assert.doesNotThrow(() =>
+      validateOrcaArgs([
+        'orchestration',
+        'send',
+        '--subject',
+        'review prompt',
+        '--body',
+        'please check the code',
+        '--to',
+        'dispatch:ctx_abc123',
+        '--json',
+      ])
+    );
 
     // Invalid commands / parameters
     assert.throws(() => validateOrcaArgs([]), /INVALID_ARGUMENT/);

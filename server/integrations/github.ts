@@ -215,6 +215,7 @@ export async function collectGitHubData(
     initialScope.commits = 'unavailable';
     initialScope.pullRequests = 'unavailable';
     return {
+      projectKind: project.kind,
       repository: null,
       auth: 'unknown',
       scope: initialScope,
@@ -631,6 +632,7 @@ export async function collectGitHubData(
   }
 
   return {
+    projectKind: project.kind,
     repository: repo,
     auth: authStatus,
     scope: initialScope,

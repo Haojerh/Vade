@@ -240,6 +240,21 @@ export function validateOrcaArgs(args: string[]): void {
     }
   }
 
+  if (sub === 'terminal' && args[1] === 'send') {
+    // terminal send --terminal <handle> --text <text> --enter --json
+    if (
+      args[2] === '--terminal' &&
+      /^term_[a-zA-Z0-9_-]+$/.test(args[3]) &&
+      args[4] === '--text' &&
+      typeof args[5] === 'string' &&
+      args[6] === '--enter' &&
+      args[7] === '--json' &&
+      args.length === 8
+    ) {
+      return;
+    }
+  }
+
   if (sub === 'orchestration') {
     const verb = args[1];
     if (verb === 'run-list') {
@@ -314,6 +329,26 @@ export function validateOrcaArgs(args: string[]): void {
               }
             }
           }
+        }
+      }
+    }
+
+    if (verb === 'send') {
+      // orchestration send --subject <subject> --body <body> --to <target> [--run <run_id>] --json
+      if (
+        args[2] === '--subject' &&
+        typeof args[3] === 'string' &&
+        args[4] === '--body' &&
+        typeof args[5] === 'string' &&
+        args[6] === '--to' &&
+        typeof args[7] === 'string'
+      ) {
+        let idx = 8;
+        if (args[idx] === '--run' && idx + 1 < args.length && /^run_[a-zA-Z0-9_-]+$/.test(args[idx + 1])) {
+          idx += 2;
+        }
+        if (idx === args.length - 1 && args[idx] === '--json') {
+          return;
         }
       }
     }

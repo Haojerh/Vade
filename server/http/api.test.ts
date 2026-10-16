@@ -117,6 +117,13 @@ describe('server/api', () => {
           exitCode: 0,
         };
       }
+      if (cmd.includes('terminal send')) {
+        return {
+          stdout: JSON.stringify({ ok: true, result: { sent: true } }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
       return { stdout: '{}', stderr: '', exitCode: 0 };
     };
 
@@ -331,5 +338,22 @@ describe('server/api', () => {
       release();
       abort.abort();
     }
+  });
+
+  test('POST /api/projects/:projectId/nodes/:nodeId/message sends message to agent terminal', async () => {
+    const agentNodeId = hashId('node', 'term_test_agent');
+    globalSourceMaps.nodeSourceMap.set(agentNodeId, { handle: 'term_test_agent' });
+
+    const res = await fetch(`${baseUrl}/api/projects/${projApiId}/nodes/${agentNodeId}/message`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message: 'Hello agent, please review PR 1' }),
+    });
+
+    assert.equal(res.status, 200);
+    const json = await res.json();
+    assert.equal(json.ok, true);
   });
 });

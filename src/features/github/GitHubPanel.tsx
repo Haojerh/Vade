@@ -8,11 +8,14 @@ import type {
   Commit,
   GitHubIssue,
   Node,
+  Project,
   Section,
 } from '../../../shared/contracts';
 
 interface GitHubPanelProps {
   projectId: string | null;
+  project?: Project | null;
+  projectKind?: 'git' | 'folder' | 'unknown' | null;
   data: GitHubData | null;
   loading: boolean;
   error: string | null;
@@ -27,6 +30,8 @@ type TabKey = 'commits' | 'prs' | 'issues';
 
 export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   projectId,
+  project,
+  projectKind,
   data,
   loading,
   error,
@@ -36,12 +41,43 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   onRefresh,
   onCollapse,
 }) => {
+  const isFolder =
+    projectKind === 'folder' ||
+    project?.kind === 'folder' ||
+    data?.projectKind === 'folder';
   const [activeTab, setActiveTab] = useState<TabKey>('commits');
+  const [prFilter, setPrFilter] = useState<'all' | 'open' | 'closed'>('all');
+  const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
   const history = useRef(new Map<string, UnreadHistory>());
   const [unread, setUnread] = useState<Record<TabKey, Set<string>>>({ commits: new Set(), prs: new Set(), issues: new Set() });
   const repositoryKey = `${projectId}::${data?.repository?.url ?? ''}`;
   const scopeKey = `${data?.scope.kind}::${data?.scope.nodeId}::${data?.scope.branch}`;
   const keys = { commits: `${repositoryKey}::commits::${scopeKey}`, prs: `${repositoryKey}::prs::${scopeKey}`, issues: `${repositoryKey}::issues` };
+
+  const handleDragStart = (
+    e: React.DragEvent,
+    item: {
+      type: 'pr' | 'issue';
+      number: number;
+      title: string;
+      url?: string;
+      headRef?: string | null;
+      baseRef?: string | null;
+      author?: string | null;
+      draft?: boolean;
+      labels?: string[];
+    }
+  ) => {
+    const payload = JSON.stringify(item);
+    e.dataTransfer.setData('application/json', payload);
+    e.dataTransfer.setData('text/plain', item.title);
+    e.dataTransfer.effectAllowed = 'copy';
+    window.dispatchEvent(new CustomEvent('orca:drag-github-item-start', { detail: item }));
+  };
+
+  const handleDragEnd = () => {
+    window.dispatchEvent(new CustomEvent('orca:drag-github-item-end'));
+  };
 
   useEffect(() => {
     const next = { commits: new Set<string>(), prs: new Set<string>(), issues: new Set<string>() };
@@ -149,6 +185,23 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const commits = data?.commits?.data ?? [];
   const prs = data?.pullRequests?.data ?? [];
   const issues = data?.issues?.data ?? [];
+
+  const openPrCount = prs.filter((p) => p.state === 'open').length;
+  const closedPrCount = prs.filter((p) => p.state === 'closed' || p.state === 'merged').length;
+  const filteredPrs = prs.filter((p) => {
+    if (prFilter === 'open') return p.state === 'open';
+    if (prFilter === 'closed') return p.state === 'closed' || p.state === 'merged';
+    return true;
+  });
+
+  const openIssueCount = issues.filter((i) => i.state === 'open').length;
+  const closedIssueCount = issues.filter((i) => i.state === 'closed').length;
+  const filteredIssues = issues.filter((i) => {
+    if (issueFilter === 'open') return i.state === 'open';
+    if (issueFilter === 'closed') return i.state === 'closed';
+    return true;
+  });
+
   const tabsRef = useRef<HTMLDivElement>(null);
   const [tabLine, setTabLine] = useState({ left: 0, width: 0 });
   useLayoutEffect(() => {
@@ -192,16 +245,21 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           </div>
 
           <div className="panel-actions">
-            <span className={`badge badge-auth-${auth}`}>
-              Auth: {auth}
-            </span>
+            {!isFolder && (
+              <span className={`badge badge-auth-${auth}`}>
+                Auth: {auth}
+              </span>
+            )}
+            {isFolder && (
+              <span className="badge badge-neutral">Folder</span>
+            )}
             <button
               type="button"
               className="btn-icon"
               onClick={onRefresh}
-              disabled={loading}
-              aria-label="Refresh GitHub activity"
-              title="Refresh GitHub activity"
+              disabled={loading || isFolder}
+              aria-label={isFolder ? 'GitHub not connected for folder project' : 'Refresh GitHub activity'}
+              title={isFolder ? 'GitHub not connected for folder project' : 'Refresh GitHub activity'}
             >
               <RefreshIcon busy={loading} />
             </button>
@@ -223,7 +281,9 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         </div>
 
         <div className="github-header-sub">
-          {repo ? (
+          {isFolder ? (
+            <div className="panel-subtitle text-muted">Folder workspace</div>
+          ) : repo ? (
             <div className="panel-subtitle">
               {isSafeGitHubUrl(repo.url) ? (
                 <a
@@ -247,14 +307,38 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         </div>
       </div>
 
-      {error && (
-        <div className="panel-alert alert-error" role="alert">
-          <span className="font-semibold">GitHub Request Error:</span> {error}
+      {isFolder ? (
+        <div className="github-folder-empty-state" role="status">
+          <div className="github-folder-empty-icon" aria-hidden="true">
+            <svg
+              width="32"
+              height="32"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              <line x1="9" y1="13" x2="15" y2="13" />
+            </svg>
+          </div>
+          <h3 className="github-folder-empty-title">No GitHub connected for project</h3>
+          <p className="github-folder-empty-desc">
+            This project is a local folder workspace and is not linked to a Git repository or GitHub remote.
+          </p>
         </div>
-      )}
+      ) : (
+        <>
+          {error && (
+            <div className="panel-alert alert-error" role="alert">
+              <span className="font-semibold">GitHub Request Error:</span> {error}
+            </div>
+          )}
 
-      {/* Scope Selector */}
-      <div className="github-scope-selector">
+          {/* Scope Selector */}
+          <div className="github-scope-selector">
         <label htmlFor="github-scope-select" className="scope-label text-xs font-semibold">
           History Scope:
         </label>
@@ -413,64 +497,122 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             aria-labelledby="tab-prs"
             className="tab-pane"
           >
+            {/* PR Status Filter: All, Open, Closed */}
+            <div className="github-filter-pills" role="radiogroup" aria-label="Filter pull requests by status">
+              <button
+                type="button"
+                className={`filter-pill-btn ${prFilter === 'all' ? 'active' : ''}`}
+                onClick={() => setPrFilter('all')}
+                aria-pressed={prFilter === 'all'}
+              >
+                All <span className="pill-count font-mono">{prs.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`filter-pill-btn ${prFilter === 'open' ? 'active' : ''}`}
+                onClick={() => setPrFilter('open')}
+                aria-pressed={prFilter === 'open'}
+              >
+                Open <span className="pill-count font-mono">{openPrCount}</span>
+              </button>
+              <button
+                type="button"
+                className={`filter-pill-btn ${prFilter === 'closed' ? 'active' : ''}`}
+                onClick={() => setPrFilter('closed')}
+                aria-pressed={prFilter === 'closed'}
+              >
+                Closed <span className="pill-count font-mono">{closedPrCount}</span>
+              </button>
+            </div>
+
             {renderSectionMeta(data?.pullRequests, 'Pull Requests')}
-            {prs.length === 0 ? (
+
+            {filteredPrs.length === 0 ? (
               <div className="empty-hint">
-                No pull requests found for this repository and branch filter.
+                {prs.length === 0
+                  ? 'No pull requests found for this repository and branch filter.'
+                  : `No ${prFilter} pull requests found.`}
               </div>
             ) : (
               <ul className="github-item-list" role="list">
-                {prs.map((pr: PullRequest) => (
-                  <li key={pr.number} className={`github-item ${unread.prs.has(String(pr.number)) ? 'github-has-new' : ''}`} onClick={() => acknowledge('prs', String(pr.number))}>
-                    {unread.prs.has(String(pr.number)) && notification('prs')}
-                    <div className="item-row-header">
-                      <div className="item-badges">
-                        <span className={`badge badge-pr-${pr.state}`}>
-                          {pr.state}
-                        </span>
-                        {pr.draft && (
-                          <span className="badge badge-neutral">Draft</span>
-                        )}
-                        <span className="font-mono pr-number">#{pr.number}</span>
+                {filteredPrs.map((pr: PullRequest) => {
+                  const isOpen = pr.state === 'open';
+                  return (
+                    <li
+                      key={pr.number}
+                      draggable={isOpen}
+                      onDragStart={(e) => {
+                        if (isOpen) {
+                          handleDragStart(e, {
+                            type: 'pr',
+                            number: pr.number,
+                            title: pr.title,
+                            url: pr.url,
+                            headRef: pr.headRef,
+                            baseRef: pr.baseRef,
+                            author: pr.author,
+                            draft: pr.draft,
+                          });
+                        }
+                      }}
+                      onDragEnd={handleDragEnd}
+                      className={`github-item ${isOpen ? 'draggable-item' : ''} ${unread.prs.has(String(pr.number)) ? 'github-has-new' : ''}`}
+                      onClick={() => acknowledge('prs', String(pr.number))}
+                      title={isOpen ? 'Drag this PR onto an agent node in the workflow graph to review/merge' : undefined}
+                    >
+                      {unread.prs.has(String(pr.number)) && notification('prs')}
+                      <div className="item-row-header">
+                        <div className="item-badges">
+                          <span className={`badge badge-pr-${pr.state}`}>
+                            {pr.state}
+                          </span>
+                          {pr.draft && (
+                            <span className="badge badge-neutral">Draft</span>
+                          )}
+                          <span className="font-mono pr-number">#{pr.number}</span>
+                          {isOpen && (
+                            <span className="drag-indicator-tag" title="Draggable to agent">⋮⋮</span>
+                          )}
+                        </div>
+                        <time className="item-time font-mono" dateTime={pr.updatedAt ?? ''}>
+                          {formatDateTime(pr.updatedAt)}
+                        </time>
                       </div>
-                      <time className="item-time font-mono" dateTime={pr.updatedAt ?? ''}>
-                        {formatDateTime(pr.updatedAt)}
-                      </time>
-                    </div>
 
-                    <div className="item-title">
-                      {isSafeGitHubUrl(pr.url) ? (
-                        <a
-                          href={pr.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="external-link"
-                        >
-                          {pr.title}
-                          <span className="external-arrow" aria-hidden="true">↗</span>
-                        </a>
-                      ) : (
-                        <span>{pr.title}</span>
-                      )}
-                    </div>
+                      <div className="item-title">
+                        {isSafeGitHubUrl(pr.url) ? (
+                          <a
+                            href={pr.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="external-link"
+                          >
+                            {pr.title}
+                            <span className="external-arrow" aria-hidden="true">↗</span>
+                          </a>
+                        ) : (
+                          <span>{pr.title}</span>
+                        )}
+                      </div>
 
-                    <div className="item-extra-info text-xs text-muted">
-                      {pr.author && (
-                        <span>Author: <strong className="font-mono">{pr.author}</strong></span>
-                      )}
-                      {pr.headRef && pr.baseRef && (
-                        <span className="pr-refs font-mono ml-2">
-                          {pr.headRef} → {pr.baseRef}
-                        </span>
-                      )}
-                      {pr.mergedAt && (
-                        <span className="pr-merged-at ml-2 text-success">
-                          Merged: {formatDateTime(pr.mergedAt)}
-                        </span>
-                      )}
-                    </div>
-                  </li>
-                ))}
+                      <div className="item-extra-info text-xs text-muted">
+                        {pr.author && (
+                          <span>Author: <strong className="font-mono">{pr.author}</strong></span>
+                        )}
+                        {pr.headRef && pr.baseRef && (
+                          <span className="pr-refs font-mono ml-2">
+                            {pr.headRef} → {pr.baseRef}
+                          </span>
+                        )}
+                        {pr.mergedAt && (
+                          <span className="pr-merged-at ml-2 text-success">
+                            Merged: {formatDateTime(pr.mergedAt)}
+                          </span>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
@@ -484,65 +626,123 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             aria-labelledby="tab-issues"
             className="tab-pane"
           >
+            {/* Issue Status Filter: All, Open, Closed */}
+            <div className="github-filter-pills" role="radiogroup" aria-label="Filter issues by status">
+              <button
+                type="button"
+                className={`filter-pill-btn ${issueFilter === 'all' ? 'active' : ''}`}
+                onClick={() => setIssueFilter('all')}
+                aria-pressed={issueFilter === 'all'}
+              >
+                All <span className="pill-count font-mono">{issues.length}</span>
+              </button>
+              <button
+                type="button"
+                className={`filter-pill-btn ${issueFilter === 'open' ? 'active' : ''}`}
+                onClick={() => setIssueFilter('open')}
+                aria-pressed={issueFilter === 'open'}
+              >
+                Open <span className="pill-count font-mono">{openIssueCount}</span>
+              </button>
+              <button
+                type="button"
+                className={`filter-pill-btn ${issueFilter === 'closed' ? 'active' : ''}`}
+                onClick={() => setIssueFilter('closed')}
+                aria-pressed={issueFilter === 'closed'}
+              >
+                Closed <span className="pill-count font-mono">{closedIssueCount}</span>
+              </button>
+            </div>
+
             {renderSectionMeta(data?.issues, 'Issues')}
-            {issues.length === 0 ? (
+
+            {filteredIssues.length === 0 ? (
               <div className="empty-hint">
-                No repository issues found.
+                {issues.length === 0
+                  ? 'No repository issues found.'
+                  : `No ${issueFilter} issues found.`}
               </div>
             ) : (
               <ul className="github-item-list" role="list">
-                {issues.map((issue: GitHubIssue) => (
-                  <li key={issue.number} className={`github-item ${unread.issues.has(String(issue.number)) ? 'github-has-new' : ''}`} onClick={() => acknowledge('issues', String(issue.number))}>
-                    {unread.issues.has(String(issue.number)) && notification('issues')}
-                    <div className="item-row-header">
-                      <div className="item-badges">
-                        <span className={`badge badge-issue-${issue.state}`}>
-                          {issue.state}
-                        </span>
-                        <span className="font-mono pr-number">#{issue.number}</span>
-                      </div>
-                      <time className="item-time font-mono" dateTime={issue.updatedAt ?? ''}>
-                        {formatDateTime(issue.updatedAt)}
-                      </time>
-                    </div>
-
-                    <div className="item-title">
-                      {isSafeGitHubUrl(issue.url) ? (
-                        <a
-                          href={issue.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="external-link"
-                        >
-                          {issue.title}
-                          <span className="external-arrow" aria-hidden="true">↗</span>
-                        </a>
-                      ) : (
-                        <span>{issue.title}</span>
-                      )}
-                    </div>
-
-                    <div className="item-extra-info text-xs text-muted">
-                      {issue.author && (
-                        <span>Author: <strong className="font-mono">{issue.author}</strong></span>
-                      )}
-                      {issue.labels && issue.labels.length > 0 && (
-                        <div className="issue-labels-row">
-                          {issue.labels.map((lbl, idx) => (
-                            <span key={idx} className="badge badge-neutral text-xs">
-                              {lbl}
-                            </span>
-                          ))}
+                {filteredIssues.map((issue: GitHubIssue) => {
+                  const isOpen = issue.state === 'open';
+                  return (
+                    <li
+                      key={issue.number}
+                      draggable={isOpen}
+                      onDragStart={(e) => {
+                        if (isOpen) {
+                          handleDragStart(e, {
+                            type: 'issue',
+                            number: issue.number,
+                            title: issue.title,
+                            url: issue.url,
+                            author: issue.author,
+                            labels: issue.labels,
+                          });
+                        }
+                      }}
+                      onDragEnd={handleDragEnd}
+                      className={`github-item ${isOpen ? 'draggable-item' : ''} ${unread.issues.has(String(issue.number)) ? 'github-has-new' : ''}`}
+                      onClick={() => acknowledge('issues', String(issue.number))}
+                      title={isOpen ? 'Drag this issue onto an agent node in the workflow graph to fix' : undefined}
+                    >
+                      {unread.issues.has(String(issue.number)) && notification('issues')}
+                      <div className="item-row-header">
+                        <div className="item-badges">
+                          <span className={`badge badge-issue-${issue.state}`}>
+                            {issue.state}
+                          </span>
+                          <span className="font-mono pr-number">#{issue.number}</span>
+                          {isOpen && (
+                            <span className="drag-indicator-tag" title="Draggable to agent">⋮⋮</span>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </li>
-                ))}
+                        <time className="item-time font-mono" dateTime={issue.updatedAt ?? ''}>
+                          {formatDateTime(issue.updatedAt)}
+                        </time>
+                      </div>
+
+                      <div className="item-title">
+                        {isSafeGitHubUrl(issue.url) ? (
+                          <a
+                            href={issue.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="external-link"
+                          >
+                            {issue.title}
+                            <span className="external-arrow" aria-hidden="true">↗</span>
+                          </a>
+                        ) : (
+                          <span>{issue.title}</span>
+                        )}
+                      </div>
+
+                      <div className="item-extra-info text-xs text-muted">
+                        {issue.author && (
+                          <span>Author: <strong className="font-mono">{issue.author}</strong></span>
+                        )}
+                        {issue.labels && issue.labels.length > 0 && (
+                          <div className="issue-labels-row">
+                            {issue.labels.map((lbl, idx) => (
+                              <span key={idx} className="badge badge-neutral text-xs">
+                                {lbl}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>
         )}
       </div>
-    </section>
-  );
+    </>
+  )}
+</section>
+);
 };

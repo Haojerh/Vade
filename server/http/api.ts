@@ -13,7 +13,7 @@ import {
   GitHubQuery,
 } from '../../shared/contracts.js';
 import { CommandRunner, defaultCommandRunner, CliError } from '../integrations/cli.js';
-import { collectInventory, globalSourceMaps } from '../integrations/orca.js';
+import { collectInventory, globalSourceMaps, sendAgentMessage } from '../integrations/orca.js';
 import { collectGitHubData } from '../integrations/github.js';
 import { SnapshotManager, defaultSnapshotManager } from '../services/snapshot.js';
 import { UsageCollector } from '../integrations/usage.js';
@@ -38,6 +38,34 @@ const MIME_TYPES: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
 };
+
+async function parseJsonBody<T = any>(req: http.IncomingMessage, maxBytes = 64 * 1024): Promise<T> {
+  return new Promise((resolve, reject) => {
+    let raw = '';
+    let bytes = 0;
+    req.on('data', (chunk: Buffer) => {
+      bytes += chunk.length;
+      if (bytes > maxBytes) {
+        req.destroy();
+        reject(new CliError('INVALID_ARGUMENT', 'Request payload too large'));
+        return;
+      }
+      raw += chunk.toString('utf8');
+    });
+    req.on('end', () => {
+      try {
+        if (!raw) {
+          reject(new CliError('INVALID_ARGUMENT', 'Request body cannot be empty'));
+          return;
+        }
+        resolve(JSON.parse(raw));
+      } catch {
+        reject(new CliError('INVALID_ARGUMENT', 'Malformed JSON in request body'));
+      }
+    });
+    req.on('error', (err) => reject(err));
+  });
+}
 
 export function createApiHandler(options: ApiServerOptions = {}) {
   const runner = options.runner ?? defaultCommandRunner;
@@ -81,7 +109,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
         return;
       }
       res.setHeader('Access-Control-Allow-Origin', origin);
-      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Last-Event-ID');
     }
 
@@ -91,14 +119,20 @@ export function createApiHandler(options: ApiServerOptions = {}) {
       return;
     }
 
-    // 2. Reject write methods
-    if (reqMethod !== 'GET' && reqMethod !== 'HEAD') {
+    // 2. Reject unsupported write methods
+    if (reqMethod !== 'GET' && reqMethod !== 'HEAD' && reqMethod !== 'POST') {
       sendError(405, 'METHOD_NOT_ALLOWED', `Method ${reqMethod} is not allowed`);
       return;
     }
 
     const reqUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
     const pathname = reqUrl.pathname;
+
+    // POST is strictly allowed only for agent node messaging
+    if (reqMethod === 'POST' && !pathname.match(/^\/api\/projects\/[a-zA-Z0-9_.-]+\/nodes\/[a-zA-Z0-9_.-]+\/message$/)) {
+      sendError(405, 'METHOD_NOT_ALLOWED', `Method ${reqMethod} is not allowed for ${pathname}`);
+      return;
+    }
     const query: Record<string, string> = {};
     const seenQueryKeys = new Set<string>();
     let queryParseError: string | null = null;
@@ -286,6 +320,25 @@ export function createApiHandler(options: ApiServerOptions = {}) {
 
           const details = await snapshotManager.getNodeDetails(projectId, nodeId, { runId, cursor, limit }, runner);
           sendJson(200, details);
+          return;
+        }
+
+        // POST /api/projects/:projectId/nodes/:nodeId/message
+        const messageMatch = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/message$/);
+        if (messageMatch) {
+          if (reqMethod !== 'POST') {
+            sendError(405, 'METHOD_NOT_ALLOWED', `Method ${reqMethod} is not allowed for messaging endpoint`);
+            return;
+          }
+          const projectId = decodeURIComponent(messageMatch[1]);
+          const nodeId = decodeURIComponent(messageMatch[2]);
+          const body = await parseJsonBody<{ message?: string }>(req);
+          if (!body || typeof body.message !== 'string' || body.message.trim().length === 0) {
+            sendError(400, 'INVALID_ARGUMENT', 'Field "message" must be a non-empty string');
+            return;
+          }
+          const result = await sendAgentMessage(projectId, nodeId, body.message, runner);
+          sendJson(200, result);
           return;
         }
 

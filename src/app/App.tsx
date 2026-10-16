@@ -2,7 +2,11 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useDashboard } from './useDashboard';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { WorkflowGraph } from '../features/workflow/WorkflowGraph';
-import { NodeDetails } from '../features/workflow/NodeDetails';
+import {
+  NodeDetails,
+  type NodeDetailsVisibleSections,
+  DEFAULT_VISIBLE_SECTIONS,
+} from '../features/workflow/NodeDetails';
 import { ProgressPanel } from '../features/activity/ProgressPanel';
 import { ActivityPanel } from '../features/activity/ActivityPanel';
 import { GitHubPanel } from '../features/github/GitHubPanel';
@@ -92,9 +96,42 @@ export const App: React.FC = () => {
     }
   }, [cardStateColors]);
 
+  // 3. Persistent Node Details visible sections
+  const [visibleSections, setVisibleSections] = useState<NodeDetailsVisibleSections>(() => {
+    try {
+      const saved = localStorage.getItem('orca-node-details-visible-sections');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return { ...DEFAULT_VISIBLE_SECTIONS, ...parsed };
+      }
+    } catch {
+      // Storage unavailable
+    }
+    return DEFAULT_VISIBLE_SECTIONS;
+  });
 
+  const handleToggleVisibleSection = useCallback((key: keyof NodeDetailsVisibleSections) => {
+    setVisibleSections((prev) => {
+      const next = { ...prev, [key]: !prev[key] };
+      try {
+        localStorage.setItem('orca-node-details-visible-sections', JSON.stringify(next));
+      } catch {
+        // Storage unavailable
+      }
+      return next;
+    });
+  }, []);
 
-  // 3. Persistent Sidebar visibility & widths
+  const handleResetVisibleSections = useCallback(() => {
+    setVisibleSections(DEFAULT_VISIBLE_SECTIONS);
+    try {
+      localStorage.removeItem('orca-node-details-visible-sections');
+    } catch {
+      // Storage unavailable
+    }
+  }, []);
+
+  // 4. Persistent Sidebar visibility & widths
   const [leftSidebarOpen, setLeftSidebarOpen] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('orca-sidebar-left-open');
@@ -421,6 +458,9 @@ export const App: React.FC = () => {
           onToggleTheme={toggleTheme}
           cardStateColors={cardStateColors}
           onToggleCardStateColors={setCardStateColors}
+          visibleSections={visibleSections}
+          onToggleVisibleSection={handleToggleVisibleSection}
+          onResetVisibleSections={handleResetVisibleSections}
         />
       </ResizableSidebar>
 
@@ -738,6 +778,8 @@ export const App: React.FC = () => {
       >
         <GitHubPanel
           projectId={selectedProjectId}
+          project={currentProject}
+          projectKind={currentProject?.kind}
           data={gitHubData}
           loading={gitHubLoading}
           error={gitHubError}
@@ -751,6 +793,7 @@ export const App: React.FC = () => {
 
       {/* 4. Native Dialog Modal for Node Inspection */}
       <NodeDetails
+        projectId={selectedProjectId}
         details={nodeDetails}
         loading={nodeDetailsLoading}
         error={nodeDetailsError}
@@ -758,6 +801,7 @@ export const App: React.FC = () => {
         onClose={() => setSelectedNodeId(null)}
         onRefresh={refreshNodeDetails}
         onCheckNewerMessages={loadNewerConversation}
+        visibleSections={visibleSections}
       />
     </div>
   );
