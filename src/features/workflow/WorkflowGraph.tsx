@@ -923,7 +923,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
           <p id="reset-layout-description">Return cards and worktrees in this project to their default positions. Your saved layout will be cleared.</p>
           <div className="reset-layout-actions">
             <button type="button" className="btn btn-secondary" autoFocus onClick={resetConfirmation.close}>Cancel</button>
-            <button type="button" className="btn btn-primary" disabled={resetConfirmation.closing} onClick={() => {
+            <button type="button" className="btn btn-danger" disabled={resetConfirmation.closing} onClick={() => {
               handleResetLayout();
               resetConfirmation.close();
             }}>Reset layout</button>

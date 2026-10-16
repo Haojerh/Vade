@@ -2401,6 +2401,15 @@ dialog.reset-layout-dialog {
   gap: 8px;
   margin-top: 24px;
 }
+.reset-layout-actions .btn-danger {
+  background: var(--state-failed-bg);
+  color: var(--state-failed-text);
+  border-color: var(--state-failed-border);
+}
+.reset-layout-actions .btn-danger:hover:not(:disabled) {
+  background: var(--state-failed-bg);
+  border-color: var(--state-failed-text);
+}
 dialog.node-modal-dialog[open] {
   animation: modalEnter 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
