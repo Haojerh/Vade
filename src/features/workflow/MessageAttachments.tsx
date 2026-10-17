@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { MAX_ATTACHMENT_BYTES, MAX_MESSAGE_ATTACHMENTS, MAX_MESSAGE_ATTACHMENT_BYTES } from '../../../shared/contracts';
+import { Icon } from '../../components/ui/Icon';
 
 export function validateMessageFiles(files: File[]): string | null {
   if (files.length > MAX_MESSAGE_ATTACHMENTS) return 'Attach up to 8 files.';
@@ -36,7 +37,7 @@ export function MessageAttachments({ files, onChange, disabled, children, render
     if (!problem) onChange(next);
   };
   const attachButton = <button type="button" className="btn btn-secondary btn-xs" disabled={disabled} onClick={() => input.current?.click()}>
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m21 11-8 8a6 6 0 0 1-8-8L15 1a4 4 0 0 1 6 6L11 17a2 2 0 0 1-3-3l9-9" /></svg>
+    <Icon name="paperclip" size={12} />
     Attach
   </button>;
   return (
@@ -57,7 +58,7 @@ export function MessageAttachments({ files, onChange, disabled, children, render
           <span title={file.name}>{file.name}</span>
           <button type="button" className="btn btn-icon btn-xs" aria-label={`Remove ${file.name}`} disabled={disabled}
             onClick={() => { onChange(files.filter((_, item) => item !== index)); setError(null); }}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 6 12 12M6 18 18 6" /></svg>
+            <Icon name="close" size={12} />
           </button>
         </li>)}
       </ul>}

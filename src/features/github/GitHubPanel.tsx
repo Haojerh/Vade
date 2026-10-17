@@ -1,6 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { acknowledgeGitHubItem, observeGitHubItems, readUnreadHistory, saveUnreadHistory, type UnreadHistory } from './githubUnread';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
+import { Icon } from '../../components/ui/Icon';
 import { useGitHubPagination } from './useGitHubPagination';
 import type {
   GitHubData,
@@ -113,9 +114,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const selectTab = (tab: TabKey) => setActiveTab(tab);
   const notification = (tab: TabKey) => unread[tab].size > 0 ? (
     <span className="github-new-indicator" title={`${unread[tab].size} new items`}>
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4" />
-      </svg>
+      <Icon name="bell" size={12} />
       <span className="sr-only">{unread[tab].size} new items</span>
     </span>
   ) : null;
@@ -285,10 +284,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
                 aria-label="Collapse GitHub sidebar"
                 title="Collapse GitHub sidebar"
               >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <polyline points="13 17 18 12 13 7" />
-                  <polyline points="6 17 11 12 6 7" />
-                </svg>
+                <Icon name="chevrons-right" size={14} />
               </button>
             )}
           </div>
@@ -377,20 +373,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
               </option>
             ))}
           </select>
-          <svg
-            className="custom-select-arrow"
-            width="12"
-            height="12"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polyline points="6 9 12 15 18 9" />
-          </svg>
+          <Icon name="chevron-down" size={12} className="custom-select-arrow" />
         </div>
       </div>
 

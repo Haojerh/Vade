@@ -13,10 +13,15 @@ import { GitHubPanel } from '../features/github/GitHubPanel';
 import { mergeGitHubItems, retainGitHubHistory } from '../features/github/useGitHubPagination';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/NodeDetails';
-import { buildGitHubPrompt } from '../features/workflow/WorkflowGraph';
+import { buildGitHubPrompt, WorkflowGraph } from '../features/workflow/WorkflowGraph';
 import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
 import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
-import type { GitHubData, Node, NodeDetails as NodeDetailsType, PrerequisitesStatus } from '../../shared/contracts';
+import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
+import { RenameDialog } from '../components/ui/RenameDialog';
+import { AddAgentDialog } from '../components/ui/AddAgentDialog';
+import { Icon } from '../components/ui/Icon';
+import { useConfirmationState } from '../hooks/useConfirmationState';
+import type { GitHubData, Node, Edge, NodeDetails as NodeDetailsType, PrerequisitesStatus } from '../../shared/contracts';
 
 test('GitHub refresh preserves the previous first-page boundary across all activity types', () => {
   const meta = { availability: 'ready' as const, observedAt: null, attemptedAt: '2026-10-16T00:00:00Z', stale: false, partial: true, issue: null };
@@ -565,4 +570,793 @@ test('PrerequisitesGate renders loading state when initially loading without dat
   assert.ok(html.includes('Checking Orca Environment...'));
   assert.ok(html.includes('prereq-spinner'));
 });
+
+test('NodeDetails renders Close Agent Tab button for agent nodes', () => {
+  const node = { id: 'agent-1', kind: 'agent', label: 'Coder', state: 'working', liveness: 'live', taskIds: [] } as unknown as Node;
+  const details = {
+    node,
+    currentTool: null,
+    conversation: { meta: { availability: 'empty', stale: false, observedAt: null, attemptedAt: null, partial: false, issue: null }, data: { messages: [], cursor: null, nextCursor: null, source: 'test', sourceIdentity: null, provider: null, limited: false, hasMore: false, totalTurns: 0 } },
+    tasks: [],
+  } as unknown as NodeDetailsType;
+  const html = renderToStaticMarkup(createElement(NodeDetails, {
+    projectId: 'proj_1',
+    details,
+    loading: false,
+    error: null,
+    selectedNodeId: 'agent-1',
+    onClose: () => {},
+    onRefresh: () => {},
+    visibleSections: DEFAULT_VISIBLE_SECTIONS,
+  }));
+  assert.ok(html.includes('Close Agent Tab'));
+  assert.equal(html.includes('Delete Worktree'), false);
+});
+
+test('NodeDetails renders Delete Worktree button for worktree nodes', () => {
+  const node = { id: 'wt-1', kind: 'worktree', label: 'Feature Branch', state: 'idle', liveness: 'live', taskIds: [] } as unknown as Node;
+  const details = {
+    node,
+    currentTool: null,
+    conversation: { meta: { availability: 'empty', stale: false, observedAt: null, attemptedAt: null, partial: false, issue: null }, data: { messages: [], cursor: null, nextCursor: null, source: 'test', sourceIdentity: null, provider: null, limited: false, hasMore: false, totalTurns: 0 } },
+    tasks: [],
+  } as unknown as NodeDetailsType;
+  const html = renderToStaticMarkup(createElement(NodeDetails, {
+    projectId: 'proj_1',
+    details,
+    loading: false,
+    error: null,
+    selectedNodeId: 'wt-1',
+    onClose: () => {},
+    onRefresh: () => {},
+    visibleSections: DEFAULT_VISIBLE_SECTIONS,
+  }));
+  assert.ok(html.includes('Delete Worktree'));
+  assert.equal(html.includes('Close Agent Tab'), false);
+});
+
+test('ConfirmationDialog renders open modal with title, description, and action buttons', () => {
+  const html = renderToStaticMarkup(createElement(ConfirmationDialog, {
+    isOpen: true,
+    isClosing: false,
+    title: 'Delete Worktree?',
+    description: 'Are you sure you want to delete worktree test-wt?',
+    confirmLabel: 'Delete Worktree',
+    confirmVariant: 'danger',
+    isConfirming: false,
+    error: null,
+    onConfirm: () => {},
+    onClose: () => {},
+  }));
+
+  assert.ok(html.includes('Delete Worktree?'));
+  assert.ok(html.includes('Are you sure you want to delete worktree test-wt?'));
+  assert.ok(html.includes('btn-danger'));
+  assert.ok(html.includes('confirmation-dialog'));
+  assert.equal(html.includes('is-closing'), false);
+});
+
+test('ConfirmationDialog renders with is-closing animation class during exit phase', () => {
+  const html = renderToStaticMarkup(createElement(ConfirmationDialog, {
+    isOpen: true,
+    isClosing: true,
+    title: 'Close Agent Tab?',
+    description: 'Are you sure?',
+    onConfirm: () => {},
+    onClose: () => {},
+  }));
+
+  assert.ok(html.includes('confirmation-dialog'));
+  assert.ok(html.includes('is-closing'));
+});
+
+test('ConfirmationDialog displays error alert when error is provided', () => {
+  const html = renderToStaticMarkup(createElement(ConfirmationDialog, {
+    isOpen: true,
+    isClosing: false,
+    title: 'Delete Worktree?',
+    description: 'Are you sure?',
+    error: 'Worktree is locked by git',
+    onConfirm: () => {},
+    onClose: () => {},
+  }));
+
+  assert.ok(html.includes('panel-alert alert-error'));
+  assert.ok(html.includes('Worktree is locked by git'));
+});
+
+test('ConfirmationDialog shows processing label and disables buttons when isConfirming is true', () => {
+  const html = renderToStaticMarkup(createElement(ConfirmationDialog, {
+    isOpen: true,
+    isClosing: false,
+    title: 'Close Agent Tab?',
+    description: 'Are you sure?',
+    confirmLabel: 'Close Tab',
+    isConfirming: true,
+    onConfirm: () => {},
+    onClose: () => {},
+  }));
+
+  assert.ok(html.includes('Processing…'));
+  assert.ok(html.includes('disabled=""'));
+});
+
+test('ConfirmationDialog returns null when isOpen is false', () => {
+  const html = renderToStaticMarkup(createElement(ConfirmationDialog, {
+    isOpen: false,
+    isClosing: false,
+    title: 'Delete Worktree?',
+    description: 'Are you sure?',
+    onConfirm: () => {},
+    onClose: () => {},
+  }));
+
+  assert.equal(html, '');
+});
+
+test('useConfirmationState initializes closed and reset() ensures closed state', () => {
+  let hookResult: any;
+  function TestComponent() {
+    hookResult = useConfirmationState();
+    return null;
+  }
+  renderToStaticMarkup(createElement(TestComponent));
+  assert.equal(hookResult.present, false);
+  assert.equal(hookResult.closing, false);
+  assert.equal(hookResult.data, null);
+
+  hookResult.close();
+  assert.equal(hookResult.closing, false);
+
+  hookResult.reset();
+  assert.equal(hookResult.present, false);
+  assert.equal(hookResult.closing, false);
+  assert.equal(hookResult.data, null);
+});
+
+test('ConfirmationDialog renders standardized Reset layout dialog', () => {
+  const html = renderToStaticMarkup(createElement(ConfirmationDialog, {
+    isOpen: true,
+    isClosing: false,
+    title: 'Reset layout?',
+    description: 'Return cards and worktrees in this project to their default positions. Your saved layout will be cleared.',
+    confirmLabel: 'Reset layout',
+    confirmVariant: 'danger',
+    onConfirm: () => {},
+    onClose: () => {},
+  }));
+
+  assert.ok(html.includes('Reset layout?'));
+  assert.ok(html.includes('Your saved layout will be cleared.'));
+  assert.ok(html.includes('btn-danger'));
+});
+
+test('NodeDetails displays loading state and avoids rendering stale data when details.node.id does not match selectedNodeId', () => {
+  const staleDetails = {
+    node: {
+      id: 'node-codex-old',
+      kind: 'agent',
+      label: 'Codex Session',
+      state: 'idle',
+      liveness: 'live',
+      agentType: 'codex',
+    },
+    tasks: [],
+    activity: [],
+    currentTool: null,
+    conversation: {
+      data: {
+        messages: [{ id: 'm1', role: 'agent', text: 'Old codex reply', at: null }],
+        cursor: null,
+        nextCursor: null,
+        limited: false,
+        truncated: false,
+        warnings: [],
+      },
+      meta: { availability: 'ready', observedAt: null, attemptedAt: '2026-10-17T00:00:00Z', stale: false, partial: false, issue: null },
+    },
+  } as unknown as NodeDetailsType;
+
+  // Selected node is a different node (Antigravity), but details still contains the old Codex session
+  const html = renderToStaticMarkup(createElement(NodeDetails, {
+    projectId: 'proj',
+    details: staleDetails,
+    loading: true,
+    error: null,
+    selectedNodeId: 'node-antigravity-new',
+    selectedNode: {
+      id: 'node-antigravity-new',
+      kind: 'agent',
+      label: 'Antigravity Session',
+      state: 'working',
+      liveness: 'live',
+      agentType: 'antigravity',
+      worktreeId: 'wt-1',
+      runId: null,
+      branch: null,
+      path: null,
+      rawState: 'working',
+      workspaceStatus: null,
+      taskOutcome: null,
+      model: null,
+      effort: null,
+      observedAt: null,
+      lastActivityAt: null,
+      stale: false,
+      taskIds: [],
+      preview: null,
+      outputAvailable: true,
+    },
+    onClose: () => {},
+    onRefresh: () => {},
+    visibleSections: DEFAULT_VISIBLE_SECTIONS,
+  }));
+
+  // Should render the fresh selectedNode's label in title, but NOT the stale conversation from old Codex
+  assert.ok(html.includes('Antigravity Session'));
+  assert.ok(!html.includes('Old codex reply'), 'Stale message from old node must not be rendered');
+  assert.ok(html.includes('modal-loading-state'), 'Loading state must be shown while matching details are loading');
+});
+
+test('NodeDetails does not render skeleton loading state when matching details exist even during background loading', () => {
+  const matchingDetails = {
+    node: {
+      id: 'agent-1',
+      kind: 'agent',
+      label: 'Antigravity Session',
+      state: 'working',
+      liveness: 'live',
+      agentType: 'antigravity',
+      worktreeId: 'wt-1',
+      runId: null,
+      branch: null,
+      path: null,
+      rawState: 'working',
+      workspaceStatus: null,
+      taskOutcome: null,
+      model: null,
+      effort: null,
+      observedAt: null,
+      lastActivityAt: null,
+      stale: false,
+      taskIds: [],
+      preview: null,
+      outputAvailable: true,
+    },
+    tasks: [],
+    activity: [],
+    currentTool: null,
+    conversation: {
+      data: {
+        messages: [{ id: 'm1', role: 'agent', text: 'Hello', at: null }],
+        cursor: null,
+        nextCursor: null,
+        limited: false,
+        truncated: false,
+        warnings: [],
+      },
+      meta: { availability: 'ready', observedAt: null, attemptedAt: '2026-10-17T00:00:00Z', stale: false, partial: false, issue: null },
+    },
+  } as unknown as NodeDetailsType;
+
+  const html = renderToStaticMarkup(createElement(NodeDetails, {
+    projectId: 'proj',
+    details: matchingDetails,
+    loading: true, // background refresh in progress
+    error: null,
+    selectedNodeId: 'agent-1',
+    selectedNode: matchingDetails.node,
+    onClose: () => {},
+    onRefresh: () => {},
+    visibleSections: DEFAULT_VISIBLE_SECTIONS,
+  }));
+
+  // Must render content and must NOT render skeleton overlay to prevent layout flicker
+  assert.ok(html.includes('Antigravity Session'));
+  assert.ok(html.includes('Hello'));
+  assert.ok(!html.includes('modal-loading-state'), 'Skeleton state must not be rendered when matching details already exist');
+});
+
+test('compareWorkflowNodes sorts nodes stably by lowercase label', () => {
+  const nodeZ = { id: 'node-1', kind: 'agent', label: 'Zebra' } as Node;
+  const nodeA = { id: 'node-2', kind: 'agent', label: 'Alpha' } as Node;
+  const nodeM = { id: 'node-3', kind: 'agent', label: 'Mango' } as Node;
+
+  const sorted = [nodeZ, nodeA, nodeM].sort(compareWorkflowNodes);
+  assert.deepEqual(sorted.map((n) => n.label), ['Alpha', 'Mango', 'Zebra']);
+});
+
+test('NodeDetails suppresses CONVERSATION_UNSUPPORTED alert and shows empty hint for unstarted sessions', () => {
+  const node = {
+    id: 'node-unstarted',
+    kind: 'agent',
+    label: 'Fresh Agent Tab',
+    state: 'idle',
+    liveness: 'live',
+    agentType: 'codex',
+    worktreeId: 'wt-1',
+    runId: null,
+    branch: null,
+    path: null,
+    rawState: 'idle',
+    workspaceStatus: null,
+    taskOutcome: null,
+    model: null,
+    effort: null,
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: true,
+  } as unknown as Node;
+
+  const html = renderToStaticMarkup(createElement(NodeDetails, {
+    projectId: 'proj-1',
+    selectedNodeId: 'node-unstarted',
+    loading: false,
+    error: null,
+    details: {
+      node,
+      currentTool: null,
+      tasks: [],
+      conversation: {
+        meta: {
+          source: 'codex',
+          availability: 'unsupported',
+          stale: false,
+          issue: {
+            code: 'CONVERSATION_UNSUPPORTED',
+            message: 'Agent transcript provenance not found or unsupported',
+            retryable: false,
+          },
+        },
+        data: {
+          messages: [],
+          nextCursor: null,
+        },
+      },
+    } as unknown as NodeDetailsType,
+    selectedNode: node,
+    onClose: () => {},
+    onRefresh: () => {},
+    visibleSections: DEFAULT_VISIBLE_SECTIONS,
+  }));
+
+  // Should NOT render the alert banner with CONVERSATION_UNSUPPORTED
+  assert.ok(!html.includes('alert-error'), 'Error alert must be suppressed for unstarted sessions');
+  assert.ok(!html.includes('[CONVERSATION_UNSUPPORTED]'), 'Error code must not be shown in alert');
+  // Should render the clean empty hint
+  assert.ok(html.includes('No conversation messages recorded for this session.'), 'Friendly empty hint must be shown');
+  // Message composer should still be present
+  assert.ok(html.includes('chatbox-textarea'), 'Message composer should be available to chat');
+});
+
+test('WorkflowGraph renders orchestrator in separate lane when orchestrationSeparated is true', () => {
+  const orchNode: Node = {
+    id: 'orch-1',
+    kind: 'orchestrator',
+    label: 'Lead Orchestrator',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: 'antigravity',
+    branch: null,
+    path: null,
+    state: 'idle',
+    rawState: 'connected',
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    model: null,
+    effort: null,
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: true,
+  };
+
+  const wtNode: Node = {
+    id: 'wt-1',
+    kind: 'worktree',
+    label: 'main',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: null,
+    branch: 'main',
+    path: 'C:\\test\\main',
+    state: 'idle',
+    rawState: null,
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    model: null,
+    effort: null,
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: false,
+  };
+
+  const html = renderToStaticMarkup(createElement(WorkflowGraph, {
+    projectId: 'proj-1',
+    runId: null,
+    loading: false,
+    nodes: [orchNode, wtNode],
+    edges: [],
+    selectedNodeId: null,
+    onSelectNode: () => {},
+    isLocallyStale: false,
+    orchestrationSeparated: true,
+  }));
+
+  assert.ok(html.includes('orchestrator-lane'), 'Orchestrator lane must be rendered');
+  assert.ok(html.includes('1 Orchestrator • 1 Worktree'), 'Count badge must include orchestrator count');
+  assert.ok(html.includes('Lead Orchestrator'));
+});
+
+test('WorkflowGraph moves orchestrator inside worktree and omits orchestrator lane when orchestrationSeparated is false', () => {
+  const orchNode: Node = {
+    id: 'orch-1',
+    kind: 'orchestrator',
+    label: 'Lead Orchestrator',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: 'antigravity',
+    branch: null,
+    path: null,
+    state: 'idle',
+    rawState: 'connected',
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    model: null,
+    effort: null,
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: true,
+  };
+
+  const wtNode: Node = {
+    id: 'wt-1',
+    kind: 'worktree',
+    label: 'main',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: null,
+    branch: 'main',
+    path: 'C:\\test\\main',
+    state: 'idle',
+    rawState: null,
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    model: null,
+    effort: null,
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: false,
+  };
+
+  const html = renderToStaticMarkup(createElement(WorkflowGraph, {
+    projectId: 'proj-1',
+    runId: null,
+    loading: false,
+    nodes: [orchNode, wtNode],
+    edges: [],
+    selectedNodeId: null,
+    onSelectNode: () => {},
+    isLocallyStale: false,
+    orchestrationSeparated: false,
+  }));
+
+  assert.ok(!html.includes('orchestrator-lane'), 'Orchestrator lane must NOT be rendered');
+  assert.ok(!html.includes('Orchestrator •'), 'Toolbar badge must NOT contain Orchestrator');
+  assert.ok(html.includes('1 Worktree'), 'Toolbar badge must show worktree count');
+  assert.ok(html.includes('worktree-agents-stack'), 'Worktree agents stack must be rendered');
+  assert.ok(html.includes('Lead Orchestrator'), 'Orchestrator node must be placed inside the worktree');
+});
+
+test('RenameDialog renders input field with initial title and action buttons', () => {
+  const html = renderToStaticMarkup(
+    createElement(RenameDialog, {
+      isOpen: true,
+      isClosing: false,
+      initialTitle: 'Original Title',
+      onRename: () => {},
+      onClose: () => {},
+    })
+  );
+
+  assert.ok(html.includes('Rename Tab Title'));
+  assert.ok(html.includes('value="Original Title"'));
+  assert.ok(html.includes('Cancel'));
+  assert.ok(html.includes('Save'));
+});
+
+test('AddAgentDialog renders preset buttons, command and title inputs', () => {
+  const html = renderToStaticMarkup(
+    createElement(AddAgentDialog, {
+      isOpen: true,
+      isClosing: false,
+      worktreeName: 'feature-branch',
+      onCreate: () => {},
+      onClose: () => {},
+    })
+  );
+
+  assert.ok(html.includes('Add New Agent'));
+  assert.ok(html.includes('feature-branch'));
+  assert.ok(html.includes('Codex'));
+  assert.ok(html.includes('Claude'));
+  assert.ok(html.includes('OpenCode'));
+  assert.ok(html.includes('Antigravity'));
+  assert.ok(html.includes('Gemini'));
+  assert.ok(html.includes('Create Agent'));
+});
+
+test('NodeDetails renders rename edit button for agent nodes and Add Agent button for worktrees', () => {
+  const agentNode: Node = {
+    id: 'agent-1',
+    kind: 'agent',
+    label: 'My Codex Agent',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: 'codex',
+    branch: 'main',
+    path: 'C:\\test\\main',
+    state: 'idle',
+    rawState: null,
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    model: 'o3-mini',
+    effort: 'high',
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: true,
+  };
+
+  const agentHtml = renderToStaticMarkup(
+    createElement(NodeDetails, {
+      projectId: 'proj-1',
+      details: {
+        node: agentNode,
+        facts: { workspacePath: 'C:\\test', branch: 'main', terminalVerdict: 'live' },
+        conversation: { data: { messages: [], cursor: null, nextCursor: null, limited: false, truncated: false, warnings: [] }, meta: { availability: 'ready', observedAt: null, attemptedAt: '2026-10-17T00:00:00Z', stale: false, partial: false, issue: null } },
+        tools: { data: [], meta: { availability: 'ready', observedAt: null, attemptedAt: '2026-10-17T00:00:00Z', stale: false, partial: false, issue: null } },
+        tasks: [],
+        activity: [],
+      } as unknown as NodeDetailsType,
+      loading: false,
+      error: null,
+      selectedNodeId: 'agent-1',
+      selectedNode: agentNode,
+      onClose: () => {},
+      onRefresh: () => {},
+    })
+  );
+
+  assert.ok(agentHtml.includes('btn-rename-node'), 'Agent node must have rename button');
+
+  const wtNode: Node = {
+    id: 'wt-1',
+    kind: 'worktree',
+    label: 'main',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: null,
+    branch: 'main',
+    path: 'C:\\test\\main',
+    state: 'idle',
+    rawState: null,
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    model: null,
+    effort: null,
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: false,
+  };
+
+  const wtHtml = renderToStaticMarkup(
+    createElement(NodeDetails, {
+      projectId: 'proj-1',
+      details: {
+        node: wtNode,
+        facts: { workspacePath: 'C:\\test', branch: 'main', terminalVerdict: 'live' },
+        conversation: { data: { messages: [], cursor: null, nextCursor: null, limited: false, truncated: false, warnings: [] }, meta: { availability: 'ready', observedAt: null, attemptedAt: '2026-10-17T00:00:00Z', stale: false, partial: false, issue: null } },
+        tools: { data: [], meta: { availability: 'ready', observedAt: null, attemptedAt: '2026-10-17T00:00:00Z', stale: false, partial: false, issue: null } },
+        tasks: [],
+        activity: [],
+      } as unknown as NodeDetailsType,
+      loading: false,
+      error: null,
+      selectedNodeId: 'wt-1',
+      selectedNode: wtNode,
+      onClose: () => {},
+      onRefresh: () => {},
+    })
+  );
+
+  assert.ok(wtHtml.includes('btn-add-agent'), 'Worktree node must have Add Agent button');
+});
+
+test('WorkflowGraph renders worktree member agents with node-draggable and drag grip handle', () => {
+  const wtNode: Node = {
+    id: 'wt-1',
+    kind: 'worktree',
+    label: 'main',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: null,
+    branch: 'main',
+    path: 'C:\\test\\main',
+    state: 'idle',
+    rawState: null,
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    model: null,
+    effort: null,
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: false,
+  };
+
+  const agNode: Node = {
+    id: 'agent-in-wt',
+    kind: 'agent',
+    label: 'Worker 1',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: 'codex',
+    branch: 'main',
+    path: 'C:\\test\\main',
+    state: 'working',
+    rawState: null,
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    model: 'o3-mini',
+    effort: 'high',
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: true,
+  };
+
+  const edge: Edge = {
+    id: 'edge-membership',
+    source: 'wt-1',
+    target: 'agent-in-wt',
+    kind: 'contains',
+    evidence: 'workspace-membership',
+    active: true,
+  };
+
+  const html = renderToStaticMarkup(
+    createElement(WorkflowGraph, {
+      projectId: 'proj-1',
+      runId: null,
+      loading: false,
+      nodes: [wtNode, agNode],
+      edges: [edge],
+      selectedNodeId: null,
+      onSelectNode: () => {},
+      isLocallyStale: false,
+    })
+  );
+
+  assert.ok(html.includes('node-draggable'), 'Worktree agent card must have node-draggable class');
+  assert.ok(html.includes('drag-grip-icon'), 'Worktree agent card must render drag grip icon');
+  assert.ok(html.includes('Add Agent'), 'Worktree box header must render Add Agent button');
+});
+
+test('WorkflowGraph respects worktreeMemberOrder from localStorage to order worktree agents', () => {
+  const wtNode: Node = {
+    id: 'wt-1',
+    kind: 'worktree',
+    label: 'main-worktree',
+    worktreeId: 'wt-1',
+    runId: null,
+    agentType: null,
+    branch: 'main',
+    path: 'C:\\test\\main',
+    state: 'idle',
+    rawState: null,
+    workspaceStatus: null,
+    taskOutcome: null,
+    liveness: 'live',
+    observedAt: null,
+    lastActivityAt: null,
+    stale: false,
+    taskIds: [],
+    preview: null,
+    outputAvailable: false,
+  };
+  const ag1: Node = {
+    ...wtNode,
+    id: 'ag-1',
+    kind: 'agent',
+    label: 'Alpha Agent',
+    worktreeId: 'wt-1',
+  };
+  const ag2: Node = {
+    ...wtNode,
+    id: 'ag-2',
+    kind: 'agent',
+    label: 'Beta Agent',
+    worktreeId: 'wt-1',
+  };
+  const edge1 = { id: 'e1', source: 'wt-1', target: 'ag-1', kind: 'contains' as const, evidence: 'workspace-membership' as const, active: true };
+  const edge2 = { id: 'e2', source: 'wt-1', target: 'ag-2', kind: 'contains' as const, evidence: 'workspace-membership' as const, active: true };
+
+  const store = new Map<string, string>();
+  store.set('orca-worktree-member-order:proj-order-test', JSON.stringify({
+    'wt-1': ['ag-2', 'ag-1'],
+  }));
+  const originalLocalStorage = (globalThis as any).localStorage;
+  (globalThis as any).localStorage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, val: string) => store.set(key, String(val)),
+    removeItem: (key: string) => store.delete(key),
+    clear: () => store.clear(),
+  };
+
+  try {
+    const html = renderToStaticMarkup(
+      createElement(WorkflowGraph, {
+        projectId: 'proj-order-test',
+        runId: null,
+        loading: false,
+        nodes: [wtNode, ag1, ag2],
+        edges: [edge1, edge2],
+        selectedNodeId: null,
+        onSelectNode: () => {},
+        isLocallyStale: false,
+      })
+    );
+
+    const betaIdx = html.indexOf('Beta Agent');
+    const alphaIdx = html.indexOf('Alpha Agent');
+    assert.ok(betaIdx !== -1 && alphaIdx !== -1);
+    assert.ok(betaIdx < alphaIdx, 'Beta Agent should appear before Alpha Agent per custom worktree order');
+  } finally {
+    (globalThis as any).localStorage = originalLocalStorage;
+  }
+});
+
+test('Icon component renders arrow-down and arrow-up paths correctly', () => {
+  const downHtml = renderToStaticMarkup(createElement(Icon, { name: 'arrow-down', size: 12 }));
+  assert.ok(downHtml.includes('<polyline points="19 12 12 19 5 12"'), 'arrow-down polyline must render');
+
+  const upHtml = renderToStaticMarkup(createElement(Icon, { name: 'arrow-up', size: 12 }));
+  assert.ok(upHtml.includes('<polyline points="5 12 12 5 19 12"'), 'arrow-up polyline must render');
+});
+
+
+
+
 

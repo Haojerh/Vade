@@ -296,3 +296,51 @@ export interface PrerequisitesStatus {
   issues?: string[];
 }
 
+export interface CloseAgentTabResponse {
+  ok: boolean;
+  message?: string;
+}
+
+export interface DeleteWorktreeResponse {
+  ok: boolean;
+  message?: string;
+}
+
+export interface RenameNodeTitleRequest {
+  title: string;
+}
+
+export interface RenameNodeTitleResponse {
+  ok: boolean;
+  title: string;
+  message?: string;
+}
+
+export interface CreateAgentRequest {
+  command: string;
+  title?: string;
+}
+
+export interface CreateAgentResponse {
+  ok: boolean;
+  handle?: string;
+  title?: string;
+  message?: string;
+}
+
+export interface AgentCatalogEntry {
+  id: string;
+  name: string;
+  command: string;
+  detectCmd: string;
+  provider: string;
+  installed: boolean;
+  isDefault?: boolean;
+  homepageUrl?: string;
+}
+
+export interface AgentCatalogResponse {
+  installed: AgentCatalogEntry[];
+  available: AgentCatalogEntry[];
+  defaultAgentId?: string | null;
+}

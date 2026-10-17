@@ -24,7 +24,7 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 
 ## HTTP Endpoints & API Contract
 
-Implemented in [`server/http/api.ts`](server/http/api.ts). Collection uses `GET` or `HEAD`. Only the explicit agent-message endpoint permits `POST`; other mutations return `405 METHOD_NOT_ALLOWED`.
+Implemented in [`server/http/api.ts`](server/http/api.ts). Collection uses `GET` or `HEAD`. Allowed mutation actions include agent-message, closing an agent tab, renaming a node title, creating a worktree agent, and deleting a worktree; other mutations return `405 METHOD_NOT_ALLOWED`.
 
 | Endpoint | Query Parameters | Response / Behavior | Description |
 |---|---|---|---|
@@ -37,6 +37,10 @@ Implemented in [`server/http/api.ts`](server/http/api.ts). Collection uses `GET`
 | `GET /api/projects/:projectId/nodes/:nodeId` | `runId` (optional), `cursor` (optional, <= 512 chars), `limit` (optional, 1..200, default 100; UI requests 20) | `NodeDetails` | Node facts, tool/tasks/activity metadata and a source-bound conversation section. Worktrees and terminal nodes do not expose conversation history. |
 | `GET /api/projects/:projectId/github` | `scope=general` (default) or `scope=worktree&nodeId=<discovered worktree node>`; optional `activity=commits\|prs\|issues`, `page=1..10000` (requires activity) | `GitHubData` | Initial 20-entry windows or a selected activity page, scoped coverage and per-activity `pagination.nextPage` values. |
 | `POST /api/projects/:projectId/nodes/:nodeId/message` | JSON `SendMessageRequest` | `SendMessageResponse` | User-authored text and optional bounded base64 attachments. Uploads require a discovered agent and a connected local terminal; never accept client-supplied host paths. |
+| `POST /api/projects/:projectId/nodes/:nodeId/close-tab` | None | `CloseAgentTabResponse` | Closes an agent's terminal tab via Orca CLI (`orca terminal close --terminal <handle> --tab --json`). |
+| `POST /api/projects/:projectId/nodes/:nodeId/rename` | JSON `RenameNodeTitleRequest` | `RenameNodeTitleResponse` | Renames an agent terminal tab via Orca CLI (`orca terminal rename --terminal <handle> [--title <text>] --json`). |
+| `POST /api/projects/:projectId/nodes/:nodeId/create-agent` | JSON `CreateAgentRequest` | `CreateAgentResponse` | Spawns a new agent terminal in a worktree via Orca CLI (`orca terminal create --worktree <selector> --command <cmd> [--title <title>] --json`). |
+| `POST /api/projects/:projectId/nodes/:nodeId/delete-worktree` | None | `DeleteWorktreeResponse` | Removes a worktree via Orca CLI (`orca worktree rm --worktree <selector> --force --json`). Also accessible via `DELETE /api/projects/:projectId/nodes/:nodeId/worktree`. |
 
 ## Error Responses
 

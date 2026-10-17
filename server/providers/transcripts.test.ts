@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { publicTranscriptRecord, transcriptSettings, readOpenCodePage, readOpenCodeModel } from './transcripts.js';
-import { resolveCoordinatorConversation, globalSourceMaps } from '../integrations/orca.js';
+import { publicTranscriptRecord, transcriptSettings, readOpenCodePage, readOpenCodeModel, findOpenCodeSession, findClaudeTranscript } from './transcripts.js';
+import { resolveCoordinatorConversation, resolveAntigravityConversation, globalSourceMaps } from '../integrations/orca.js';
 
 test('Claude, Pi and OMP expose public text and omit tools, thinking and injected turns', () => {
   for (const provider of ['claude', 'pi', 'omp']) {
@@ -86,4 +86,109 @@ test('OpenCode reads exact session model, effort and public parts; cursors check
     assert.deepEqual(JSON.parse(next.lines[0]).payload.content, [{ type: 'text', text: 'new arrival' }]);
     assert.equal(readOpenCodePage(file, 'missing', null, 20).lines.length, 0);
   } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('findOpenCodeSession locates resumed sessions by title and rejects generic label', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-opencode-find-'));
+  const oldDb = process.env.OPENCODE_DB;
+  const oldKilo = process.env.KILO_DB;
+  const oldOrcaApp = process.env.ORCA_APPDATA_DIR;
+  const file = path.join(dir, 'opencode.db');
+  const kiloFile = path.join(dir, 'kilo.db');
+  process.env.OPENCODE_DB = file;
+  process.env.KILO_DB = kiloFile;
+  process.env.ORCA_APPDATA_DIR = dir;
+  const db = new DatabaseSync(file);
+  const kdb = new DatabaseSync(kiloFile);
+  try {
+    db.exec('CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, directory TEXT, model TEXT);');
+    db.prepare('INSERT INTO session VALUES(?, ?, ?, ?)').run('ses_123', 'Draft Report Implementation', null, null);
+    
+    // Matched by clean title or OC prefix
+    const found1 = findOpenCodeSession('opencode', 'OC | Draft Report Implementation');
+    assert.deepEqual(found1, { dbPath: file, sessionId: 'ses_123' });
+
+    const found2 = findOpenCodeSession('opencode', 'Draft Report Implementation...');
+    assert.deepEqual(found2, { dbPath: file, sessionId: 'ses_123' });
+
+    // Generic label must return null
+    assert.equal(findOpenCodeSession('opencode', 'opencode'), null);
+    assert.equal(findOpenCodeSession('opencode', 'Agent'), null);
+
+    // Kilo sessions with Kilo CLI / Kilo Code / KC prefixes
+    kdb.exec('CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, directory TEXT, model TEXT);');
+    kdb.prepare('INSERT INTO session VALUES(?, ?, ?, ?)').run('ses_kilo_1', 'Greeting', 'C:/work/repo', JSON.stringify({ id: 'nvidia/nemotron-3.5-super-vl:free', providerID: 'kilo' }));
+    kdb.prepare('INSERT INTO session VALUES(?, ?, ?, ?)').run('ses_kilo_2', 'Light chat', 'C:/work/repo', JSON.stringify({ id: 'nvidia/nemotron-3.5-super-vl:free', providerID: 'kilo' }));
+
+    const foundKilo1 = findOpenCodeSession('kilo', 'Kilo CLI | Greeting');
+    assert.deepEqual(foundKilo1, { dbPath: kiloFile, sessionId: 'ses_kilo_1' });
+
+    const foundKilo2 = findOpenCodeSession('kilo', 'Kilo Code | Greeting');
+    assert.deepEqual(foundKilo2, { dbPath: kiloFile, sessionId: 'ses_kilo_1' });
+
+    const foundKilo3 = findOpenCodeSession('kilo', 'KC | Greeting');
+    assert.deepEqual(foundKilo3, { dbPath: kiloFile, sessionId: 'ses_kilo_1' });
+
+    // Custom tab title matching via terminal checkpoint
+    const ptyId = 'test-pty-123';
+    const thDir = path.join(dir, 'orca', 'terminal-history', encodeURIComponent(ptyId));
+    fs.mkdirSync(thDir, { recursive: true });
+    fs.writeFileSync(path.join(thDir, 'checkpoint.json'), JSON.stringify({
+      snapshotAnsi: '\u001b[1mLight chat\u001b[22m - active kilo session',
+    }));
+
+    const foundByCp = findOpenCodeSession('kilo', 'custom-tab-label', null, { ptyId });
+    assert.deepEqual(foundByCp, { dbPath: kiloFile, sessionId: 'ses_kilo_2' });
+
+    // Model and effort read from session table
+    const modelRes = readOpenCodeModel(kiloFile, 'ses_kilo_1');
+    assert.deepEqual(modelRes, { model: 'nvidia/nemotron-3.5-super-vl:free', effort: null });
+  } finally {
+    db.close();
+    kdb.close();
+    if (oldDb) process.env.OPENCODE_DB = oldDb;
+    else delete process.env.OPENCODE_DB;
+    if (oldKilo) process.env.KILO_DB = oldKilo;
+    else delete process.env.KILO_DB;
+    if (oldOrcaApp) process.env.ORCA_APPDATA_DIR = oldOrcaApp;
+    else delete process.env.ORCA_APPDATA_DIR;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('idle Antigravity node in same worktree does not steal active Antigravity session', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-idle-ag-'));
+  const previous = process.env.ORCA_APPDATA_DIR;
+  process.env.ORCA_APPDATA_DIR = dir;
+  const hookDir = path.join(dir, 'orca', 'agent-hooks');
+  fs.mkdirSync(hookDir, { recursive: true });
+  try {
+    // Only pane-1 has an active Antigravity session hook
+    const entry = {
+      source: 'antigravity',
+      worktreeId: 'shared-worktree',
+      providerSession: { key: 'conversation_id', id: 'b00aa6db-3e66-4788-aa65-a568ef353e6c' },
+    };
+    fs.writeFileSync(path.join(hookDir, 'last-status.json'), JSON.stringify({
+      entries: { 'pane-1': entry },
+    }));
+
+    // pane-2 is an idle tab in the SAME worktree
+    const activeNode = { id: 'node-active', agentType: 'antigravity', worktreeId: 'shared-worktree', label: 'Active AG' } as any;
+    const idleNode = { id: 'node-idle', agentType: 'antigravity', worktreeId: 'shared-worktree', label: 'antigravity' } as any;
+    globalSourceMaps.nodeSourceMap.set(activeNode.id, { paneKey: 'pane-1' });
+    globalSourceMaps.nodeSourceMap.set(idleNode.id, { paneKey: 'pane-2' });
+
+    // Idle node must NOT match pane-1 or return ready conversation
+    const idleRes = await resolveAntigravityConversation('project', idleNode, null);
+    assert.equal(idleRes.meta.availability, 'unsupported');
+    assert.equal(idleRes.meta.issue?.code, 'CONVERSATION_UNSUPPORTED');
+    assert.equal(idleRes.data, null);
+  } finally {
+    globalSourceMaps.nodeSourceMap.delete('node-active');
+    globalSourceMaps.nodeSourceMap.delete('node-idle');
+    if (previous === undefined) delete process.env.ORCA_APPDATA_DIR;
+    else process.env.ORCA_APPDATA_DIR = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

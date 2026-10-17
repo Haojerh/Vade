@@ -4,6 +4,7 @@ import type { Section, UsageData, UsageWindow } from '../../../shared/contracts'
 import { fetchUsage } from '../../api/client';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
+import { Icon } from '../../components/ui/Icon';
 import { usePopoverState } from '../../hooks/usePopoverState';
 
 function resetLabel(at: string | null): string | null {
@@ -125,7 +126,7 @@ export function UsagePanel() {
         {refreshButton}
         <button type="button" className="btn-icon usage-refresh" aria-label="Close usage details"
           onClick={() => { close(); triggerRef.current?.focus(); }}>
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" /></svg>
+          <Icon name="close" size={13} />
         </button>
       </div>
       {loading && !section && <p className="usage-note" role="status">Reading Orca usage…</p>}

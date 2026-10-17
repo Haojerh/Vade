@@ -19,10 +19,13 @@ export function normalizeProvider(provider: string | null | undefined): { id: Kn
   if (lower === 'codex' || lower === 'openai' || lower.startsWith('codex-') || lower.startsWith('gpt-')) id = 'codex';
   else if (lower === 'antigravity' || lower === 'agy' || lower.startsWith('antigravity-')) id = 'antigravity';
   else if (lower === 'gemini' || lower.startsWith('gemini-')) id = 'gemini';
-  else if (lower === 'claude' || lower === 'anthropic' || lower.startsWith('claude-')) id = 'claude';
+  else if (lower === 'claude' || lower === 'anthropic' || lower.startsWith('claude-') || lower === 'openclaude' || lower === 'claude-agent-teams') id = 'claude';
   else if (lower === 'opencode-go' || lower === 'opencodego') id = 'opencode-go';
   else if (lower === 'opencode' || lower === 'open-code' || lower === 'opencode2') id = 'opencode';
   else if (lower === 'kilo' || lower === 'kilocode' || lower === 'kilo-code') id = 'kilo';
+  else if (lower === 'mimo' || lower === 'mimo-code') id = 'mimo-code';
+  else if (lower === 'charm' || lower === 'crush') id = 'crush';
+  else if (lower === 'github copilot' || lower === 'copilot') id = 'copilot';
   else if (lower === 'dsb') id = 'dsh';
   else if (lower in imageAssets || lower in glyphs) id = lower as KnownProvider;
   return { id, displayName: raw };

@@ -142,9 +142,14 @@ describe('server/api', () => {
           exitCode: 0,
         };
       }
-      if (cmd.includes('open')) {
+      if (
+        cmd.includes('worktree rm') ||
+        cmd.includes('terminal close') ||
+        cmd.includes('terminal rename') ||
+        cmd.includes('terminal create')
+      ) {
         return {
-          stdout: JSON.stringify({ ok: true, result: { app: { running: true } } }),
+          stdout: JSON.stringify({ ok: true, result: { terminal: { handle: 'term_new' } } }),
           stderr: '',
           exitCode: 0,
         };
@@ -457,5 +462,76 @@ describe('server/api', () => {
       globalSourceMaps.nodeSourceMap.delete('upload_agent');
       await new Promise<void>((resolve) => uploadServer.close(() => resolve()));
     }
+  });
+
+  test('close-tab and delete-worktree endpoints execute and return 200', async () => {
+    globalSourceMaps.nodeSourceMap.set('test_agent_node', { handle: 'term_test1', worktreeId: 'repo::path' });
+    globalSourceMaps.nodeSourceMap.set('test_agent_node_rename', { handle: 'term_rename1', worktreeId: 'repo::path' });
+    globalSourceMaps.nodeSourceMap.set('test_wt_node', { worktreeId: 'repo::path' });
+    globalSourceMaps.nodeSourceMap.set('test_wt_node_create', { worktreeId: 'repo::path', worktreePath: 'C:/wt1' });
+    try {
+      // POST close-tab
+      const closeRes = await fetch(`${baseUrl}/api/projects/proj1/nodes/test_agent_node/close-tab`, { method: 'POST' });
+      assert.equal(closeRes.status, 200);
+      const closeBody = await closeRes.json();
+      assert.equal(closeBody.ok, true);
+
+      // POST delete-worktree
+      const delPostRes = await fetch(`${baseUrl}/api/projects/proj1/nodes/test_wt_node/delete-worktree`, { method: 'POST' });
+      assert.equal(delPostRes.status, 200);
+      const delPostBody = await delPostRes.json();
+      assert.equal(delPostBody.ok, true);
+
+      // Re-add for DELETE test
+      globalSourceMaps.nodeSourceMap.set('test_wt_node_2', { worktreeId: 'repo::path2' });
+      const delDeleteRes = await fetch(`${baseUrl}/api/projects/proj1/nodes/test_wt_node_2/worktree`, { method: 'DELETE' });
+      assert.equal(delDeleteRes.status, 200);
+      const delDeleteBody = await delDeleteRes.json();
+      assert.equal(delDeleteBody.ok, true);
+
+      // POST rename
+      const renameRes = await fetch(`${baseUrl}/api/projects/proj1/nodes/test_agent_node_rename/rename`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: 'New Renamed Tab' }),
+      });
+      assert.equal(renameRes.status, 200);
+      const renameBody = await renameRes.json();
+      assert.equal(renameBody.ok, true);
+      assert.equal(renameBody.title, 'New Renamed Tab');
+
+      // POST create-agent
+      const createRes = await fetch(`${baseUrl}/api/projects/proj1/nodes/test_wt_node_create/create-agent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ command: 'codex', title: 'New Agent' }),
+      });
+      assert.equal(createRes.status, 200);
+      const createBody = await createRes.json();
+      assert.equal(createBody.ok, true);
+
+      // Disallowed POST
+      const badPost = await fetch(`${baseUrl}/api/projects/proj1/nodes/test_node/unsupported`, { method: 'POST' });
+      assert.equal(badPost.status, 405);
+    } finally {
+      globalSourceMaps.nodeSourceMap.delete('test_agent_node');
+      globalSourceMaps.nodeSourceMap.delete('test_agent_node_rename');
+      globalSourceMaps.nodeSourceMap.delete('test_wt_node');
+      globalSourceMaps.nodeSourceMap.delete('test_wt_node_create');
+      globalSourceMaps.nodeSourceMap.delete('test_wt_node_2');
+    }
+  });
+
+  test('GET /api/agents/catalog returns installed and available agents', async () => {
+    const res = await fetch(`${baseUrl}/api/agents/catalog`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Array.isArray(body.installed));
+    assert.ok(Array.isArray(body.available));
+    assert.ok(body.installed.length + body.available.length >= 40);
+
+    // Reject query params
+    const badRes = await fetch(`${baseUrl}/api/agents/catalog?invalid=1`);
+    assert.equal(badRes.status, 400);
   });
 });

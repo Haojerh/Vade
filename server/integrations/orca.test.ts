@@ -19,6 +19,11 @@ import {
   workerLaunchCache,
   isAntigravityChatRecord,
   checkPrerequisites,
+  deleteWorktree,
+  closeAgentTab,
+  renameNodeTitle,
+  createWorktreeAgent,
+  findCodexTranscript,
 } from './orca.js';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -135,6 +140,55 @@ describe('server/orca', () => {
     } finally {
       if (oldAppData === undefined) delete process.env.ORCA_APPDATA_DIR;
       else process.env.ORCA_APPDATA_DIR = oldAppData;
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('collectGraph populates model and effort on standalone / resumed Kilo agent nodes', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-kilo-node-'));
+    const oldAppData = process.env.ORCA_APPDATA_DIR;
+    const oldKilo = process.env.KILO_DB;
+    process.env.ORCA_APPDATA_DIR = dir;
+    const kiloDbPath = path.join(dir, 'kilo.db');
+    process.env.KILO_DB = kiloDbPath;
+    const kdb = new DatabaseSync(kiloDbPath);
+    try {
+      kdb.exec('CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, directory TEXT, model TEXT);');
+      kdb.prepare('INSERT INTO session VALUES(?, ?, ?, ?)').run(
+        'ses_kilo_standalone',
+        'Refactor Module',
+        'C:/work/kilo-wt',
+        JSON.stringify({ id: 'nvidia/nemotron-3.5-super-vl:free', providerID: 'kilo' })
+      );
+
+      const projectId = hashId('proj', 'kilo-standalone-proj');
+      globalSourceMaps.projectSourceMap.set(projectId, { sourceId: 'kilo-standalone-proj', repoIds: ['kilo-repo'], paths: [] });
+      const runner: CommandRunner = async (_exe, args) => {
+        const result = args[0] === 'worktree' ? { worktrees: [{
+          worktreeId: 'kilo-wt', repoId: 'kilo-repo',
+          agents: [{ paneKey: 'kilo-pane', agentType: 'kilo' }],
+        }] } : args[0] === 'terminal' ? {
+          terminals: [{
+            handle: 'kilo-term-1',
+            worktreeId: 'kilo-wt',
+            title: 'Kilo CLI | Refactor Module',
+            agentIdentity: 'kilo',
+            paneKey: 'kilo-pane',
+          }],
+        } : { runs: [] };
+        return { stdout: JSON.stringify({ ok: true, result }), stderr: '', exitCode: 0 };
+      };
+
+      const { graph } = await collectGraph(projectId, null, runner);
+      const kiloNode = graph.nodes.find((n) => n.agentType === 'kilo')!;
+      assert.ok(kiloNode, 'Kilo node must exist');
+      assert.equal(kiloNode.model, 'nvidia/nemotron-3.5-super-vl:free');
+    } finally {
+      kdb.close();
+      if (oldAppData === undefined) delete process.env.ORCA_APPDATA_DIR;
+      else process.env.ORCA_APPDATA_DIR = oldAppData;
+      if (oldKilo === undefined) delete process.env.KILO_DB;
+      else process.env.KILO_DB = oldKilo;
       fs.rmSync(dir, { recursive: true, force: true });
     }
   });
@@ -3589,5 +3643,236 @@ describe('server/orca', () => {
     assert.equal(res.orchestrationSkill, false);
     assert.equal(res.orcaCliSkill, false);
     assert.equal(res.ready, false);
+  });
+
+  test('deleteWorktree executes orca worktree rm with selector and --force', async () => {
+    const executed: string[][] = [];
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      executed.push(args);
+      return { stdout: JSON.stringify({ ok: true, result: {} }), stderr: '', exitCode: 0 };
+    };
+
+    globalSourceMaps.nodeSourceMap.set('node_wt1', { worktreeId: 'repo-1::C:/wt1' });
+    const res = await deleteWorktree('proj_1', 'node_wt1', fakeRunner);
+    assert.equal(res.ok, true);
+    assert.equal(executed.length, 1);
+    assert.deepEqual(executed[0], ['worktree', 'rm', '--worktree', 'id:repo-1::C:/wt1', '--force', '--json']);
+    assert.equal(globalSourceMaps.nodeSourceMap.has('node_wt1'), false);
+  });
+
+  test('deleteWorktree throws NODE_NOT_FOUND when worktree cannot be resolved', async () => {
+    const fakeRunner: CommandRunner = async () => ({
+      stdout: JSON.stringify({ ok: true, result: { worktrees: [] } }),
+      stderr: '',
+      exitCode: 0,
+    });
+    await assert.rejects(
+      () => deleteWorktree('proj_1', 'node_unknown_wt', fakeRunner),
+      (err: any) => err.issue.code === 'NODE_NOT_FOUND'
+    );
+  });
+
+  test('closeAgentTab executes orca terminal close with handle and --tab', async () => {
+    const executed: string[][] = [];
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      executed.push(args);
+      return { stdout: JSON.stringify({ ok: true, result: {} }), stderr: '', exitCode: 0 };
+    };
+
+    globalSourceMaps.nodeSourceMap.set('node_agent1', { handle: 'term_123', worktreeId: 'repo-1::C:/wt1' });
+    const res = await closeAgentTab('proj_1', 'node_agent1', fakeRunner);
+    assert.equal(res.ok, true);
+    assert.equal(executed.length, 1);
+    assert.deepEqual(executed[0], ['terminal', 'close', '--terminal', 'term_123', '--tab', '--json']);
+  });
+
+  test('closeAgentTab recovers handle from worktree terminals when handle is missing', async () => {
+    const executed: string[][] = [];
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      executed.push(args);
+      if (args[0] === 'terminal' && args[1] === 'list') {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: {
+              terminals: [
+                { handle: 'term_discovered', tabId: 'tab1', leafId: 'leaf1', connected: true },
+              ],
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      return { stdout: JSON.stringify({ ok: true, result: {} }), stderr: '', exitCode: 0 };
+    };
+
+    globalSourceMaps.nodeSourceMap.set('node_agent2', { worktreeId: 'repo-1::C:/wt1', paneKey: 'tab1:leaf1' });
+    const res = await closeAgentTab('proj_1', 'node_agent2', fakeRunner);
+    assert.equal(res.ok, true);
+    assert.deepEqual(executed[1], ['terminal', 'close', '--terminal', 'term_discovered', '--tab', '--json']);
+  });
+
+  test('renameNodeTitle executes orca terminal rename with handle and title', async () => {
+    const executed: string[][] = [];
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      executed.push(args);
+      return { stdout: JSON.stringify({ ok: true, result: {} }), stderr: '', exitCode: 0 };
+    };
+
+    globalSourceMaps.nodeSourceMap.set('node_agent_rename', { handle: 'term_456', worktreeId: 'repo-1::C:/wt1' });
+    const res = await renameNodeTitle('proj_1', 'node_agent_rename', 'New Title', fakeRunner);
+    assert.equal(res.ok, true);
+    assert.equal(res.title, 'New Title');
+    assert.deepEqual(executed[0], ['terminal', 'rename', '--terminal', 'term_456', '--title', 'New Title', '--json']);
+
+    // Empty title resets title
+    executed.length = 0;
+    const resReset = await renameNodeTitle('proj_1', 'node_agent_rename', '', fakeRunner);
+    assert.equal(resReset.ok, true);
+    assert.equal(resReset.title, '');
+    assert.deepEqual(executed[0], ['terminal', 'rename', '--terminal', 'term_456', '--json']);
+  });
+
+  test('createWorktreeAgent executes orca terminal create with worktree selector and command', async () => {
+    const executed: string[][] = [];
+    const fakeRunner: CommandRunner = async (_exe, args) => {
+      executed.push(args);
+      return {
+        stdout: JSON.stringify({
+          ok: true,
+          result: { terminal: { handle: 'term_created_123' } },
+        }),
+        stderr: '',
+        exitCode: 0,
+      };
+    };
+
+    globalSourceMaps.nodeSourceMap.set('node_wt_create', { worktreeId: 'repo-1::C:/wt1', worktreePath: 'C:/wt1' });
+    const res = await createWorktreeAgent('proj_1', 'node_wt_create', 'codex', 'My Codex', fakeRunner);
+    assert.equal(res.ok, true);
+    assert.equal(res.handle, 'term_created_123');
+    assert.equal(res.title, 'My Codex');
+    assert.deepEqual(executed[0], [
+      'terminal',
+      'create',
+      '--worktree',
+      'path:C:/wt1',
+      '--command',
+      'codex',
+      '--title',
+      'My Codex',
+      '--json',
+    ]);
+  });
+
+  test('collectGraph detects open agent tab with agentIdentity as agent node before chatting begins', async () => {
+    const projId = hashId('proj', 'proj_unstarted_agent');
+    globalSourceMaps.projectSourceMap.set(projId, {
+      sourceId: 'proj_unstarted_agent',
+      repoIds: ['repo_unstarted'],
+      paths: ['C:/wt_unstarted'],
+    });
+
+    const runner: CommandRunner = async (_exe, args) => {
+      const cmd = args.join(' ');
+      if (cmd.includes('worktree ps')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: {
+              worktrees: [
+                {
+                  worktreeId: 'repo_unstarted::C:/wt_unstarted',
+                  repoId: 'repo_unstarted',
+                  path: 'C:/wt_unstarted',
+                  displayName: 'main',
+                  status: 'idle',
+                  agents: [], // No chat history or active dispatches yet!
+                },
+              ],
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      if (cmd.includes('terminal list')) {
+        return {
+          stdout: JSON.stringify({
+            ok: true,
+            result: {
+              terminals: [
+                {
+                  handle: 'term_codex_idle',
+                  tabId: 'tab_codex',
+                  leafId: 'leaf_codex',
+                  connected: true,
+                  title: 'Codex Tab',
+                  agentIdentity: 'codex',
+                  preview: '› Ask Codex to do anything',
+                },
+                {
+                  handle: 'term_shell_plain',
+                  tabId: 'tab_shell',
+                  leafId: 'leaf_shell',
+                  connected: true,
+                  title: 'cmd.exe',
+                  agentIdentity: null,
+                },
+              ],
+            },
+          }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
+      return {
+        stdout: JSON.stringify({ ok: true, result: { runs: [] } }),
+        stderr: '',
+        exitCode: 0,
+      };
+    };
+
+    const { graph } = await collectGraph(projId, null, runner);
+
+    const agentNode = graph.nodes.find((n) => n.agentType === 'codex');
+    assert.ok(agentNode, 'Agent node with agentType codex should be created');
+    assert.equal(agentNode.kind, 'agent', 'Unstarted tab with agentIdentity must be kind: agent');
+    assert.equal(agentNode.state, 'idle', 'Unstarted agent tab should be idle');
+    assert.equal(agentNode.liveness, 'live', 'Connected agent tab should be live');
+    assert.equal(agentNode.label, 'Codex Tab');
+
+    const shellNode = graph.nodes.find((n) => n.label === 'cmd.exe');
+    assert.ok(shellNode, 'Shell terminal should be created');
+    assert.equal(shellNode.kind, 'terminal', 'Plain shell terminal without agentIdentity remains kind: terminal');
+  });
+
+  test('findCodexTranscript locates rollout file by thread ID and thread name', () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-codex-find-'));
+    const oldCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = tmpDir;
+    try {
+      const sessionsYearDir = path.join(tmpDir, 'sessions', '2026', '10', '17');
+      fs.mkdirSync(sessionsYearDir, { recursive: true });
+      const threadId = '01a1491f-a104-7a90-9ae2-50c66e6c8c24';
+      const rolloutFile = path.join(sessionsYearDir, `rollout-2026-10-17T12-00-00-${threadId}.jsonl`);
+      fs.writeFileSync(rolloutFile, '{"type":"session_meta"}\n');
+
+      const indexFile = path.join(tmpDir, 'session_index.jsonl');
+      fs.writeFileSync(indexFile, JSON.stringify({ id: threadId, thread_name: 'My Custom Thread' }) + '\n');
+
+      const foundById = findCodexTranscript(threadId);
+      assert.equal(foundById, rolloutFile);
+
+      const foundByName = findCodexTranscript('My Custom Thread');
+      assert.equal(foundByName, rolloutFile);
+
+      assert.equal(findCodexTranscript('Nonexistent'), null);
+    } finally {
+      if (oldCodexHome) process.env.CODEX_HOME = oldCodexHome;
+      else delete process.env.CODEX_HOME;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

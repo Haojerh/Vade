@@ -1,11 +1,22 @@
 import React, { useRef, useEffect, useState, useCallback, useId, useLayoutEffect } from 'react';
-import type { NodeDetails as NodeDetailsType, Task } from '../../../shared/contracts';
+import type { Node, NodeDetails as NodeDetailsType, Task } from '../../../shared/contracts';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
+import { Icon } from '../../components/ui/Icon';
 import { latestAgentMessage } from './conversation';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { LatestMessageCard } from './LatestMessageCard';
 import { MessageMarkdown } from './MessageMarkdown';
-import { sendNodeMessage } from '../../api/client';
+import {
+  sendNodeMessage,
+  deleteWorktree,
+  closeAgentTab,
+  renameNodeTitle,
+  createWorktreeAgent,
+} from '../../api/client';
+import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
+import { RenameDialog } from '../../components/ui/RenameDialog';
+import { AddAgentDialog } from '../../components/ui/AddAgentDialog';
+import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
 
 export interface NodeDetailsVisibleSections {
@@ -32,6 +43,7 @@ interface NodeDetailsProps {
   loading: boolean;
   error: string | null;
   selectedNodeId: string | null;
+  selectedNode?: Node | null;
   onClose: () => void;
   onRefresh: () => void;
   visibleSections?: NodeDetailsVisibleSections;
@@ -107,6 +119,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   loading,
   error,
   selectedNodeId,
+  selectedNode,
   onClose,
   onRefresh,
   visibleSections,
@@ -125,6 +138,32 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   useEffect(() => { setChatFiles([]); setChatMessage(''); }, [projectId, selectedNodeId]);
   const [chatSending, setChatSending] = useState<boolean>(false);
   const [chatStatus, setChatStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const deleteWorktreeConfirmation = useConfirmationState();
+  const closeAgentTabConfirmation = useConfirmationState();
+  const renameConfirmation = useConfirmationState();
+  const addAgentConfirmation = useConfirmationState();
+  const [isDeletingWorktree, setIsDeletingWorktree] = useState<boolean>(false);
+  const [isClosingAgentTab, setIsClosingAgentTab] = useState<boolean>(false);
+  const [isRenaming, setIsRenaming] = useState<boolean>(false);
+  const [isCreatingAgent, setIsCreatingAgent] = useState<boolean>(false);
+  const [deleteWorktreeError, setDeleteWorktreeError] = useState<string | null>(null);
+  const [closeTabError, setCloseTabError] = useState<string | null>(null);
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [createAgentError, setCreateAgentError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+
+  useEffect(() => {
+    deleteWorktreeConfirmation.reset();
+    closeAgentTabConfirmation.reset();
+    renameConfirmation.reset();
+    addAgentConfirmation.reset();
+    setDeleteWorktreeError(null);
+    setCloseTabError(null);
+    setRenameError(null);
+    setCreateAgentError(null);
+    setActionSuccess(null);
+  }, [projectId, selectedNodeId]);
 
   const activeVisibleSections = visibleSections ?? DEFAULT_VISIBLE_SECTIONS;
 
@@ -189,7 +228,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
     }
   }, []);
 
-  // Store opener on fresh open, restore focus on unmount / selection clearing
+  // Store opener on fresh open
   useEffect(() => {
     if (selectedNodeId) {
       restoredRef.current = false;
@@ -197,12 +236,14 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
         openerRef.current = document.activeElement as HTMLElement | null;
       }
     }
+  }, [selectedNodeId]);
+
+  // Restore focus when modal unmounts or selection clears
+  useEffect(() => {
     return () => {
-      if (selectedNodeId) {
-        restoreFocus();
-      }
+      restoreFocus();
     };
-  }, [selectedNodeId, restoreFocus]);
+  }, [restoreFocus]);
 
   // Open native dialog with showModal()
   useEffect(() => {
@@ -235,6 +276,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
           // ignore
         }
       }
+      restoreFocus();
       onClose();
       return;
     }
@@ -250,9 +292,77 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
           // ignore
         }
       }
+      restoreFocus();
       onClose();
     }, 150);
-  }, [isClosing, onClose]);
+  }, [isClosing, onClose, restoreFocus]);
+
+  const handleDeleteWorktree = useCallback(async () => {
+    if (!projectId || !details?.node || isDeletingWorktree) return;
+    setIsDeletingWorktree(true);
+    setDeleteWorktreeError(null);
+    try {
+      await deleteWorktree(projectId, details.node.id);
+      deleteWorktreeConfirmation.close();
+      handleClose();
+      onRefresh();
+    } catch (err: any) {
+      setDeleteWorktreeError(err?.message || 'Failed to delete worktree');
+    } finally {
+      setIsDeletingWorktree(false);
+    }
+  }, [projectId, details?.node, isDeletingWorktree, deleteWorktreeConfirmation, handleClose, onRefresh]);
+
+  const handleCloseAgentTab = useCallback(async () => {
+    if (!projectId || !details?.node || isClosingAgentTab) return;
+    setIsClosingAgentTab(true);
+    setCloseTabError(null);
+    try {
+      await closeAgentTab(projectId, details.node.id);
+      closeAgentTabConfirmation.close();
+      setActionSuccess('Agent tab closed');
+      setTimeout(() => setActionSuccess(null), 3000);
+      onRefresh();
+    } catch (err: any) {
+      setCloseTabError(err?.message || 'Failed to close agent tab');
+    } finally {
+      setIsClosingAgentTab(false);
+    }
+  }, [projectId, details?.node, isClosingAgentTab, closeAgentTabConfirmation, onRefresh]);
+
+  const handleRenameTitle = useCallback(async (newTitle: string) => {
+    if (!projectId || !details?.node || isRenaming) return;
+    setIsRenaming(true);
+    setRenameError(null);
+    try {
+      await renameNodeTitle(projectId, details.node.id, newTitle);
+      renameConfirmation.close();
+      setActionSuccess('Tab title renamed successfully');
+      setTimeout(() => setActionSuccess(null), 3000);
+      onRefresh();
+    } catch (err: any) {
+      setRenameError(err?.message || 'Failed to rename tab title');
+    } finally {
+      setIsRenaming(false);
+    }
+  }, [projectId, details?.node, isRenaming, renameConfirmation, onRefresh]);
+
+  const handleCreateAgent = useCallback(async (command: string, title?: string) => {
+    if (!projectId || !details?.node || isCreatingAgent) return;
+    setIsCreatingAgent(true);
+    setCreateAgentError(null);
+    try {
+      await createWorktreeAgent(projectId, details.node.id, command, title);
+      addAgentConfirmation.close();
+      setActionSuccess('New agent created successfully');
+      setTimeout(() => setActionSuccess(null), 3000);
+      onRefresh();
+    } catch (err: any) {
+      setCreateAgentError(err?.message || 'Failed to create agent');
+    } finally {
+      setIsCreatingAgent(false);
+    }
+  }, [projectId, details?.node, isCreatingAgent, addAgentConfirmation, onRefresh]);
 
   // Trap focus within dialog and handle Escape
   const handleKeyDown = useCallback(
@@ -319,20 +429,28 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
     return null;
   }
 
-  const node = details?.node;
-  const currentTool = details?.currentTool;
-  const conversation = details?.conversation;
+  const isMatchingDetails = Boolean(details?.node && details.node.id === selectedNodeId);
+  const baseNode = isMatchingDetails ? details!.node : (selectedNode?.id === selectedNodeId ? selectedNode : null);
+  const liveLabel = (selectedNode?.id === selectedNodeId && selectedNode.label) || details?.node?.label;
+  const node = baseNode ? { ...baseNode, label: liveLabel || baseNode.label } : null;
+  const currentTool = isMatchingDetails ? details?.currentTool : null;
+  const conversation = isMatchingDetails ? details?.conversation : null;
   const convData = conversation?.data;
   const convMeta = conversation?.meta;
+  const isUnstartedAgentConvo =
+    convMeta?.issue?.code === 'CONVERSATION_UNSUPPORTED' &&
+    (convMeta.issue.message.includes('provenance not found') ||
+     convMeta.issue.message.includes('not found or unsupported'));
   const messages = convData?.messages ?? [];
   const latestReply = latestAgentMessage(messages);
   const isWorktree = node?.kind === 'worktree';
-  const assignedTasks = (details?.tasks ?? []).filter(
+  const assignedTasks = (isMatchingDetails ? details?.tasks ?? [] : []).filter(
     (t) => t.assigneeNodeId === node?.id || (node?.taskIds && node.taskIds.includes(t.id))
   );
 
   return (
-    <dialog
+    <>
+      <dialog
       ref={dialogRef}
       className={`node-modal-dialog ${isClosing ? 'is-closing' : ''}`}
       aria-labelledby="dialog-node-title"
@@ -362,6 +480,31 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 <h2 id="dialog-node-title" className="modal-node-title">
                   {node ? node.label : `Node: ${selectedNodeId}`}
                 </h2>
+                {node && !isWorktree && (
+                  <button
+                    type="button"
+                    className="btn-icon btn-rename-node"
+                    onClick={() => {
+                      setRenameError(null);
+                      renameConfirmation.open();
+                    }}
+                    aria-label="Rename tab title"
+                    title="Rename tab title"
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                      padding: '4px',
+                      borderRadius: '4px',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <Icon name="edit" size={14} />
+                  </button>
+                )}
                 {node && (
                   <div className="modal-status-group">
                     <span className={`node-badge-state state-${node.state}`}>
@@ -402,6 +545,54 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
           </div>
 
           <div className="modal-header-actions">
+            {node && (isWorktree ? (
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-xs btn-add-agent"
+                  onClick={() => {
+                    setCreateAgentError(null);
+                    addAgentConfirmation.open();
+                  }}
+                  disabled={isCreatingAgent}
+                  aria-label="Add new agent"
+                  title="Add new agent to this worktree"
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                >
+                  <Icon name="plus" size={12} />
+                  <span>Add Agent</span>
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-danger btn-xs btn-delete-worktree"
+                  onClick={() => {
+                    setDeleteWorktreeError(null);
+                    deleteWorktreeConfirmation.open();
+                  }}
+                  disabled={isDeletingWorktree}
+                  aria-label="Delete worktree"
+                  title="Delete this worktree from Orca and git"
+                >
+                  <Icon name="trash" size={12} />
+                  <span>Delete Worktree</span>
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-secondary btn-xs btn-close-tab"
+                onClick={() => {
+                  setCloseTabError(null);
+                  closeAgentTabConfirmation.open();
+                }}
+                disabled={isClosingAgentTab}
+                aria-label="Close agent tab"
+                title="Close agent terminal tab in Orca"
+              >
+                <Icon name="x-square" size={12} />
+                <span>Close Agent Tab</span>
+              </button>
+            ))}
             <button
               type="button"
               className="btn-icon"
@@ -426,7 +617,13 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
 
         {/* Modal Scrollable Body */}
         <div className="modal-dialog-body">
-          {loading && !details && (
+          {actionSuccess && (
+            <div className="panel-alert alert-success" role="status" style={{ marginBottom: '12px' }}>
+              {actionSuccess}
+            </div>
+          )}
+
+          {!isMatchingDetails && !error && (
             <div className="modal-loading-state" role="status">
               <div className="skeleton-line" />
               <div className="skeleton-line short" />
@@ -437,13 +634,13 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
           {error && (
             <div className="panel-alert alert-error" role="alert">
               <span className="font-semibold">
-                {details ? 'Error refreshing node details:' : 'Error loading node details:'}
+                {isMatchingDetails ? 'Error refreshing node details:' : 'Error loading node details:'}
               </span>{' '}
               {error}
             </div>
           )}
 
-          {details && node && (
+          {isMatchingDetails && node && (
             <>
               {/* Status & Location Facts */}
               {activeVisibleSections.status && (
@@ -457,20 +654,12 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                       aria-label={`${collapsedSections['status'] ? 'Expand' : 'Collapse'} Status & Workspace section`}
                     >
                       <h3 className="section-title">Status & Workspace</h3>
-                      <svg
+                      <Icon
+                        name="chevron-down"
+                        size={13}
+                        strokeWidth={2.5}
                         className={`section-chevron-icon ${collapsedSections['status'] ? 'is-collapsed' : ''}`}
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
+                      />
                     </button>
                   </div>
 
@@ -507,7 +696,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                           <div className="facts-path-row">
                             <span className="fact-field-label">Path</span>
                             <div className="facts-path-code" title={node.path}>
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden="true"><path d="M3 7V5a1 1 0 0 1 1-1h5l2 3h9a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V7Z" /></svg>
+                              <Icon name="folder" size={16} strokeWidth={1.5} />
                               <code>{node.path}</code>
                             </div>
                           </div>
@@ -544,20 +733,12 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                     >
                       <h3 className="section-title">Assigned Tasks</h3>
                       <span className="badge badge-neutral text-xs font-mono">{assignedTasks.length}</span>
-                      <svg
+                      <Icon
+                        name="chevron-down"
+                        size={13}
+                        strokeWidth={2.5}
                         className={`section-chevron-icon ${collapsedSections['tasks'] ? 'is-collapsed' : ''}`}
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
+                      />
                     </button>
                   </div>
                   <div className={`section-collapsible-body ${collapsedSections['tasks'] ? 'is-collapsed' : ''}`}>
@@ -583,27 +764,19 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                       aria-label={`${collapsedSections['latest'] ? 'Expand' : 'Collapse'} Latest Agent Message section`}
                     >
                       <h3 className="section-title">Latest Agent Message</h3>
-                      <svg
+                      <Icon
+                        name="chevron-down"
+                        size={13}
+                        strokeWidth={2.5}
                         className={`section-chevron-icon ${collapsedSections['latest'] ? 'is-collapsed' : ''}`}
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
+                      />
                     </button>
                   </div>
                   <div className={`section-collapsible-body ${collapsedSections['latest'] ? 'is-collapsed' : ''}`}>
                     <div className="section-collapsible-inner">
                       {latestReply ? <LatestMessageCard key={latestReply.id} message={latestReply} stale={Boolean(convMeta?.stale)} />
                         : <p className="text-xs text-muted">{convMeta?.availability === 'unsupported' || convMeta?.availability === 'unavailable'
-                        ? 'Agent message unavailable from this conversation source.' : 'No agent reply in recent history.'}</p>}
+                        ? (isUnstartedAgentConvo ? 'No agent reply in recent history.' : 'Agent message unavailable from this conversation source.') : 'No agent reply in recent history.'}</p>}
                     </div>
                   </div>
                 </div>
@@ -621,20 +794,12 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                       aria-label={`${collapsedSections['tool'] ? 'Expand' : 'Collapse'} Current Tool Activity section`}
                     >
                       <h3 className="section-title">Current Tool Activity</h3>
-                      <svg
+                      <Icon
+                        name="chevron-down"
+                        size={13}
+                        strokeWidth={2.5}
                         className={`section-chevron-icon ${collapsedSections['tool'] ? 'is-collapsed' : ''}`}
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
+                      />
                     </button>
                   </div>
                   <div className={`section-collapsible-body ${collapsedSections['tool'] ? 'is-collapsed' : ''}`}>
@@ -668,34 +833,26 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                       aria-label={`${collapsedSections['conversation'] ? 'Expand' : 'Collapse'} Conversation History section`}
                     >
                       <h3 className="section-title">Conversation History</h3>
-                      <svg
+                      <Icon
+                        name="chevron-down"
+                        size={13}
+                        strokeWidth={2.5}
                         className={`section-chevron-icon ${collapsedSections['conversation'] ? 'is-collapsed' : ''}`}
-                        width="13"
-                        height="13"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden="true"
-                      >
-                        <polyline points="6 9 12 15 18 9" />
-                      </svg>
+                      />
                     </button>
                   </div>
 
                   <div className={`section-collapsible-body ${collapsedSections['conversation'] ? 'is-collapsed' : ''}`}>
                     <div className="section-collapsible-inner">
                       {/* Section Meta Alerts */}
-                      {convMeta?.issue && (
+                      {convMeta?.issue && !isUnstartedAgentConvo && (
                         <div className="panel-alert alert-error mb-3" role="alert">
                           <span className="font-semibold">[{convMeta.issue.code}]:</span>{' '}
                           {convMeta.issue.message}
                         </div>
                       )}
 
-                      {convMeta?.availability === 'unsupported' && !convMeta.issue && (
+                      {convMeta?.availability === 'unsupported' && !convMeta.issue && !isUnstartedAgentConvo && (
                         <div className="panel-alert alert-info mb-3">
                           Conversation source is unsupported for this node. Unmanaged or coordinator sessions have no structured transcript.
                         </div>
@@ -704,7 +861,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                       {/* Messages List */}
                       {messages.length === 0 ? (
                         <div className="empty-hint">
-                          {convMeta?.availability === 'empty'
+                          {convMeta?.availability === 'empty' || isUnstartedAgentConvo
                             ? 'No conversation messages recorded for this session.'
                             : convMeta?.availability === 'unsupported'
                             ? 'Structured transcript unavailable.'
@@ -789,10 +946,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                             <span>Sending...</span>
                           ) : (
                             <>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <line x1="22" y1="2" x2="11" y2="13" />
-                                <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                              </svg>
+                              <Icon name="send" size={14} />
                               <span>Send</span>
                             </>
                           )}
@@ -834,5 +988,72 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
         </div>
       </div>
     </dialog>
+
+    <ConfirmationDialog
+      isOpen={deleteWorktreeConfirmation.present}
+      isClosing={deleteWorktreeConfirmation.closing}
+      title="Delete Worktree?"
+      description={
+        <>
+          Are you sure you want to delete worktree <strong>{node?.label}</strong>? This will remove the worktree from Orca and git.
+        </>
+      }
+      confirmLabel="Delete Worktree"
+      confirmVariant="danger"
+      isConfirming={isDeletingWorktree}
+      error={deleteWorktreeError}
+      onConfirm={handleDeleteWorktree}
+      onClose={() => {
+        deleteWorktreeConfirmation.close();
+        setDeleteWorktreeError(null);
+      }}
+    />
+
+    <ConfirmationDialog
+      isOpen={closeAgentTabConfirmation.present}
+      isClosing={closeAgentTabConfirmation.closing}
+      title="Close Agent Tab?"
+      description={
+        <>
+          Are you sure you want to close the terminal tab for <strong>{node?.label}</strong>? The agent process will be terminated.
+        </>
+      }
+      confirmLabel="Close Tab"
+      confirmVariant="danger"
+      isConfirming={isClosingAgentTab}
+      error={closeTabError}
+      onConfirm={handleCloseAgentTab}
+      onClose={() => {
+        closeAgentTabConfirmation.close();
+        setCloseTabError(null);
+      }}
+    />
+
+    <RenameDialog
+      isOpen={renameConfirmation.present}
+      isClosing={renameConfirmation.closing}
+      initialTitle={details?.node?.label || ''}
+      isRenaming={isRenaming}
+      error={renameError}
+      onRename={handleRenameTitle}
+      onClose={() => {
+        renameConfirmation.close();
+        setRenameError(null);
+      }}
+    />
+
+    <AddAgentDialog
+      isOpen={addAgentConfirmation.present}
+      isClosing={addAgentConfirmation.closing}
+      worktreeName={details?.node?.label || ''}
+      isCreating={isCreatingAgent}
+      error={createAgentError}
+      onCreate={handleCreateAgent}
+      onClose={() => {
+        addAgentConfirmation.close();
+        setCreateAgentError(null);
+      }}
+    />
+  </>
   );
 };

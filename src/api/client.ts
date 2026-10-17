@@ -10,6 +10,9 @@ import type {
   ApiError,
   UsageData,
   PrerequisitesStatus,
+  RenameNodeTitleResponse,
+  CreateAgentResponse,
+  AgentCatalogResponse,
 } from '../../shared/contracts';
 
 export async function fetchUsage(signal?: AbortSignal): Promise<Section<UsageData>> {
@@ -33,12 +36,20 @@ async function handleResponse<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let errorMessage = `HTTP ${res.status} ${res.statusText}`;
     try {
-      const errorJson = (await res.json()) as ApiError;
-      if (errorJson && errorJson.error && errorJson.error.message) {
-        errorMessage = `[${errorJson.error.code}] ${errorJson.error.message}`;
+      const cloned = res.clone();
+      try {
+        const errorJson = (await res.json()) as ApiError;
+        if (errorJson?.error?.message) {
+          errorMessage = `[${errorJson.error.code}] ${errorJson.error.message}`;
+        }
+      } catch {
+        const text = await cloned.text();
+        if (text && text.trim()) {
+          errorMessage = `${errorMessage}: ${text.trim().slice(0, 200)}`;
+        }
       }
     } catch {
-      // Body not JSON or unreadable
+      // Body not readable, retain default status message
     }
     throw new Error(errorMessage);
   }
@@ -193,4 +204,92 @@ export async function sendNodeMessage(
   );
   return handleResponse<{ ok: boolean; message?: string }>(res);
 }
+
+export async function closeAgentTab(
+  projectId: string,
+  nodeId: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/close-tab`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+      },
+      signal,
+    },
+  );
+  return handleResponse<{ ok: boolean; message?: string }>(res);
+}
+
+export async function deleteWorktree(
+  projectId: string,
+  nodeId: string,
+  signal?: AbortSignal,
+): Promise<{ ok: boolean; message?: string }> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/delete-worktree`,
+    {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+      },
+      signal,
+    },
+  );
+  return handleResponse<{ ok: boolean; message?: string }>(res);
+}
+
+export async function renameNodeTitle(
+  projectId: string,
+  nodeId: string,
+  title: string,
+  signal?: AbortSignal,
+): Promise<RenameNodeTitleResponse> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/rename`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ title }),
+      signal,
+    },
+  );
+  return handleResponse<RenameNodeTitleResponse>(res);
+}
+
+export async function createWorktreeAgent(
+  projectId: string,
+  nodeId: string,
+  command: string,
+  title?: string,
+  signal?: AbortSignal,
+): Promise<CreateAgentResponse> {
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/create-agent`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({ command, title }),
+      signal,
+    },
+  );
+  return handleResponse<CreateAgentResponse>(res);
+}
+
+export async function fetchAgentCatalog(signal?: AbortSignal): Promise<AgentCatalogResponse> {
+  const res = await fetch('/api/agents/catalog', {
+    headers: { Accept: 'application/json' },
+    signal,
+  });
+  return handleResponse<AgentCatalogResponse>(res);
+}
+
 

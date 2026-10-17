@@ -287,12 +287,18 @@ export class SnapshotManager {
           for (const cb of cache.subscribers) {
             try {
               cb(fresh);
-            } catch {
-              // ignore client callback error
+            } catch (subscriberErr) {
+              if (process.env.NODE_ENV !== 'test') {
+                const msg = subscriberErr instanceof Error ? subscriberErr.message : String(subscriberErr);
+                console.warn(`[SnapshotManager] Subscriber callback failed for ${projectId}: ${msg}`);
+              }
             }
           }
-        } catch {
-          // ignore background poll errors
+        } catch (pollErr) {
+          if (process.env.NODE_ENV !== 'test') {
+            const msg = pollErr instanceof Error ? pollErr.message : String(pollErr);
+            console.warn(`[SnapshotManager] Background poll failed for ${projectId}: ${msg}`);
+          }
         }
       }, 3000);
     }
@@ -326,6 +332,10 @@ export class SnapshotManager {
     const key = this.getCacheKey(projectId, runId);
     const projectCache = this.projects.get(key);
     let preloadedGraph = projectCache?.lastSnapshot?.graph.data;
+
+    if (preloadedGraph && !preloadedGraph.nodes.some((n) => n.id === nodeId)) {
+      preloadedGraph = undefined;
+    }
 
     if (!preloadedGraph) {
       const snap = await this.getSnapshot(projectId, runId, runner);

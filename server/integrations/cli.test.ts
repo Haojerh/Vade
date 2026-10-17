@@ -51,6 +51,9 @@ describe('server/cli', () => {
       validateOrcaArgs(['terminal', 'list', '--worktree', 'id:abc', '--limit', '100', '--json'])
     );
     assert.doesNotThrow(() =>
+      validateOrcaArgs(['terminal', 'list', '--worktree', 'id:abc', '--limit', '100', '--include-visual-layouts', '--json'])
+    );
+    assert.doesNotThrow(() =>
       validateOrcaArgs(['terminal', 'read', '--terminal', 'term_123', '--limit', '100', '--json'])
     );
     assert.doesNotThrow(() =>
@@ -125,6 +128,39 @@ describe('server/cli', () => {
         'please check the code',
         '--to',
         'dispatch:ctx_abc123',
+        '--json',
+      ])
+    );
+    assert.doesNotThrow(() =>
+      validateOrcaArgs([
+        'terminal',
+        'rename',
+        '--terminal',
+        'term_abc-123',
+        '--title',
+        'My Agent Tab',
+        '--json',
+      ])
+    );
+    assert.doesNotThrow(() =>
+      validateOrcaArgs([
+        'terminal',
+        'rename',
+        '--terminal',
+        'term_abc-123',
+        '--json',
+      ])
+    );
+    assert.doesNotThrow(() =>
+      validateOrcaArgs([
+        'terminal',
+        'create',
+        '--worktree',
+        'path:/some/worktree/path',
+        '--command',
+        'codex',
+        '--title',
+        'Codex Worker',
         '--json',
       ])
     );
@@ -362,5 +398,17 @@ describe('server/cli', () => {
     assert.equal(r1.stdout, 'done');
     assert.equal(r2.stdout, 'done');
     assert.equal(callCount, 1);
+  });
+
+  test('validateOrcaArgs allows worktree rm and terminal close', () => {
+    assert.doesNotThrow(() => validateOrcaArgs(['worktree', 'rm', '--worktree', 'id:repo-123::path/to/wt', '--force', '--json']));
+    assert.doesNotThrow(() => validateOrcaArgs(['worktree', 'rm', '--worktree', 'path:C:/path/to/wt', '--json']));
+    assert.doesNotThrow(() => validateOrcaArgs(['terminal', 'close', '--terminal', 'term_abc123', '--tab', '--json']));
+    assert.doesNotThrow(() => validateOrcaArgs(['terminal', 'close', '--terminal', 'term_xyz', '--json']));
+    assert.doesNotThrow(() => validateOrcaArgs(['terminal', 'close', '--worktree', 'id:repo-123::path/to/wt', '--all', '--json']));
+
+    // Rejects invalid forms
+    assert.throws(() => validateOrcaArgs(['worktree', 'rm', '--worktree', '--malicious', '--json']), /INVALID_ARGUMENT/);
+    assert.throws(() => validateOrcaArgs(['terminal', 'close', '--terminal', '; rm -rf /', '--tab', '--json']), /INVALID_ARGUMENT/);
   });
 });

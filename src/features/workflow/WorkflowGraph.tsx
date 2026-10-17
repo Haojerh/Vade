@@ -1,11 +1,21 @@
 import React, { useRef, useState, useLayoutEffect, useEffect, useMemo, useCallback } from 'react';
 import type { Node, Edge } from '../../../shared/contracts';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
+import { Icon } from '../../components/ui/Icon';
 import { NodeMessagePreview } from './NodeMessagePreview';
 import { compareWorkflowNodes } from './workflowOrder';
 import { separateWorkflowBoxes, type LayoutBox } from './workflowCollision';
-import { sendNodeMessage } from '../../api/client';
-import { usePopoverState } from '../../hooks/usePopoverState';
+import {
+  sendNodeMessage,
+  deleteWorktree,
+  closeAgentTab,
+  renameNodeTitle,
+  createWorktreeAgent,
+} from '../../api/client';
+import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
+import { RenameDialog } from '../../components/ui/RenameDialog';
+import { AddAgentDialog } from '../../components/ui/AddAgentDialog';
 import { MessageAttachments, validateMessageFiles } from './MessageAttachments';
 
 interface WorkflowGraphProps {
@@ -17,6 +27,7 @@ interface WorkflowGraphProps {
   onSelectNode: (id: string) => void;
   isLocallyStale: boolean;
   loading: boolean;
+  orchestrationSeparated?: boolean;
 }
 
 interface AnchorBox {
@@ -124,13 +135,10 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   onSelectNode,
   isLocallyStale,
   loading,
+  orchestrationSeparated = true,
 }) => {
   const prefersReducedMotion = usePrefersReducedMotion();
-  const resetConfirmation = usePopoverState();
-  const resetDialogRef = useRef<HTMLDialogElement>(null);
-  useEffect(() => {
-    if (resetConfirmation.present) resetDialogRef.current?.showModal();
-  }, [resetConfirmation.present]);
+  const resetConfirmation = useConfirmationState();
   const [preview, setPreview] = useState<{ nodeId: string; anchor: HTMLElement } | null>(null);
   const suppressPreviewRef = useRef(false);
   const closePreview = useCallback(() => setPreview(null), []);
@@ -145,6 +153,64 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   useEffect(() => { setChatFiles({}); }, [projectId]);
   const [chatSending, setChatSending] = useState<Record<string, boolean>>({});
   const [chatStatuses, setChatStatuses] = useState<Record<string, { type: 'success' | 'error'; text: string } | null>>({});
+
+  // Worktree & node context menus, actions and dialog state
+  const [worktreeContextMenu, setWorktreeContextMenu] = useState<{ x: number; y: number; worktree: Node } | null>(null);
+  const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; node: Node } | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
+  const nodeContextMenuRef = useRef<HTMLDivElement>(null);
+
+  const deleteWorktreeConfirmation = useConfirmationState<Node>();
+  const [isDeletingWorktree, setIsDeletingWorktree] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const closeAgentTabConfirmation = useConfirmationState<Node>();
+  const [isClosingAgentTab, setIsClosingAgentTab] = useState(false);
+  const [closeTabError, setCloseTabError] = useState<string | null>(null);
+
+  const renameConfirmation = useConfirmationState<Node>();
+  const [isRenaming, setIsRenaming] = useState(false);
+  const [renameError, setRenameError] = useState<string | null>(null);
+
+  const addAgentConfirmation = useConfirmationState<Node>();
+  const [isCreatingAgent, setIsCreatingAgent] = useState(false);
+  const [createAgentError, setCreateAgentError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!worktreeContextMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as globalThis.Node)) {
+        setWorktreeContextMenu(null);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setWorktreeContextMenu(null);
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [worktreeContextMenu]);
+
+  useEffect(() => {
+    if (!nodeContextMenu) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (nodeContextMenuRef.current && !nodeContextMenuRef.current.contains(e.target as globalThis.Node)) {
+        setNodeContextMenu(null);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNodeContextMenu(null);
+    };
+    window.addEventListener('mousedown', handleClickOutside);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [nodeContextMenu]);
 
   // Node repositioning (dragging worktrees, orchestrators, unassigned agents)
   const [nodeOffsets, setNodeOffsets] = useState<Record<string, { x: number; y: number }>>(() => {
@@ -180,6 +246,37 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       setNodeOffsets(saved ? JSON.parse(saved) : {});
     } catch {
       setNodeOffsets({});
+    }
+  }, [projectId]);
+
+  // Worktree agent vertical order state (persisted per worktree/project)
+  const [worktreeMemberOrder, setWorktreeMemberOrder] = useState<Record<string, string[]>>(() => {
+    try {
+      const storage = typeof window !== 'undefined' ? window.localStorage : (globalThis as any)?.localStorage;
+      const saved = storage?.getItem(`orca-worktree-member-order:${projectId || 'default'}`);
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  const [draggingMember, setDraggingMember] = useState<{ worktreeId: string; agentId: string } | null>(null);
+  const [dropTargetMember, setDropTargetMember] = useState<{
+    worktreeId: string;
+    agentId: string;
+    position: 'before' | 'after';
+  } | null>(null);
+  const flipPendingRef = useRef<Map<string, number> | null>(null);
+  const draggingMemberRef = useRef(draggingMember);
+  draggingMemberRef.current = draggingMember;
+
+  useEffect(() => {
+    try {
+      const storage = typeof window !== 'undefined' ? window.localStorage : (globalThis as any)?.localStorage;
+      const saved = storage?.getItem(`orca-worktree-member-order:${projectId || 'default'}`);
+      setWorktreeMemberOrder(saved ? JSON.parse(saved) : {});
+    } catch {
+      setWorktreeMemberOrder({});
     }
   }, [projectId]);
 
@@ -228,6 +325,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       setIsDraggingGitHubItem(false);
       setDraggedItem(null);
       setDropHoverNodeId(null);
+      setDraggingMember(null);
+      setDropTargetMember(null);
     };
 
     window.addEventListener('orca:drag-github-item-start', onDragStart);
@@ -409,10 +508,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                 <span>Sending…</span>
               ) : (
                 <>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <line x1="22" y1="2" x2="11" y2="13" />
-                    <polygon points="22 2 15 22 11 13 2 9 22 2" />
-                  </svg>
+                  <Icon name="send" size={12} />
                   <span>Send</span>
                 </>
               )}
@@ -460,7 +556,11 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
     for (const n of validNodes) {
       if (n.kind === 'orchestrator') {
-        orchestrators.push(n);
+        if (orchestrationSeparated) {
+          orchestrators.push(n);
+        } else {
+          allAgents.push(n);
+        }
       } else if (n.kind === 'worktree') {
         worktrees.push(n);
       } else if (n.kind === 'agent') {
@@ -510,12 +610,16 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       }
 
       if (!matched) {
-        unassignedAgents.push(ag);
+        if (!orchestrationSeparated && ag.kind === 'orchestrator' && worktrees.length > 0) {
+          worktreeAgentsMap.get(worktrees[0].id)!.push(ag);
+        } else {
+          unassignedAgents.push(ag);
+        }
       }
     }
 
     return { orchestrators, worktrees, worktreeAgentsMap, unassignedAgents };
-  }, [nodes, edges]);
+  }, [nodes, edges, orchestrationSeparated]);
 
   // Node lookup map
   const nodeMap = useMemo(() => {
@@ -608,15 +712,17 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     for (const id of layoutAnchorsRef.current.keys()) {
       if (!flowPositions.has(id)) layoutAnchorsRef.current.delete(id);
     }
-    const corrections: Record<string, { x: number; y: number }> = {};
-    for (const box of separateWorkflowBoxes(boxes)) {
-      const original = flowPositions.get(box.id)!;
-      corrections[box.id] = { x: box.x - original.x, y: box.y - original.y };
+    if (!draggingMemberRef.current) {
+      const corrections: Record<string, { x: number; y: number }> = {};
+      for (const box of separateWorkflowBoxes(boxes)) {
+        const original = flowPositions.get(box.id)!;
+        corrections[box.id] = { x: box.x - original.x, y: box.y - original.y };
+      }
+      setCollisionOffsets((previous) => Object.keys(previous).length === Object.keys(corrections).length &&
+        Object.entries(corrections).every(([id, value]) => previous[id] &&
+          Math.abs(previous[id].x - value.x) < 0.5 && Math.abs(previous[id].y - value.y) < 0.5)
+        ? previous : corrections);
     }
-    setCollisionOffsets((previous) => Object.keys(previous).length === Object.keys(corrections).length &&
-      Object.entries(corrections).every(([id, value]) => previous[id] &&
-        Math.abs(previous[id].x - value.x) < 0.5 && Math.abs(previous[id].y - value.y) < 0.5)
-      ? previous : corrections);
 
     const newPositions = new Map<string, AnchorBox>();
 
@@ -671,15 +777,170 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     });
   }, [measurePositions]);
 
+  const getOrderedMembers = useCallback((worktreeId: string, rawMembers: Node[]) => {
+    const customOrder = worktreeMemberOrder[worktreeId];
+    if (!customOrder || customOrder.length === 0) return rawMembers;
+    const orderMap = new Map<string, number>();
+    customOrder.forEach((id, idx) => orderMap.set(id, idx));
+    return [...rawMembers].sort((a, b) => {
+      const idxA = orderMap.has(a.id) ? orderMap.get(a.id)! : 9999;
+      const idxB = orderMap.has(b.id) ? orderMap.get(b.id)! : 9999;
+      if (idxA !== idxB) return idxA - idxB;
+      return compareWorkflowNodes(a, b);
+    });
+  }, [worktreeMemberOrder]);
+
+  const isValidReorder = useCallback((
+    membersList: Node[],
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after'
+  ) => {
+    if (draggedId === targetId) return false;
+    const ids = membersList.map((m) => m.id);
+    const fromIdx = ids.indexOf(draggedId);
+    const toIdx = ids.indexOf(targetId);
+    if (fromIdx === -1 || toIdx === -1) return false;
+
+    if (position === 'before' && toIdx === fromIdx + 1) return false;
+    if (position === 'after' && toIdx === fromIdx - 1) return false;
+
+    return true;
+  }, []);
+
+  const handleReorderMember = useCallback((
+    worktreeId: string,
+    draggedAgentId: string,
+    targetAgentId: string,
+    position: 'before' | 'after'
+  ) => {
+    if (draggedAgentId === targetAgentId) return;
+    const rawMembers = worktreeAgentsMap.get(worktreeId) || [];
+    const currentOrdered = getOrderedMembers(worktreeId, rawMembers);
+    const ids = currentOrdered.map((m) => m.id);
+
+    const fromIdx = ids.indexOf(draggedAgentId);
+    if (fromIdx === -1) return;
+
+    const newIds = [...ids];
+    newIds.splice(fromIdx, 1);
+    const insertIdx = newIds.indexOf(targetAgentId);
+    if (insertIdx === -1) return;
+
+    if (position === 'after') {
+      newIds.splice(insertIdx + 1, 0, draggedAgentId);
+    } else {
+      newIds.splice(insertIdx, 0, draggedAgentId);
+    }
+
+    if (newIds.every((id, i) => id === ids[i])) return;
+
+    // Capture current member positions before updating (FLIP switch animation)
+    const prevPositions = new Map<string, number>();
+    for (const id of ids) {
+      const el = elementRefs.current.get(id);
+      if (el && el.isConnected) {
+        prevPositions.set(id, el.getBoundingClientRect().top);
+      }
+    }
+    flipPendingRef.current = prevPositions;
+
+    setWorktreeMemberOrder((prev) => {
+      const next = { ...prev, [worktreeId]: newIds };
+      try {
+        localStorage.setItem(`orca-worktree-member-order:${projectId || 'default'}`, JSON.stringify(next));
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+    scheduleUpdate();
+  }, [worktreeAgentsMap, getOrderedMembers, projectId, scheduleUpdate]);
+
   const handleResetLayout = useCallback(() => {
+    // Capture member positions before reset (FLIP switch animation)
+    const prevPositions = new Map<string, number>();
+    for (const [id, el] of elementRefs.current.entries()) {
+      if (el && el.isConnected && !nodeOffsets[id]) {
+        prevPositions.set(id, el.getBoundingClientRect().top);
+      }
+    }
+    flipPendingRef.current = prevPositions;
+
     setNodeOffsets({});
+    setWorktreeMemberOrder({});
     try {
       localStorage.removeItem(`orca-workflow-node-offsets:${projectId || 'default'}`);
+      localStorage.removeItem(`orca-worktree-member-order:${projectId || 'default'}`);
     } catch {
       // ignore
     }
     scheduleUpdate();
-  }, [projectId, scheduleUpdate]);
+  }, [projectId, nodeOffsets, scheduleUpdate]);
+
+  const handleConfirmDeleteWorktree = useCallback(async () => {
+    const wt = deleteWorktreeConfirmation.data;
+    if (!projectId || !wt) return;
+    setIsDeletingWorktree(true);
+    setDeleteError(null);
+    try {
+      await deleteWorktree(projectId, wt.id);
+      deleteWorktreeConfirmation.close();
+      scheduleUpdate();
+    } catch (err: any) {
+      setDeleteError(err.message || 'Failed to delete worktree');
+    } finally {
+      setIsDeletingWorktree(false);
+    }
+  }, [projectId, deleteWorktreeConfirmation, scheduleUpdate]);
+
+  const handleConfirmCloseAgentTab = useCallback(async () => {
+    const node = closeAgentTabConfirmation.data;
+    if (!projectId || !node) return;
+    setIsClosingAgentTab(true);
+    setCloseTabError(null);
+    try {
+      await closeAgentTab(projectId, node.id);
+      closeAgentTabConfirmation.close();
+      scheduleUpdate();
+    } catch (err: any) {
+      setCloseTabError(err.message || 'Failed to close agent tab');
+    } finally {
+      setIsClosingAgentTab(false);
+    }
+  }, [projectId, closeAgentTabConfirmation, scheduleUpdate]);
+
+  const handleConfirmRename = useCallback(async (newTitle: string) => {
+    const node = renameConfirmation.data;
+    if (!projectId || !node) return;
+    setIsRenaming(true);
+    setRenameError(null);
+    try {
+      await renameNodeTitle(projectId, node.id, newTitle);
+      renameConfirmation.close();
+      scheduleUpdate();
+    } catch (err: any) {
+      setRenameError(err.message || 'Failed to rename tab title');
+    } finally {
+      setIsRenaming(false);
+    }
+  }, [projectId, renameConfirmation, scheduleUpdate]);
+
+  const handleConfirmCreateAgent = useCallback(async (command: string, title?: string) => {
+    const wt = addAgentConfirmation.data;
+    if (!projectId || !wt) return;
+    setIsCreatingAgent(true);
+    setCreateAgentError(null);
+    try {
+      await createWorktreeAgent(projectId, wt.id, command, title);
+      addAgentConfirmation.close();
+      scheduleUpdate();
+    } catch (err: any) {
+      setCreateAgentError(err.message || 'Failed to create agent');
+    } finally {
+      setIsCreatingAgent(false);
+    }
+  }, [projectId, addAgentConfirmation, scheduleUpdate]);
 
   const handleCanvasPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     closePreview();
@@ -840,6 +1101,52 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   }, [closePreview, nodeOffsets, projectId, scheduleUpdate]);
 
   useLayoutEffect(() => {
+    if (!flipPendingRef.current || flipPendingRef.current.size === 0) return;
+    const prevPositions = flipPendingRef.current;
+    flipPendingRef.current = null;
+
+    if (prefersReducedMotion) return;
+
+    const animatedElements: HTMLElement[] = [];
+
+    for (const [id, prevTop] of prevPositions.entries()) {
+      const el = elementRefs.current.get(id);
+      if (!el || !el.isConnected) continue;
+
+      const nextTop = el.getBoundingClientRect().top;
+      const deltaY = prevTop - nextTop;
+
+      if (Math.abs(deltaY) > 0.5) {
+        // Invert: position element back at its previous visual location
+        el.style.transform = `translateY(${deltaY}px)`;
+        el.style.transition = 'none';
+        animatedElements.push(el);
+      }
+    }
+
+    if (animatedElements.length === 0) return;
+
+    // Force reflow
+    void containerRef.current?.offsetHeight;
+
+    // Play: transition to natural DOM position
+    for (const el of animatedElements) {
+      el.style.transition = 'transform 0.28s cubic-bezier(0.2, 0, 0, 1)';
+      el.style.transform = '';
+    }
+
+    // Cleanup styles after animation completes
+    const timer = setTimeout(() => {
+      for (const el of animatedElements) {
+        el.style.transition = '';
+      }
+      scheduleUpdate();
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [worktreeMemberOrder, nodeOffsets, prefersReducedMotion, scheduleUpdate]);
+
+  useLayoutEffect(() => {
     measurePositions();
   }, [nodes, edges, orchestrators, worktrees, worktreeAgentsMap, unassignedAgents, nodeOffsets, collisionOffsets, chatOpenNodeId, measurePositions]);
 
@@ -989,32 +1296,190 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
   return (
     <section className="workflow-graph-wrapper" aria-label="Workflow relationship graph">
-      {resetConfirmation.present && (
-        <dialog
-          ref={resetDialogRef}
-          className={`node-modal-dialog reset-layout-dialog${resetConfirmation.closing ? ' is-closing' : ''}`}
-          aria-labelledby="reset-layout-title"
-          aria-describedby="reset-layout-description"
-          onCancel={(event) => { event.preventDefault(); resetConfirmation.close(); }}
-          onClick={(event) => {
-            if (event.target === event.currentTarget) {
-              const rect = event.currentTarget.getBoundingClientRect();
-              if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) {
-                resetConfirmation.close();
-              }
-            }
+      <ConfirmationDialog
+        isOpen={resetConfirmation.present}
+        isClosing={resetConfirmation.closing}
+        title="Reset layout?"
+        description="Return cards and worktrees in this project to their default positions. Your saved layout will be cleared."
+        confirmLabel="Reset layout"
+        confirmVariant="danger"
+        onConfirm={() => {
+          handleResetLayout();
+          resetConfirmation.close();
+        }}
+        onClose={resetConfirmation.close}
+      />
+
+      <ConfirmationDialog
+        isOpen={deleteWorktreeConfirmation.present}
+        isClosing={deleteWorktreeConfirmation.closing}
+        title="Delete Worktree?"
+        description={
+          <>
+            Are you sure you want to delete worktree <strong>{deleteWorktreeConfirmation.data?.label}</strong>? This will remove the worktree from Orca and git.
+          </>
+        }
+        confirmLabel="Delete Worktree"
+        confirmVariant="danger"
+        isConfirming={isDeletingWorktree}
+        error={deleteError}
+        onConfirm={handleConfirmDeleteWorktree}
+        onClose={() => {
+          deleteWorktreeConfirmation.close();
+          setDeleteError(null);
+        }}
+      />
+
+      <ConfirmationDialog
+        isOpen={closeAgentTabConfirmation.present}
+        isClosing={closeAgentTabConfirmation.closing}
+        title="Close Agent Tab?"
+        description={
+          <>
+            Are you sure you want to close the terminal tab for agent <strong>{closeAgentTabConfirmation.data?.label}</strong>? This will terminate the running session.
+          </>
+        }
+        confirmLabel="Close Tab"
+        confirmVariant="danger"
+        isConfirming={isClosingAgentTab}
+        error={closeTabError}
+        onConfirm={handleConfirmCloseAgentTab}
+        onClose={() => {
+          closeAgentTabConfirmation.close();
+          setCloseTabError(null);
+        }}
+      />
+
+      <RenameDialog
+        isOpen={renameConfirmation.present}
+        isClosing={renameConfirmation.closing}
+        initialTitle={renameConfirmation.data?.label || ''}
+        isRenaming={isRenaming}
+        error={renameError}
+        onRename={handleConfirmRename}
+        onClose={() => {
+          renameConfirmation.close();
+          setRenameError(null);
+        }}
+      />
+
+      <AddAgentDialog
+        isOpen={addAgentConfirmation.present}
+        isClosing={addAgentConfirmation.closing}
+        worktreeName={addAgentConfirmation.data?.label || ''}
+        isCreating={isCreatingAgent}
+        error={createAgentError}
+        onCreate={handleConfirmCreateAgent}
+        onClose={() => {
+          addAgentConfirmation.close();
+          setCreateAgentError(null);
+        }}
+      />
+
+      {worktreeContextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="worktree-context-menu"
+          style={{
+            left: Math.min(worktreeContextMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 800) - 190),
+            top: Math.min(worktreeContextMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 600) - 140),
           }}
+          role="menu"
+          aria-label="Worktree actions"
         >
-          <h2 id="reset-layout-title">Reset layout?</h2>
-          <p id="reset-layout-description">Return cards and worktrees in this project to their default positions. Your saved layout will be cleared.</p>
-          <div className="reset-layout-actions">
-            <button type="button" className="btn btn-secondary" autoFocus onClick={resetConfirmation.close}>Cancel</button>
-            <button type="button" className="btn btn-danger" disabled={resetConfirmation.closing} onClick={() => {
-              handleResetLayout();
-              resetConfirmation.close();
-            }}>Reset layout</button>
-          </div>
-        </dialog>
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              const wt = worktreeContextMenu.worktree;
+              setWorktreeContextMenu(null);
+              addAgentConfirmation.open(wt);
+            }}
+          >
+            <Icon name="plus" size={14} />
+            <span>Add New Agent</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              const wt = worktreeContextMenu.worktree;
+              setWorktreeContextMenu(null);
+              onSelectNode(wt.id);
+            }}
+          >
+            <Icon name="search" size={14} />
+            <span>Inspect Worktree</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item context-menu-item-danger"
+            onClick={() => {
+              const wt = worktreeContextMenu.worktree;
+              setWorktreeContextMenu(null);
+              deleteWorktreeConfirmation.open(wt);
+            }}
+          >
+            <Icon name="trash" size={14} />
+            <span>Delete Worktree</span>
+          </button>
+        </div>
+      )}
+
+      {nodeContextMenu && (
+        <div
+          ref={nodeContextMenuRef}
+          className="worktree-context-menu node-context-menu"
+          style={{
+            left: Math.min(nodeContextMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 800) - 190),
+            top: Math.min(nodeContextMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 600) - 140),
+          }}
+          role="menu"
+          aria-label="Agent actions"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              const n = nodeContextMenu.node;
+              setNodeContextMenu(null);
+              setChatOpenNodeId(n.id);
+            }}
+          >
+            <Icon name="message-square" size={14} />
+            <span>Send Message</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item"
+            onClick={() => {
+              const n = nodeContextMenu.node;
+              setNodeContextMenu(null);
+              renameConfirmation.open(n);
+            }}
+          >
+            <Icon name="edit" size={14} />
+            <span>Rename Title</span>
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className="context-menu-item context-menu-item-danger"
+            onClick={() => {
+              const n = nodeContextMenu.node;
+              setNodeContextMenu(null);
+              closeAgentTabConfirmation.open(n);
+            }}
+          >
+            <Icon name="trash" size={14} />
+            <span>Close Agent Tabs</span>
+          </button>
+        </div>
       )}
       {projectId && !selectedNodeId && !draggingNodeId && !isCanvasPanning && !isDraggingGitHubItem && preview && nodes.some((node) => node.id === preview.nodeId) &&
         <NodeMessagePreview key={`${projectId}:${runId}:${preview.nodeId}`} projectId={projectId} runId={runId}
@@ -1024,23 +1489,20 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         <div className="toolbar-title-group">
           <h2 className="graph-title">Workflow Topology</h2>
           <span className="node-count-badge font-mono">
-            {orchestrators.length} Orchestrator{orchestrators.length === 1 ? '' : 's'} • {worktrees.length} Worktree{worktrees.length === 1 ? '' : 's'}
+            {orchestrationSeparated ? `${orchestrators.length} Orchestrator${orchestrators.length === 1 ? '' : 's'} • ` : ''}{worktrees.length} Worktree{worktrees.length === 1 ? '' : 's'}
           </span>
         </div>
 
         <div className="graph-toolbar-actions">
-          {Object.keys(nodeOffsets).length > 0 && (
+          {(Object.keys(nodeOffsets).length > 0 || Object.keys(worktreeMemberOrder).length > 0) && (
             <button
               type="button"
               className="btn btn-secondary btn-xs btn-reset-layout"
-              onClick={() => { closePreview(); resetConfirmation.toggle(); }}
+              onClick={() => { closePreview(); resetConfirmation.open(); }}
               title="Reset repositioned cards and worktrees to default layout"
               aria-label="Reset repositioned cards and worktrees to default layout"
             >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
-                <path d="M3 3v5h5" />
-              </svg>
+              <Icon name="rotate-ccw" size={12} />
               <span>Reset Layout</span>
             </button>
           )}
@@ -1092,13 +1554,16 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
           <div className="graph-empty-state">
             <div className="empty-title" role="status">{loading ? 'Loading Workflow Nodes…' : 'No Workflow Nodes Discovered'}</div>
             <div className="empty-description">
-              {loading ? 'Reading project worktrees, orchestrators, and agents.' : 'No active worktrees, orchestrators, or agents found for this project snapshot.'}
+              {loading
+                ? (orchestrationSeparated ? 'Reading project worktrees, orchestrators, and agents.' : 'Reading project worktrees and agents.')
+                : (orchestrationSeparated ? 'No active worktrees, orchestrators, or agents found for this project snapshot.' : 'No active worktrees or agents found for this project snapshot.')}
             </div>
           </div>
         ) : (
           <div className="sketch-graph-layout" ref={layoutRef}>
             {/* LEFT COLUMN: Orchestrator Lane */}
-            <div className="orchestrator-lane">
+            {orchestrationSeparated && (
+              <div className="orchestrator-lane">
               {orchestrators.length === 0 ? (
                 <>
                   <div className="lane-header">
@@ -1159,7 +1624,13 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                           }}
                           onContextMenu={(e) => {
                             e.preventDefault();
-                            toggleChat(orch.id);
+                            e.stopPropagation();
+                            setWorktreeContextMenu(null);
+                            setNodeContextMenu({
+                              x: e.clientX,
+                              y: e.clientY,
+                              node: orch,
+                            });
                           }}
                           onDragOver={(e) => handleDragOver(e, orch.id)}
                           onDragLeave={(e) => handleDragLeave(e, orch.id)}
@@ -1219,11 +1690,12 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                 </div>
               )}
             </div>
+            )}
 
             {/* RIGHT COLUMN: Worktree Containers Lane */}
             <div className="worktrees-lane">
               {worktrees.map((wt) => {
-                const members = worktreeAgentsMap.get(wt.id) ?? [];
+                const members = getOrderedMembers(wt.id, worktreeAgentsMap.get(wt.id) ?? []);
                 const isSelected = wt.id === selectedNodeId;
 
                 return (
@@ -1239,6 +1711,25 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                         : undefined
                     }
                     aria-label={`Worktree container: ${wt.label}`}
+                    onContextMenu={(e) => {
+                      if ((e.target as HTMLElement).closest('.agent-card, .node-card-chat-extension, button, input, textarea')) {
+                        return;
+                      }
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setWorktreeContextMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        worktree: wt,
+                      });
+                    }}
+                    onDragLeave={(e) => {
+                      if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node)) {
+                        if (dropTargetMember?.worktreeId === wt.id) {
+                          setDropTargetMember(null);
+                        }
+                      }
+                    }}
                   >
                     {/* Worktree Container Header (Drag Handle) */}
                     <div
@@ -1258,7 +1749,18 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                         )}
                       </div>
 
-                      <div className="worktree-header-actions">
+                      <div className="worktree-header-actions" style={{ display: 'flex', gap: '6px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-secondary btn-xs"
+                          onClick={() => addAgentConfirmation.open(wt)}
+                          aria-label={`Add new agent in ${wt.label}`}
+                          title="Add new agent"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <Icon name="plus" size={12} />
+                          <span>Add Agent</span>
+                        </button>
                         <button
                           type="button"
                           className="btn btn-secondary btn-xs"
@@ -1271,95 +1773,248 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                     </div>
 
                     {/* Member Agents Vertically Stacked Inside */}
-                    <div className="worktree-agents-stack">
+                    <div
+                      className="worktree-agents-stack"
+                      onDragOver={(e) => {
+                        if (isDraggingGitHubItem) return;
+                        if (draggingMember && draggingMember.worktreeId === wt.id) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          e.dataTransfer.dropEffect = 'move';
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          const firstMember = members[0];
+                          const lastMember = members[members.length - 1];
+                          if (members.length > 0) {
+                            if (e.clientY < rect.top + 20 && firstMember && firstMember.id !== draggingMember.agentId) {
+                              setDropTargetMember({
+                                worktreeId: wt.id,
+                                agentId: firstMember.id,
+                                position: 'before',
+                              });
+                            } else if (e.clientY > rect.bottom - 20 && lastMember && lastMember.id !== draggingMember.agentId) {
+                              setDropTargetMember({
+                                worktreeId: wt.id,
+                                agentId: lastMember.id,
+                                position: 'after',
+                              });
+                            }
+                          }
+                        }
+                      }}
+                      onDrop={(e) => {
+                        if (isDraggingGitHubItem) return;
+                        if (draggingMember && draggingMember.worktreeId === wt.id && dropTargetMember) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          handleReorderMember(wt.id, draggingMember.agentId, dropTargetMember.agentId, dropTargetMember.position);
+                          setDraggingMember(null);
+                          setDropTargetMember(null);
+                        }
+                      }}
+                    >
                       {members.length === 0 ? (
                         <div className="worktree-empty-agents text-xs text-muted">
                           No member agents in this worktree
                         </div>
                       ) : (
                         members.map((ag) => {
+                          const draggedNode = draggingMember ? nodeMap.get(draggingMember.agentId) : null;
                           const isAgSelected = ag.id === selectedNodeId;
-                          return (
-                            <div
-                              role="button"
-                              tabIndex={0}
-                              {...previewEvents(ag)}
-                              key={ag.id}
-                              ref={(el) => registerRef(ag.id, el)}
-                              className={`graph-node-card agent-card state-${ag.state} ${
-                                isAgSelected ? 'node-selected' : ''
-                              } ${ag.stale ? 'node-stale' : ''} ${
-                                isDraggingGitHubItem ? 'node-drag-target-glow' : ''
-                              } ${dropHoverNodeId === ag.id ? 'node-drop-hover' : ''} ${
-                                chatOpenNodeId === ag.id ? 'node-chat-extended' : ''
-                              }`}
-                              onClick={(e) => {
-                                if ((e.target as HTMLElement).closest('.node-card-chat-extension')) return;
-                                onSelectNode(ag.id);
-                              }}
-                              onKeyDown={(e) => {
-                                if ((e.target as HTMLElement).closest('.node-card-chat-extension')) return;
-                                if (e.key === 'Enter' || e.key === ' ') {
-                                  e.preventDefault();
-                                  onSelectNode(ag.id);
-                                }
-                              }}
-                              onContextMenu={(e) => {
-                                e.preventDefault();
-                                toggleChat(ag.id);
-                              }}
-                              onDragOver={(e) => handleDragOver(e, ag.id)}
-                              onDragLeave={(e) => handleDragLeave(e, ag.id)}
-                              onDrop={(e) => handleDrop(e, ag.id)}
-                              aria-pressed={isAgSelected}
-                              aria-label={`Agent: ${ag.label}, state: ${ag.state}, liveness: ${ag.liveness}`}
-                            >
-                              <div className="node-card-top">
-                                <div className="agent-title-row">
-                                  <ProviderIcon provider={ag.agentType} size={15} />
-                                  <span className="agent-label font-semibold">{ag.label}</span>
-                                </div>
-                                <span className={`node-badge-state state-${ag.state}`}>
-                                  {ag.state}
-                                </span>
-                              </div>
+                          const isDraggingThis = draggingMember?.agentId === ag.id;
+                          const isDropTargetBefore = dropTargetMember?.worktreeId === wt.id && dropTargetMember?.agentId === ag.id && dropTargetMember?.position === 'before';
+                          const isDropTargetAfter = dropTargetMember?.worktreeId === wt.id && dropTargetMember?.agentId === ag.id && dropTargetMember?.position === 'after';
 
-                              {ag.preview && (
-                                <div className="node-card-preview font-mono text-xs text-muted">
-                                  {ag.preview}
+                          const showPreviewBefore = Boolean(isDropTargetBefore && draggingMember && draggedNode && isValidReorder(members, draggingMember.agentId, ag.id, 'before'));
+                          const showPreviewAfter = Boolean(isDropTargetAfter && draggingMember && draggedNode && isValidReorder(members, draggingMember.agentId, ag.id, 'after'));
+
+                          return (
+                            <React.Fragment key={ag.id}>
+                              {showPreviewBefore && (
+                                <div key={`drop-preview-before-${ag.id}`} className="worktree-drop-preview-slot" aria-hidden="true">
+                                  <div className="worktree-drop-preview-card">
+                                    <div className="node-card-top">
+                                      <div className="agent-title-row">
+                                        <span className="drag-grip-icon" aria-hidden="true">⋮⋮</span>
+                                        <ProviderIcon provider={draggedNode?.agentType} size={15} />
+                                        <span className="agent-label font-semibold">{draggedNode?.label}</span>
+                                      </div>
+                                      <span className="node-badge-state preview-pill">
+                                        <Icon name="arrow-up" size={10} />
+                                        <span>Move here</span>
+                                      </span>
+                                    </div>
+                                    <div className="preview-hint-text font-mono text-xs">
+                                      Drop to position before {ag.label}
+                                    </div>
+                                  </div>
                                 </div>
                               )}
 
-                              <div className="node-card-footer">
-                                <div className="node-footer-left">
-                                  <span
-                                    className={`badge-liveness-dot dot-${ag.liveness}`}
-                                    title={`Liveness: ${ag.liveness}`}
-                                  />
-                                  <span className="node-footer-meta font-mono text-xs">
-                                    {ag.taskIds.length > 0 ? `${ag.taskIds.length} tasks` : ag.liveness}
+                              <div
+                                role="button"
+                                tabIndex={0}
+                                {...previewEvents(ag)}
+                                ref={(el) => registerRef(ag.id, el)}
+                                draggable={!chatOpenNodeId}
+                                onDragStart={(e) => {
+                                  if (isDraggingGitHubItem || chatOpenNodeId) return;
+                                  e.stopPropagation();
+                                  e.dataTransfer.setData('text/plain', ag.id);
+                                  e.dataTransfer.setData('application/orca-agent-id', ag.id);
+                                  e.dataTransfer.setData('application/orca-worktree-id', wt.id);
+                                  e.dataTransfer.effectAllowed = 'move';
+                                  requestAnimationFrame(() => {
+                                    setDraggingMember({ worktreeId: wt.id, agentId: ag.id });
+                                  });
+                                }}
+                                onDragOver={(e) => {
+                                  if (isDraggingGitHubItem) {
+                                    handleDragOver(e, ag.id);
+                                    return;
+                                  }
+                                  if (draggingMember && draggingMember.worktreeId === wt.id && draggingMember.agentId !== ag.id) {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    e.dataTransfer.dropEffect = 'move';
+                                    const rect = e.currentTarget.getBoundingClientRect();
+                                    const midY = rect.top + rect.height / 2;
+                                    const position = e.clientY < midY ? 'before' : 'after';
+                                    setDropTargetMember({
+                                      worktreeId: wt.id,
+                                      agentId: ag.id,
+                                      position,
+                                    });
+                                  }
+                                }}
+                                onDragLeave={(e) => {
+                                  if (isDraggingGitHubItem) {
+                                    handleDragLeave(e, ag.id);
+                                    return;
+                                  }
+                                  if (!e.currentTarget.parentElement?.contains(e.relatedTarget as globalThis.Node)) {
+                                    setDropTargetMember(null);
+                                  }
+                                }}
+                                onDrop={(e) => {
+                                  if (isDraggingGitHubItem) {
+                                    handleDrop(e, ag.id);
+                                    return;
+                                  }
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  if (draggingMember && draggingMember.worktreeId === wt.id && draggingMember.agentId !== ag.id && dropTargetMember) {
+                                    handleReorderMember(wt.id, draggingMember.agentId, ag.id, dropTargetMember.position);
+                                  }
+                                  setDraggingMember(null);
+                                  setDropTargetMember(null);
+                                }}
+                                onDragEnd={() => {
+                                  setDraggingMember(null);
+                                  setDropTargetMember(null);
+                                }}
+                                className={`graph-node-card agent-card node-draggable state-${ag.state} ${
+                                  isAgSelected ? 'node-selected' : ''
+                                } ${ag.stale ? 'node-stale' : ''} ${
+                                  isDraggingGitHubItem ? 'node-drag-target-glow' : ''
+                                } ${dropHoverNodeId === ag.id ? 'node-drop-hover' : ''} ${
+                                  chatOpenNodeId === ag.id ? 'node-chat-extended' : ''
+                                } ${isDraggingThis ? 'is-member-dragging' : ''} ${
+                                  isDropTargetBefore ? 'drop-before' : ''
+                                } ${isDropTargetAfter ? 'drop-after' : ''}`}
+                                onClick={(e) => {
+                                  if (justDraggedNodeRef.current) return;
+                                  if ((e.target as HTMLElement).closest('.node-card-chat-extension')) return;
+                                  onSelectNode(ag.id);
+                                }}
+                                onKeyDown={(e) => {
+                                  if ((e.target as HTMLElement).closest('.node-card-chat-extension')) return;
+                                  if (e.key === 'Enter' || e.key === ' ') {
+                                    e.preventDefault();
+                                    onSelectNode(ag.id);
+                                  }
+                                }}
+                                onContextMenu={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+                                  setWorktreeContextMenu(null);
+                                  setNodeContextMenu({
+                                    x: e.clientX,
+                                    y: e.clientY,
+                                    node: ag,
+                                  });
+                                }}
+                                aria-pressed={isAgSelected}
+                                aria-label={`Agent: ${ag.label}, state: ${ag.state}, liveness: ${ag.liveness}`}
+                              >
+                                <div className="node-card-top">
+                                  <div className="agent-title-row">
+                                    <span className="drag-grip-icon" title="Drag up or down to reorder agent in worktree" aria-hidden="true">⋮⋮</span>
+                                    <ProviderIcon provider={ag.agentType} size={15} />
+                                    <span className="agent-label font-semibold">{ag.label}</span>
+                                  </div>
+                                  <span className={`node-badge-state state-${ag.state}`}>
+                                    {ag.state}
                                   </span>
-                                  {ag.stale && <span className="badge-stale-tag">Stale</span>}
                                 </div>
-                                {((ag.model && ag.model !== 'unknown') || (ag.effort && ag.effort !== 'unknown')) && (
-                                  <div
-                                    className="node-footer-right"
-                                    title={`${ag.model && ag.model !== 'unknown' ? ag.model : 'Model unavailable'}${ag.effort && ag.effort !== 'unknown' ? ` • effort: ${ag.effort}` : ''}`}
-                                  >
-                                    {ag.model && ag.model !== 'unknown' && <span className="node-model-name font-mono text-xs">
-                                      {ag.model}
-                                    </span>}
-                                    {ag.effort && ag.effort !== 'unknown' && (
-                                      <span className="node-effort-badge font-mono text-xs">
-                                        {ag.effort}
-                                      </span>
-                                    )}
+
+                                {ag.preview && (
+                                  <div className="node-card-preview font-mono text-xs text-muted">
+                                    {ag.preview}
                                   </div>
                                 )}
+
+                                <div className="node-card-footer">
+                                  <div className="node-footer-left">
+                                    <span
+                                      className={`badge-liveness-dot dot-${ag.liveness}`}
+                                      title={`Liveness: ${ag.liveness}`}
+                                    />
+                                    <span className="node-footer-meta font-mono text-xs">
+                                      {ag.taskIds.length > 0 ? `${ag.taskIds.length} tasks` : ag.liveness}
+                                    </span>
+                                    {ag.stale && <span className="badge-stale-tag">Stale</span>}
+                                  </div>
+                                  {((ag.model && ag.model !== 'unknown') || (ag.effort && ag.effort !== 'unknown')) && (
+                                    <div
+                                      className="node-footer-right"
+                                      title={`${ag.model && ag.model !== 'unknown' ? ag.model : 'Model unavailable'}${ag.effort && ag.effort !== 'unknown' ? ` • effort: ${ag.effort}` : ''}`}
+                                    >
+                                      {ag.model && ag.model !== 'unknown' && <span className="node-model-name font-mono text-xs">
+                                        {ag.model}
+                                      </span>}
+                                      {ag.effort && ag.effort !== 'unknown' && (
+                                        <span className="node-effort-badge font-mono text-xs">
+                                          {ag.effort}
+                                        </span>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+
+                                {renderChatExtension(ag)}
                               </div>
 
-                              {renderChatExtension(ag)}
-                            </div>
+                              {showPreviewAfter && (
+                                <div key={`drop-preview-after-${ag.id}`} className="worktree-drop-preview-slot" aria-hidden="true">
+                                  <div className="worktree-drop-preview-card">
+                                    <div className="node-card-top">
+                                      <div className="agent-title-row">
+                                        <span className="drag-grip-icon" aria-hidden="true">⋮⋮</span>
+                                        <ProviderIcon provider={draggedNode?.agentType} size={15} />
+                                        <span className="agent-label font-semibold">{draggedNode?.label}</span>
+                                      </div>
+                                      <span className="node-badge-state preview-pill">
+                                        <Icon name="arrow-down" size={10} />
+                                        <span>Move here</span>
+                                      </span>
+                                    </div>
+                                    <div className="preview-hint-text font-mono text-xs">
+                                      Drop to position after {ag.label}
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </React.Fragment>
                           );
                         })
                       )}
@@ -1413,7 +2068,13 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                           }}
                           onContextMenu={(e) => {
                             e.preventDefault();
-                            toggleChat(ag.id);
+                            e.stopPropagation();
+                            setWorktreeContextMenu(null);
+                            setNodeContextMenu({
+                              x: e.clientX,
+                              y: e.clientY,
+                              node: ag,
+                            });
                           }}
                           onDragOver={(e) => handleDragOver(e, ag.id)}
                           onDragLeave={(e) => handleDragLeave(e, ag.id)}

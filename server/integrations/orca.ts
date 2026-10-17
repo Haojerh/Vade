@@ -25,12 +25,25 @@ import {
   ConversationPage,
   ErrorCode,
   PrerequisitesStatus,
+  RenameNodeTitleResponse,
+  CreateAgentResponse,
 } from '../../shared/contracts.js';
 import { runOrca, CommandRunner, defaultCommandRunner, CliError, cleanErrorMessage, ORCA_PATH } from './cli.js';
 import { readAntigravityModel } from '../providers/antigravity.js';
 import { taskProgress } from '../services/progress.js';
 import { attachmentPaste, attachmentReference, usesNativeImageAttachment } from '../services/attachments.js';
-import { localTranscriptProviders, publicTranscriptRecord, transcriptSettings, openCodeDatabase, readOpenCodePage, readOpenCodeModel } from '../providers/transcripts.js';
+import {
+  localTranscriptProviders,
+  publicTranscriptRecord,
+  transcriptSettings,
+  openCodeDatabase,
+  readOpenCodePage,
+  readOpenCodeModel,
+  findOpenCodeSession,
+  findClaudeTranscript,
+  findCodexTranscript,
+  isCodexChatRecord,
+} from '../providers/transcripts.js';
 
 export function hashId(prefix: string, key: string): Id {
   const h = crypto.createHash('sha256').update(key).digest('base64url').slice(0, 20);
@@ -76,6 +89,7 @@ export function getAllowedTranscriptRoots(): string[] {
     roots.push(path.join(userHome, '.omp'));
     roots.push(path.join(process.env.XDG_DATA_HOME || path.join(userHome, '.local', 'share'), 'opencode'));
     roots.push(path.join(process.env.XDG_DATA_HOME || path.join(userHome, '.local', 'share'), 'kilo'));
+    roots.push(path.join(userHome, '.kilocode'));
     roots.push(path.join(userHome, '.gemini'));
     roots.push(path.join(userHome, '.orca'));
   }
@@ -95,6 +109,12 @@ export function getAllowedTranscriptRoots(): string[] {
   }
   if (process.env.ANTIGRAVITY_APPDATA_DIR) {
     roots.push(path.resolve(process.env.ANTIGRAVITY_APPDATA_DIR));
+  }
+  if (process.env.KILO_DB) {
+    roots.push(path.resolve(path.dirname(process.env.KILO_DB)));
+  }
+  if (process.env.OPENCODE_DB) {
+    roots.push(path.resolve(path.dirname(process.env.OPENCODE_DB)));
   }
   return roots;
 }
@@ -410,7 +430,7 @@ export interface RunAssociation {
 // In-memory mappings between source identifiers and API IDs
 export interface OrcaSourceMaps {
   projectSourceMap: Map<Id, { sourceId: string; repoIds: string[]; paths: string[] }>;
-  nodeSourceMap: Map<Id, { handle?: string; worktreeId?: string; paneKey?: string; endpointIncarnation?: string }>;
+  nodeSourceMap: Map<Id, { handle?: string; worktreeId?: string; worktreePath?: string; paneKey?: string; endpointIncarnation?: string; ptyId?: string }>;
   cursorMap: Map<string, string>; // server-issued source-bound cursors
   runAssociationCache: Map<string, RunAssociation>;
   observedAppVersion: string | null;
@@ -646,6 +666,1206 @@ export async function collectInventory(
   }
 }
 
+function isGenericShellTitle(title: string | null | undefined): boolean {
+  if (!title) return true;
+  const lower = title.toLowerCase().trim();
+  return (
+    lower.endsWith('cmd.exe') ||
+    lower.endsWith('powershell.exe') ||
+    lower.endsWith('pwsh.exe') ||
+    lower.endsWith('/bash') ||
+    lower.endsWith('/sh') ||
+    lower.endsWith('/zsh') ||
+    lower.includes('\\system32\\') ||
+    lower.includes('/bin/')
+  );
+}
+
+function extractLayoutTitles(visualLayouts: any[] | undefined): {
+  tabTitleById: Map<string, string>;
+  paneTitleByHandle: Map<string, string>;
+  paneTitleByPaneKey: Map<string, string>;
+} {
+  const tabTitleById = new Map<string, string>();
+  const paneTitleByHandle = new Map<string, string>();
+  const paneTitleByPaneKey = new Map<string, string>();
+
+  if (!Array.isArray(visualLayouts)) {
+    return { tabTitleById, paneTitleByHandle, paneTitleByPaneKey };
+  }
+
+  function collectPanes(pane: any, tabTitle: string) {
+    if (!pane || typeof pane !== 'object') return;
+    if (pane.handle && typeof pane.handle === 'string') {
+      paneTitleByHandle.set(pane.handle, tabTitle);
+    }
+    const paneKey = (pane.tabId && pane.leafId) ? `${pane.tabId}:${pane.leafId}` : (pane.paneKey || null);
+    if (paneKey) {
+      paneTitleByPaneKey.set(paneKey, tabTitle);
+    }
+    if (pane.first) collectPanes(pane.first, tabTitle);
+    if (pane.second) collectPanes(pane.second, tabTitle);
+    if (Array.isArray(pane.children)) {
+      for (const child of pane.children) {
+        collectPanes(child, tabTitle);
+      }
+    }
+    if (Array.isArray(pane.panes)) {
+      for (const child of pane.panes) {
+        collectPanes(child, tabTitle);
+      }
+    }
+  }
+
+  function walkLayout(node: any) {
+    if (!node || typeof node !== 'object') return;
+    if (Array.isArray(node.tabs)) {
+      for (const tab of node.tabs) {
+        const rawTitle = typeof tab?.title === 'string' ? stripAnsi(tab.title).trim() : '';
+        if (rawTitle && !isGenericShellTitle(rawTitle)) {
+          if (tab.tabId) {
+            tabTitleById.set(tab.tabId, rawTitle);
+          }
+          if (tab.panes) {
+            collectPanes(tab.panes, rawTitle);
+          }
+        }
+      }
+    }
+    if (node.first) walkLayout(node.first);
+    if (node.second) walkLayout(node.second);
+    if (Array.isArray(node.children)) {
+      for (const child of node.children) {
+        walkLayout(child);
+      }
+    }
+    if (Array.isArray(node.items)) {
+      for (const item of node.items) {
+        walkLayout(item);
+      }
+    }
+  }
+
+  for (const layout of visualLayouts) {
+    if (layout?.root) {
+      walkLayout(layout.root);
+    }
+  }
+
+  return { tabTitleById, paneTitleByHandle, paneTitleByPaneKey };
+}
+
+// Helper to query and filter project worktrees
+async function fetchProjectWorktrees(
+  projectEntry: { repoIds: string[]; paths: string[] },
+  runner: CommandRunner
+): Promise<{ projectWorktrees: any[]; runtimeId: string | null; partial: boolean }> {
+  let partial = false;
+  const psRes = await runOrca<any>(['worktree', 'ps', '--limit', '200', '--json'], runner);
+  const runtimeId = psRes._meta?.runtimeId ?? null;
+  const allWorktrees: any[] = psRes.result?.worktrees ?? [];
+  if (psRes.result?.truncated) partial = true;
+
+  const projectWorktrees = allWorktrees.filter((w) => {
+    if (w.repoId && projectEntry.repoIds.includes(w.repoId)) return true;
+    if (w.path && projectEntry.paths.some((p) => p.toLowerCase() === w.path.toLowerCase())) return true;
+    return false;
+  });
+
+  return { projectWorktrees, runtimeId, partial };
+}
+
+// Helper to batch-query worktree terminals with visual layouts
+async function fetchWorktreeTerminals(
+  projectWorktrees: any[],
+  runner: CommandRunner
+): Promise<{
+  terminalsByWorktree: Map<string, any[]>;
+  visualLayoutsByWorktree: Map<string, any[]>;
+  partial: boolean;
+}> {
+  let partial = false;
+  const terminalsByWorktree = new Map<string, any[]>();
+  const visualLayoutsByWorktree = new Map<string, any[]>();
+
+  for (let start = 0; start < projectWorktrees.length; start += 4) {
+    await Promise.all(
+      projectWorktrees.slice(start, start + 4).map(async (wt) => {
+        try {
+          const termRes = await runOrca<any>(
+            ['terminal', 'list', '--worktree', `id:${wt.worktreeId}`, '--limit', '100', '--include-visual-layouts', '--json'],
+            runner
+          );
+          terminalsByWorktree.set(wt.worktreeId, termRes.result?.terminals ?? []);
+          visualLayoutsByWorktree.set(wt.worktreeId, termRes.result?.visualLayouts ?? []);
+        } catch {
+          try {
+            const termResFallback = await runOrca<any>(
+              ['terminal', 'list', '--worktree', `id:${wt.worktreeId}`, '--limit', '100', '--json'],
+              runner
+            );
+            terminalsByWorktree.set(wt.worktreeId, termResFallback.result?.terminals ?? []);
+          } catch {
+            partial = true;
+          }
+        }
+      })
+    );
+  }
+
+  return { terminalsByWorktree, visualLayoutsByWorktree, partial };
+}
+
+// Helper to build worktree, agent, and terminal nodes plus membership and hierarchy edges
+function buildWorktreeAndAgentNodes(
+  projectWorktrees: any[],
+  terminalsByWorktree: Map<string, any[]>,
+  visualLayoutsByWorktree: Map<string, any[]>
+): {
+  nodes: Node[];
+  edges: Edge[];
+  nodeMap: Map<Id, Node>;
+  paneKeyToNodeId: Map<string, Id>;
+  terminalHandleToNodeId: Map<string, Id>;
+  worktreeIdToNodeId: Map<string, Id>;
+} {
+  const nodes: Node[] = [];
+  const edges: Edge[] = [];
+  const nodeMap = new Map<Id, Node>();
+  const paneKeyToNodeId = new Map<string, Id>();
+  const terminalHandleToNodeId = new Map<string, Id>();
+  const worktreeIdToNodeId = new Map<string, Id>();
+
+  for (const wt of projectWorktrees) {
+    const wtNodeId = hashId('node', wt.worktreeId || wt.path || wt.displayName);
+    worktreeIdToNodeId.set(wt.worktreeId, wtNodeId);
+
+    const isFolder = wt.workspaceKind === 'folder' || wt.isFolder;
+    const wtLabel = isFolder
+      ? `Folder: ${wt.comment?.trim() || wt.displayName || wt.repo || 'workspace'}`
+      : (wt.comment?.trim() || wt.displayName || wt.branch || wt.repo || 'Worktree');
+    const wtNode: Node = {
+      id: wtNodeId,
+      kind: 'worktree',
+      label: wtLabel,
+      worktreeId: wt.worktreeId || null,
+      runId: null,
+      agentType: null,
+      branch: isFolder ? null : (wt.branch || null),
+      path: wt.path || null,
+      state: mapToState(wt.status || wt.workspaceStatus),
+      rawState: wt.status || wt.workspaceStatus || null,
+      workspaceStatus: wt.workspaceStatus || null,
+      taskOutcome: null,
+      liveness: normalizeLiveness(wt.terminalVerdict),
+      model: null,
+      effort: null,
+      observedAt: toIsoOrNull(wt.lastActivityAt || wt.lastOutputAt),
+      lastActivityAt: toIsoOrNull(wt.lastActivityAt || wt.lastOutputAt),
+      stale: false,
+      taskIds: [],
+      preview: wt.preview ? stripAnsi(wt.preview.slice(0, 300)) : null,
+      outputAvailable: Boolean(wt.preview || wt.liveTerminalCount > 0),
+    };
+    nodes.push(wtNode);
+    nodeMap.set(wtNodeId, wtNode);
+    globalSourceMaps.nodeSourceMap.set(wtNodeId, { worktreeId: wt.worktreeId, worktreePath: wt.path });
+
+    const terminals = terminalsByWorktree.get(wt.worktreeId) ?? [];
+    const visualLayouts = visualLayoutsByWorktree.get(wt.worktreeId) ?? [];
+    const { tabTitleById, paneTitleByHandle, paneTitleByPaneKey } = extractLayoutTitles(visualLayouts);
+
+    const terminalByPane = new Map<string, any>();
+    for (const t of terminals) {
+      if (t.tabId && t.leafId) {
+        terminalByPane.set(`${t.tabId}:${t.leafId}`, t);
+      }
+      if (t.paneKey) {
+        terminalByPane.set(t.paneKey, t);
+      }
+    }
+
+    const agents: any[] = Array.isArray(wt.agents) ? wt.agents : [];
+    const handledTerminalHandles = new Set<string>();
+
+    for (const ag of agents) {
+      const paneKey = ag.paneKey;
+      const matchingTerminal = paneKey ? terminalByPane.get(paneKey) : null;
+      const handle = matchingTerminal?.handle;
+      if (handle) handledTerminalHandles.add(handle);
+      if (paneKey) handledTerminalHandles.add(paneKey);
+
+      const agentNodeId = hashId('node', paneKey || handle || `${wt.worktreeId}:agent:${nodes.length}`);
+      if (paneKey) paneKeyToNodeId.set(paneKey, agentNodeId);
+      if (handle) terminalHandleToNodeId.set(handle, agentNodeId);
+
+      let agState = mapToState(ag.state);
+      let liveness = matchingTerminal?.connected ? 'live' : normalizeLiveness(wt.terminalVerdict);
+      if ((agState === 'unknown' || liveness === 'unverifiable') && matchingTerminal?.preview && (matchingTerminal.preview.includes('5h limit') || matchingTerminal.preview.includes('heads up'))) {
+        agState = 'working';
+        liveness = 'live';
+      }
+
+      const customTabTitle =
+        (paneKey && paneTitleByPaneKey.get(paneKey)) ||
+        (handle && paneTitleByHandle.get(handle)) ||
+        (matchingTerminal?.tabId && tabTitleById.get(matchingTerminal.tabId)) ||
+        (matchingTerminal?.title && !isGenericShellTitle(matchingTerminal.title) ? stripAnsi(matchingTerminal.title).trim() : null);
+
+      const agLabel = (!isGenericShellTitle(customTabTitle) && customTabTitle) || ag.taskTitle || ag.displayName || ag.agentType || 'Agent';
+
+      const agNode: Node = {
+        id: agentNodeId,
+        kind: 'agent',
+        label: agLabel,
+        worktreeId: wt.worktreeId || null,
+        runId: null,
+        agentType: ag.agentType || matchingTerminal?.agentIdentity || null,
+        branch: null,
+        path: wt.path || null,
+        state: agState,
+        rawState: ag.state || null,
+        workspaceStatus: wt.workspaceStatus || null,
+        taskOutcome: null,
+        liveness,
+        model: ag.model || matchingTerminal?.model || null,
+        effort: ag.effort || matchingTerminal?.effort || null,
+        observedAt: toIsoOrNull(ag.updatedAt || ag.stateStartedAt),
+        lastActivityAt: toIsoOrNull(ag.updatedAt || matchingTerminal?.lastOutputAt),
+        stale: false,
+        taskIds: [],
+        preview: matchingTerminal?.preview ? stripAnsi(matchingTerminal.preview.slice(0, 300)) : null,
+        outputAvailable: Boolean(handle),
+      };
+      nodes.push(agNode);
+      nodeMap.set(agentNodeId, agNode);
+      const agEndpointIncarnation = matchingTerminal?.ptyId && matchingTerminal?.incarnationId
+        ? `${matchingTerminal.ptyId}:${matchingTerminal.incarnationId}`
+        : undefined;
+      globalSourceMaps.nodeSourceMap.set(agentNodeId, {
+        handle,
+        worktreeId: wt.worktreeId,
+        paneKey,
+        endpointIncarnation: agEndpointIncarnation,
+        ptyId: matchingTerminal?.ptyId,
+      });
+
+      edges.push({
+        id: hashId('edge', `${wtNodeId}->${agentNodeId}:membership`),
+        source: wtNodeId,
+        target: agentNodeId,
+        kind: 'contains',
+        evidence: 'workspace-membership',
+        active: agNode.state === 'working',
+      });
+    }
+
+    for (const term of terminals) {
+      const termPaneKey = (term.tabId && term.leafId) ? `${term.tabId}:${term.leafId}` : (term.paneKey || null);
+      if (handledTerminalHandles.has(term.handle) || (termPaneKey && handledTerminalHandles.has(termPaneKey))) continue;
+
+      const isAgent = Boolean(term.agentIdentity);
+      const termNodeId = hashId('node', termPaneKey || term.handle);
+      terminalHandleToNodeId.set(term.handle, termNodeId);
+      if (termPaneKey) paneKeyToNodeId.set(termPaneKey, termNodeId);
+
+      const customTabTitle =
+        (term.tabId && tabTitleById.get(term.tabId)) ||
+        (term.handle && paneTitleByHandle.get(term.handle)) ||
+        (termPaneKey && paneTitleByPaneKey.get(termPaneKey));
+
+      const termLabel = isAgent
+        ? (customTabTitle || (!isGenericShellTitle(term.title) ? (term.title ? stripAnsi(term.title).trim() : null) : null) || term.agentIdentity || 'Agent')
+        : (customTabTitle || (term.title ? stripAnsi(term.title).trim() : null) || `Terminal ${term.handle}`);
+
+      const termNode: Node = {
+        id: termNodeId,
+        kind: isAgent ? 'agent' : 'terminal',
+        label: termLabel,
+        worktreeId: wt.worktreeId || null,
+        runId: null,
+        agentType: term.agentIdentity || null,
+        branch: null,
+        path: wt.path || null,
+        state: term.connected ? 'idle' : 'unknown',
+        rawState: term.connected ? 'connected' : 'disconnected',
+        workspaceStatus: wt.workspaceStatus || null,
+        taskOutcome: null,
+        liveness: term.connected ? 'live' : 'exited',
+        model: term.model || null,
+        effort: term.effort || null,
+        observedAt: toIsoOrNull(term.lastOutputAt),
+        lastActivityAt: toIsoOrNull(term.lastOutputAt),
+        stale: false,
+        taskIds: [],
+        preview: term.preview ? stripAnsi(term.preview.slice(0, 300)) : null,
+        outputAvailable: Boolean(term.handle),
+      };
+      nodes.push(termNode);
+      nodeMap.set(termNodeId, termNode);
+      const termEndpointIncarnation = term.ptyId && term.incarnationId
+        ? `${term.ptyId}:${term.incarnationId}`
+        : undefined;
+      globalSourceMaps.nodeSourceMap.set(termNodeId, {
+        handle: term.handle,
+        worktreeId: wt.worktreeId,
+        paneKey: termPaneKey || undefined,
+        endpointIncarnation: termEndpointIncarnation,
+        ptyId: term.ptyId,
+      });
+
+      edges.push({
+        id: hashId('edge', `${wtNodeId}->${termNodeId}:membership`),
+        source: wtNodeId,
+        target: termNodeId,
+        kind: 'contains',
+        evidence: 'workspace-membership',
+        active: false,
+      });
+    }
+  }
+
+  // Pass 2: Establish parent-child and parent-pane edges now that all worktrees and panes are indexed
+  for (const wt of projectWorktrees) {
+    if (wt.parentWorktreeId) {
+      const parentNodeId = worktreeIdToNodeId.get(wt.parentWorktreeId);
+      const wtNodeId = worktreeIdToNodeId.get(wt.worktreeId);
+      if (parentNodeId && wtNodeId && parentNodeId !== wtNodeId) {
+        edges.push({
+          id: hashId('edge', `${parentNodeId}->${wtNodeId}:lineage`),
+          source: parentNodeId,
+          target: wtNodeId,
+          kind: 'lineage',
+          evidence: 'parent-worktree',
+          active: true,
+        });
+      }
+    }
+
+    const agents: any[] = Array.isArray(wt.agents) ? wt.agents : [];
+    for (const ag of agents) {
+      if (ag.parentPaneKey && ag.paneKey) {
+        const parentNodeId = paneKeyToNodeId.get(ag.parentPaneKey);
+        const childNodeId = paneKeyToNodeId.get(ag.paneKey);
+        if (parentNodeId && childNodeId && parentNodeId !== childNodeId) {
+          const childNode = nodeMap.get(childNodeId);
+          edges.push({
+            id: hashId('edge', `${parentNodeId}->${childNodeId}:parent-pane`),
+            source: parentNodeId,
+            target: childNodeId,
+            kind: 'delegates',
+            evidence: 'parent-pane',
+            active: childNode?.state === 'working',
+          });
+        }
+      }
+    }
+  }
+
+  return { nodes, edges, nodeMap, paneKeyToNodeId, terminalHandleToNodeId, worktreeIdToNodeId };
+}
+
+// Helper to discover and associate orchestration runs with project worktrees
+async function discoverAssociatedRuns(
+  projectId: Id,
+  terminalHandleToNodeId: Map<string, Id>,
+  worktreeIdToNodeId: Map<string, Id>,
+  nodeMap: Map<Id, Node>,
+  runner: CommandRunner
+): Promise<{ associatedRuns: Run[]; partial: boolean }> {
+  const associatedRuns: Run[] = [];
+  let candidateRuns: any[] = [];
+  let partial = false;
+
+  try {
+    const runListRes = await runOrca<any>(['orchestration', 'run-list', '--limit', '50', '--json'], runner);
+    candidateRuns = runListRes.result?.runs ?? [];
+  } catch {
+    partial = true;
+  }
+
+  let inspectedWorkersCount = 0;
+  const MAX_WORKER_INSPECTIONS = 5;
+
+  for (const r of candidateRuns) {
+    if (!r.id) continue;
+    const cacheKey = `${projectId}::${r.id}`;
+    const cachedAssoc = globalSourceMaps.runAssociationCache.get(cacheKey);
+
+    let association: 'coordinator-terminal' | 'worker-workspace' | null = null;
+    let coordinatorNodeId: Id | null = null;
+
+    if (cachedAssoc) {
+      if (cachedAssoc.associated) {
+        association = cachedAssoc.association!;
+        coordinatorNodeId =
+          cachedAssoc.coordinatorNodeId ??
+          (r.coordinator_handle ? terminalHandleToNodeId.get(r.coordinator_handle) || null : null);
+      }
+    } else {
+      if (r.coordinator_handle && terminalHandleToNodeId.has(r.coordinator_handle)) {
+        association = 'coordinator-terminal';
+        coordinatorNodeId = terminalHandleToNodeId.get(r.coordinator_handle)!;
+        globalSourceMaps.runAssociationCache.set(cacheKey, {
+          associated: true,
+          association,
+          coordinatorNodeId,
+        });
+      } else if (inspectedWorkersCount < MAX_WORKER_INSPECTIONS) {
+        inspectedWorkersCount++;
+        try {
+          const wListRes = await runOrca<any>(
+            ['orchestration', 'worker-list', '--run', r.id, '--limit', '100', '--json'],
+            runner
+          );
+          const workers: any[] = wListRes.result?.workers ?? [];
+          for (const w of workers) {
+            const wWorktreeId = w.resource?.worktreeId || w.projection?.workspace?.id;
+            if (wWorktreeId && worktreeIdToNodeId.has(wWorktreeId)) {
+              association = 'worker-workspace';
+              break;
+            }
+          }
+          globalSourceMaps.runAssociationCache.set(cacheKey, {
+            associated: Boolean(association),
+            association: association || undefined,
+          });
+        } catch {
+          partial = true;
+        }
+      } else {
+        partial = true;
+      }
+    }
+
+    if (association) {
+      const runApiId = hashId('run', r.id);
+      const runObj: Run = {
+        id: runApiId,
+        sourceRunId: r.id,
+        objective: r.objective || r.id,
+        coordinatorNodeId,
+        association,
+      };
+      associatedRuns.push(runObj);
+
+      if (coordinatorNodeId) {
+        const coordNode = nodeMap.get(coordinatorNodeId);
+        if (coordNode) {
+          coordNode.kind = 'orchestrator';
+          try {
+            const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
+            const lastStatusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
+            if (fs.existsSync(lastStatusPath)) {
+              const raw = JSON.parse(fs.readFileSync(lastStatusPath, 'utf-8'));
+              const coordHandle = r.coordinator_handle;
+              const coordPane = globalSourceMaps.nodeSourceMap.get(coordNode.id)?.paneKey;
+              const entries = raw.entries || {};
+              let transcriptPath: string | null = null;
+              for (const k of Object.keys(entries)) {
+                const ent = entries[k];
+                if ((coordPane && k === coordPane) || ent.handle === coordHandle || ent.paneKey === coordHandle || k === coordHandle) {
+                  const cModel = ent.payload?.model || ent.turn_context?.model || ent.payload?.turn_context?.model || null;
+                  const cEffort = ent.payload?.effort || ent.turn_context?.effort || ent.payload?.turn_context?.effort || null;
+                  if (cModel) coordNode.model = String(cModel);
+                  if (cEffort) coordNode.effort = String(cEffort);
+                  if (typeof ent.providerSession?.transcriptPath === 'string') {
+                    transcriptPath = ent.providerSession.transcriptPath;
+                  }
+                  break;
+                }
+              }
+              if ((!coordNode.model || !coordNode.effort) && transcriptPath && fs.existsSync(transcriptPath)) {
+                const allowedRoots = getAllowedTranscriptRoots();
+                if (isPathInsideRoots(transcriptPath, allowedRoots)) {
+                  const fd = fs.openSync(transcriptPath, 'r');
+                  try {
+                    const stat = fs.fstatSync(fd);
+                    const readBytes = Math.min(stat.size, 512 * 1024);
+                    if (readBytes > 0) {
+                      const buf = Buffer.alloc(readBytes);
+                      const n = fs.readSync(fd, buf, 0, readBytes, 0);
+                      const text = buf.subarray(0, n).toString('utf-8');
+                      const lines = text.split('\n');
+                      for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed) continue;
+                        try {
+                          const obj = JSON.parse(trimmed);
+                          if (obj.type === 'turn_context' && obj.payload) {
+                            if (!coordNode.model && obj.payload.model) coordNode.model = String(obj.payload.model);
+                            if (!coordNode.effort && obj.payload.effort) coordNode.effort = String(obj.payload.effort);
+                            if (coordNode.model && coordNode.effort) break;
+                          }
+                        } catch {}
+                      }
+                    }
+                  } finally {
+                    fs.closeSync(fd);
+                  }
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+  }
+
+  return { associatedRuns, partial };
+}
+
+// Helper to select active run by ID or fallback to newest
+function resolveActiveRun(
+  selectedRunId: Id | null | undefined,
+  associatedRuns: Run[],
+  projectId: Id
+): Run | null {
+  if (selectedRunId) {
+    const activeRun = associatedRuns.find((r) => r.id === selectedRunId) || null;
+    if (!activeRun) {
+      throw new CliError('RUN_NOT_FOUND', `Run ${selectedRunId} not found in project ${projectId}`);
+    }
+    return activeRun;
+  }
+  return associatedRuns.length > 0 ? associatedRuns[0] : null;
+}
+
+// Helper to bind active run workers, disambiguate dispatches, and enrich worker model/effort
+async function bindActiveRunWorkers(
+  projectId: Id,
+  activeRun: Run | null,
+  nodeMap: Map<Id, Node>,
+  terminalHandleToNodeId: Map<string, Id>,
+  edges: Edge[],
+  runner: CommandRunner
+): Promise<{ partial: boolean }> {
+  let partial = false;
+  if (!activeRun) {
+    for (const key of Array.from(globalSourceMaps.dispatchMap.keys())) {
+      if (key.startsWith(`${projectId}::`)) {
+        globalSourceMaps.dispatchMap.delete(key);
+      }
+    }
+    return { partial };
+  }
+
+  const coordinator = activeRun.coordinatorNodeId && nodeMap.get(activeRun.coordinatorNodeId);
+  if (coordinator) coordinator.runId = activeRun.id;
+
+  for (const key of Array.from(globalSourceMaps.dispatchMap.keys())) {
+    if (key.startsWith(`${projectId}::${activeRun.id}::`)) {
+      globalSourceMaps.dispatchMap.delete(key);
+    }
+  }
+
+  try {
+    const activeWorkers: any[] = [];
+    let workerCursor: string | null = null;
+    for (let page = 0; page < 10; page++) {
+      const listArgs = ['orchestration', 'worker-list', '--run', activeRun.sourceRunId, '--limit', '100'];
+      if (workerCursor) {
+        listArgs.push('--cursor', workerCursor);
+      }
+      listArgs.push('--json');
+      const workersRes = await runOrca<any>(listArgs, runner);
+      const pageWorkers: any[] = workersRes.result?.workers ?? [];
+      activeWorkers.push(...pageWorkers);
+      const nextCursor = workersRes.result?.page?.nextCursor ?? workersRes.result?.nextCursor;
+      if (!nextCursor || pageWorkers.length === 0) {
+        break;
+      }
+      workerCursor = nextCursor;
+    }
+
+    const handleToWorkers = new Map<string, any[]>();
+    for (const w of activeWorkers) {
+      const handle = w.agentTerminalHandle || w.resource?.terminalHandle;
+      if (handle) {
+        if (!handleToWorkers.has(handle)) handleToWorkers.set(handle, []);
+        handleToWorkers.get(handle)!.push(w);
+      }
+    }
+
+    const handleToSelectedWorker = new Map<string, any>();
+
+    for (const [handle, workersList] of handleToWorkers.entries()) {
+      const targetNodeId = terminalHandleToNodeId.get(handle);
+      if (targetNodeId) {
+        const dispatchKey = `${projectId}::${activeRun.id}::${targetNodeId}`;
+        const targetSource = globalSourceMaps.nodeSourceMap.get(targetNodeId);
+
+        let selectedWorker: any = null;
+
+        if (workersList.length === 1) {
+          selectedWorker = workersList[0];
+        } else {
+          const materialized = workersList.filter(
+            (w) => w.resource && w.resource.state !== 'absent' && w.projection?.stage?.detail !== 'agent_readiness'
+          );
+
+          let candidates = materialized.length > 0 ? materialized : workersList;
+
+          if (targetSource?.endpointIncarnation) {
+            const incMatch = candidates.filter(
+              (w) => w.resource?.endpointIncarnation === targetSource.endpointIncarnation
+            );
+            if (incMatch.length > 0) {
+              candidates = incMatch;
+            }
+          }
+
+          const ownerMatch = candidates.filter((w) => {
+            const dispId = w.dispatchId || (typeof w.id === 'string' && w.id.startsWith('ctx_') ? w.id : null);
+            return dispId && (w.resource?.ownerDispatchId === dispId || w.resource?.originDispatchId === dispId);
+          });
+
+          if (ownerMatch.length === 1) {
+            selectedWorker = ownerMatch[0];
+          } else if (candidates.length === 1) {
+            selectedWorker = candidates[0];
+          } else {
+            const targetNode = nodeMap.get(targetNodeId);
+            if (targetNode && targetNode.taskIds.length > 0) {
+              const taskMatch = candidates.filter((w) => targetNode.taskIds.includes(w.taskId));
+              if (taskMatch.length === 1) {
+                selectedWorker = taskMatch[0];
+              }
+            }
+
+            if (!selectedWorker) {
+              let db: DatabaseSync | null = null;
+              try {
+                const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
+                const orchDb = path.join(appData, 'orca', 'orchestration.db');
+                if (fs.existsSync(orchDb)) {
+                  db = new DatabaseSync(orchDb, { readOnly: true });
+                  const resRow = db
+                    .prepare('SELECT owner_dispatch_id, origin_dispatch_id FROM worker_terminal_resources WHERE terminal_handle = ?')
+                    .get(handle) as any;
+                  if (resRow?.owner_dispatch_id) {
+                    const dbMatch = candidates.find((w) => {
+                      const dispId = w.dispatchId || (typeof w.id === 'string' && w.id.startsWith('ctx_') ? w.id : null);
+                      return dispId === resRow.owner_dispatch_id;
+                    });
+                    if (dbMatch) selectedWorker = dbMatch;
+                  }
+                }
+              } catch {} finally {
+                try {
+                  db?.close();
+                } catch {}
+              }
+            }
+          }
+        }
+
+        if (!selectedWorker && workersList.length > 1) {
+          globalSourceMaps.dispatchMap.set(dispatchKey, { dispatchId: '', ambiguous: true });
+        } else if (selectedWorker) {
+          handleToSelectedWorker.set(handle, selectedWorker);
+          const dispId =
+            selectedWorker.dispatchId ||
+            (typeof selectedWorker.id === 'string' && selectedWorker.id.startsWith('ctx_') ? selectedWorker.id : null);
+          let toolInfo: { name: string; input: string | null } | null = null;
+          if (selectedWorker.projection?.tool?.name) {
+            toolInfo = {
+              name: String(selectedWorker.projection.tool.name),
+              input: selectedWorker.projection.tool.input ? String(selectedWorker.projection.tool.input) : null,
+            };
+          }
+          if (dispId) {
+            globalSourceMaps.dispatchMap.set(dispatchKey, {
+              dispatchId: dispId,
+              ambiguous: false,
+              tool: toolInfo,
+            });
+          }
+        }
+      }
+    }
+
+    for (const [handle, w] of handleToSelectedWorker.entries()) {
+      const targetNodeId = terminalHandleToNodeId.get(handle);
+      if (targetNodeId) {
+        const targetNode = nodeMap.get(targetNodeId);
+        if (targetNode) {
+          targetNode.runId = activeRun.id;
+          const stageState = mapToState(w.projection?.stage?.activity);
+          const workerMappedState = mapToState(w.workerState);
+          if (stageState !== 'unknown') {
+            targetNode.rawState = w.projection.stage.activity;
+            targetNode.state = stageState;
+          } else if (workerMappedState !== 'unknown') {
+            targetNode.rawState = w.workerState;
+            targetNode.state = workerMappedState;
+          } else if (w.projection?.stage?.activity) {
+            targetNode.rawState = w.projection.stage.activity;
+            targetNode.state = stageState;
+          } else if (w.workerState) {
+            targetNode.rawState = w.workerState;
+            targetNode.state = workerMappedState;
+          }
+
+          if (w.projection?.outcome) {
+            targetNode.taskOutcome = w.projection.outcome;
+          } else if (w.outcome) {
+            targetNode.taskOutcome = w.outcome;
+          }
+
+          if (w.projection?.liveness?.verdict) {
+            const normLiveness = normalizeLiveness(w.projection.liveness.verdict);
+            if (normLiveness === 'unverifiable' && targetNode.liveness === 'live' && (w.projection.liveness?.reason === 'missing_status' || targetNode.preview?.includes('5h limit') || targetNode.preview?.includes('heads up'))) {
+              // Retain live status proven by connected terminal or limit warning
+            } else {
+              targetNode.liveness = normLiveness;
+            }
+          }
+          if (targetNode.preview && (targetNode.preview.includes('5h limit') || targetNode.preview.includes('heads up'))) {
+            if (targetNode.liveness === 'unverifiable' || targetNode.liveness === 'unknown') {
+              targetNode.liveness = 'live';
+            }
+            if (targetNode.state === 'unknown') {
+              targetNode.state = 'working';
+            }
+          }
+
+          if (w.projection?.liveness?.observedAt) {
+            targetNode.observedAt = toIsoOrNull(w.projection.liveness.observedAt) || targetNode.observedAt;
+          }
+
+          let workerModel =
+            w.startOptions?.launch?.effective?.model ||
+            w.projection?.provider?.model ||
+            w.projection?.session?.model ||
+            w.startOptions?.launch?.model ||
+            w.model ||
+            null;
+          let workerEffort =
+            w.startOptions?.launch?.effective?.effort ||
+            w.projection?.provider?.effort ||
+            w.projection?.session?.effort ||
+            w.startOptions?.launch?.effort ||
+            w.effort ||
+            null;
+
+          const dispId =
+            w.dispatchId ||
+            (typeof w.id === 'string' && w.id.startsWith('ctx_') ? w.id : null);
+          const targetSource = globalSourceMaps.nodeSourceMap.get(targetNodeId);
+          let endpointIncarnation = w.resource?.endpointIncarnation || targetSource?.endpointIncarnation || null;
+          let originDispatchId = w.resource?.originDispatchId || null;
+
+          if (!endpointIncarnation || !originDispatchId) {
+            let db: DatabaseSync | null = null;
+            try {
+              const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
+              const orchDb = path.join(appData, 'orca', 'orchestration.db');
+              if (fs.existsSync(orchDb)) {
+                db = new DatabaseSync(orchDb, { readOnly: true });
+                const resRow = db
+                  .prepare('SELECT endpoint_incarnation, origin_dispatch_id FROM worker_terminal_resources WHERE terminal_handle = ?')
+                  .get(handle) as any;
+                if (resRow) {
+                  if (!endpointIncarnation && resRow.endpoint_incarnation) {
+                    endpointIncarnation = resRow.endpoint_incarnation;
+                  }
+                  if (!originDispatchId && resRow.origin_dispatch_id) {
+                    originDispatchId = resRow.origin_dispatch_id;
+                  }
+                }
+              }
+            } catch {} finally {
+              try {
+                db?.close();
+              } catch {}
+            }
+          }
+
+          const cacheKey = dispId ? `${dispId}::${endpointIncarnation || ''}` : null;
+          if (cacheKey && (!workerModel || !workerEffort)) {
+            if (workerLaunchCache.has(cacheKey)) {
+              const cached = workerLaunchCache.get(cacheKey)!;
+              if (!workerModel && cached.model) workerModel = cached.model;
+              if (!workerEffort && cached.effort) workerEffort = cached.effort;
+            } else if (dispId) {
+              let effModel: string | null = null;
+              let effEffort: string | null = null;
+              try {
+                const showRes = await runOrca<any>(['orchestration', 'worker-show', '--dispatch', dispId, '--json'], runner);
+                const launch = showRes.result?.worker?.startOptions?.launch;
+                effModel = launch?.effective?.model || null;
+                effEffort = launch?.effective?.effort || null;
+                if (!originDispatchId && showRes.result?.terminalResource?.originDispatchId) {
+                  originDispatchId = showRes.result.terminalResource.originDispatchId;
+                }
+              } catch (showErr) {
+                if (process.env.NODE_ENV !== 'test') {
+                  const msg = showErr instanceof Error ? showErr.message : String(showErr);
+                  console.debug(`[collectGraph] worker-show failed for dispatch ${dispId}: ${msg}`);
+                }
+              }
+
+              if ((!effModel || !effEffort) && originDispatchId && originDispatchId !== dispId) {
+                const originCacheKey = `${originDispatchId}::${endpointIncarnation || ''}`;
+                if (workerLaunchCache.has(originCacheKey)) {
+                  const originCached = workerLaunchCache.get(originCacheKey)!;
+                  if (!effModel && originCached.model) effModel = originCached.model;
+                  if (!effEffort && originCached.effort) effEffort = originCached.effort;
+                } else {
+                  try {
+                    const originRes = await runOrca<any>(['orchestration', 'worker-show', '--dispatch', originDispatchId, '--json'], runner);
+                    const originWorker = originRes.result?.worker;
+                    const originInc =
+                      originWorker?.resource?.endpointIncarnation ||
+                      originWorker?.endpointIncarnation ||
+                      originRes.result?.terminalResource?.endpointIncarnation ||
+                      originRes.result?.dispatch?.processIncarnation ||
+                      (originRes.result?.terminal?.ptyId && originRes.result?.terminal?.incarnationId
+                        ? `${originRes.result.terminal.ptyId}:${originRes.result.terminal.incarnationId}`
+                        : null) ||
+                      null;
+                    const originHandle =
+                      originWorker?.agentTerminalHandle ||
+                      originWorker?.terminalHandle ||
+                      originRes.result?.terminal?.handle ||
+                      originRes.result?.dispatch?.assigneeHandle ||
+                      null;
+                    const sameIncarnation = Boolean(endpointIncarnation && originInc && originInc === endpointIncarnation);
+                    const sameHandle = Boolean(handle && originHandle && originHandle === handle);
+                    if (sameIncarnation && sameHandle) {
+                      const originLaunch = originWorker?.startOptions?.launch;
+                      const originModel = originLaunch?.effective?.model || null;
+                      const originEffort = originLaunch?.effective?.effort || null;
+                      workerLaunchCache.set(originCacheKey, { model: originModel, effort: originEffort });
+                      if (!effModel && originModel) effModel = originModel;
+                      if (!effEffort && originEffort) effEffort = originEffort;
+                    } else {
+                      workerLaunchCache.set(originCacheKey, { model: null, effort: null });
+                    }
+                  } catch (originErr) {
+                    if (process.env.NODE_ENV !== 'test') {
+                      const msg = originErr instanceof Error ? originErr.message : String(originErr);
+                      console.debug(`[collectGraph] worker-show failed for originDispatch ${originDispatchId}: ${msg}`);
+                    }
+                    workerLaunchCache.set(originCacheKey, { model: null, effort: null });
+                  }
+                }
+              }
+
+              if (!effModel || !effEffort) {
+                try {
+                  const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
+                  const lastStatusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
+                  if (fs.existsSync(lastStatusPath)) {
+                    const raw = JSON.parse(fs.readFileSync(lastStatusPath, 'utf-8'));
+                    const entries = raw.entries || {};
+                    for (const k of Object.keys(entries)) {
+                      const ent = entries[k];
+                      if (
+                        ent.handle === handle ||
+                        ent.terminalHandle === handle ||
+                        ent.paneKey === handle ||
+                        (targetSource?.paneKey && ent.paneKey === targetSource.paneKey) ||
+                        k === handle
+                      ) {
+                        const m = ent.payload?.model || ent.turn_context?.model || ent.payload?.turn_context?.model || null;
+                        const ef = ent.payload?.effort || ent.turn_context?.effort || ent.payload?.turn_context?.effort || null;
+                        if (!effModel && m) effModel = String(m);
+                        if (!effEffort && ef) effEffort = String(ef);
+                        break;
+                      }
+                    }
+                  }
+                } catch {}
+              }
+
+              workerLaunchCache.set(cacheKey, { model: effModel, effort: effEffort });
+              if (!workerModel && effModel) workerModel = effModel;
+              if (!workerEffort && effEffort) workerEffort = effEffort;
+            }
+          }
+
+          targetNode.model = workerModel ? String(workerModel) : null;
+          targetNode.effort = workerEffort ? String(workerEffort) : null;
+
+          if (activeRun.coordinatorNodeId && activeRun.coordinatorNodeId !== targetNodeId) {
+            const edgeId = hashId('edge', `${activeRun.coordinatorNodeId}->${targetNodeId}:run-dispatch`);
+            if (!edges.some((e) => e.id === edgeId)) {
+              edges.push({
+                id: edgeId,
+                source: activeRun.coordinatorNodeId,
+                target: targetNodeId,
+                kind: 'delegates',
+                evidence: 'run-dispatch',
+                active: targetNode.state === 'working',
+              });
+            }
+          }
+        }
+      }
+    }
+  } catch {
+    partial = true;
+  }
+
+  return { partial };
+}
+
+// Helper to collect tasks and task status activities for active run
+async function collectActiveRunTasks(
+  activeRun: Run | null,
+  terminalHandleToNodeId: Map<string, Id>,
+  nodeMap: Map<Id, Node>,
+  attemptedAt: string,
+  runner: CommandRunner
+): Promise<{ tasks: Task[]; taskCoverage: Progress['coverage']; taskActivities: Activity[]; partial: boolean }> {
+  const tasks: Task[] = [];
+  let taskCoverage: Progress['coverage'] = 'unavailable';
+  const taskActivities: Activity[] = [];
+  let partial = false;
+
+  if (!activeRun) {
+    return { tasks, taskCoverage, taskActivities, partial };
+  }
+
+  try {
+    const taskRes = await runOrca<any>(['orchestration', 'task-list', '--run', activeRun.sourceRunId, '--json'], runner);
+    if (!Array.isArray(taskRes.result?.tasks)) throw new Error('Invalid task inventory');
+    const rawTasks: any[] = taskRes.result.tasks;
+    taskCoverage = taskRes.result.truncated || taskRes.result.partial ? 'partial' : 'complete';
+    if (taskCoverage === 'partial') partial = true;
+
+    for (const t of rawTasks) {
+      const taskId = hashId('task', `${activeRun.id}:${t.id}`);
+      const assigneeNodeId = t.assignee_handle ? terminalHandleToNodeId.get(t.assignee_handle) || null : null;
+      const tState = mapToState(t.status);
+
+      let depIds: Id[] = [];
+      if (typeof t.deps === 'string') {
+        try {
+          const parsed = JSON.parse(t.deps);
+          if (Array.isArray(parsed)) {
+            depIds = parsed.map((d: any) => hashId('task', `${activeRun!.id}:${d}`));
+          }
+        } catch {}
+      } else if (Array.isArray(t.deps)) {
+        depIds = t.deps.map((d: any) => hashId('task', `${activeRun!.id}:${d}`));
+      }
+
+      const taskObj: Task = {
+        id: taskId,
+        runId: activeRun.id,
+        title: t.task_title || t.id,
+        spec: t.spec || null,
+        specTruncated: Boolean(t.spec_truncated),
+        rawStatus: String(t.status || 'unknown'),
+        state: tState,
+        assigneeNodeId,
+        result: t.result || null,
+        dependencyIds: depIds,
+        createdAt: toIsoOrNull(t.created_at),
+        completedAt: toIsoOrNull(t.completed_at),
+      };
+      tasks.push(taskObj);
+
+      if (assigneeNodeId) {
+        const assigneeNode = nodeMap.get(assigneeNodeId);
+        if (assigneeNode) {
+          assigneeNode.taskIds.push(taskId);
+          assigneeNode.runId = activeRun.id;
+          if (t.result && !assigneeNode.taskOutcome) assigneeNode.taskOutcome = t.result;
+        }
+      }
+
+      if (t.status) {
+        taskActivities.push({
+          id: hashId('act', `${taskId}:${t.status}:${t.created_at || attemptedAt}`),
+          nodeId: assigneeNodeId,
+          taskId,
+          at: toIsoOrNull(t.completed_at || t.created_at) || attemptedAt,
+          timestampKind: (t.completed_at || t.created_at) ? 'source' : 'observed',
+          kind: 'task-status',
+          text: `Task '${t.task_title || t.id}' status: ${t.status}`,
+        });
+      }
+    }
+  } catch {
+    taskCoverage = tasks.length ? 'partial' : 'unavailable';
+    partial = true;
+  }
+
+  return { tasks, taskCoverage, taskActivities, partial };
+}
+
+// Helper to enrich agent models and effort from hooks and transcripts
+async function enrichAgentModelsAndEffort(nodes: Node[]): Promise<void> {
+  // Pane hooks cover agents launched outside orchestration as well as workers.
+  try {
+    const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
+    const statusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
+    const entries = JSON.parse(fs.readFileSync(statusPath, 'utf-8')).entries ?? {};
+    for (const node of nodes) {
+      if (node.kind !== 'agent' && node.kind !== 'orchestrator') continue;
+      const paneKey = globalSourceMaps.nodeSourceMap.get(node.id)?.paneKey;
+      const entry = paneKey ? entries[paneKey] : null;
+      if (!entry || (entry.worktreeId && entry.worktreeId !== node.worktreeId) ||
+        (entry.source && node.agentType && entry.source !== node.agentType)) continue;
+      const model = entry.payload?.model;
+      const effort = entry.payload?.effort;
+      if (typeof model === 'string' && model.trim()) node.model = model;
+      if (typeof effort === 'string' && effort.trim()) node.effort = effort;
+
+      if (node.agentType === 'antigravity' && entry.providerSession?.key === 'conversation_id' &&
+        typeof entry.providerSession.id === 'string') {
+        const observed = readAntigravityModel(entry.providerSession.id,
+          (file) => isPathInsideRoots(file, getAllowedTranscriptRoots()));
+        if (observed) {
+          node.model = observed.model;
+          node.effort = observed.effort;
+        }
+      }
+
+      // Codex records effective settings per turn. Inspect the recent bounded
+      // window so model/effort changes are reflected rather than the first turn.
+      const transcriptPath = entry.providerSession?.transcriptPath;
+      if (entry.providerSession?.id && ['opencode', 'kilo', 'kilocode'].includes(node.agentType || '')) {
+        try {
+          const file = openCodeDatabase(node.agentType!, entry.providerSession.id,
+            (file) => isPathInsideRoots(file, getAllowedTranscriptRoots()));
+          const observed = file ? readOpenCodeModel(file, entry.providerSession.id) : null;
+          if (observed) { node.model = observed.model; node.effort = observed.effort; }
+        } catch {}
+      }
+      if (entry.providerSession?.id && ['claude', 'pi', 'omp'].includes(node.agentType || '') &&
+        typeof transcriptPath === 'string' && isPathInsideRoots(transcriptPath, getAllowedTranscriptRoots())) {
+        try {
+          const recent = await readBoundedTranscriptLines(transcriptPath, null, 200, 512 * 1024);
+          for (const line of recent.lines) {
+            const record = JSON.parse(line);
+            if (record.sessionId && record.sessionId !== entry.providerSession.id) continue;
+            const observed = transcriptSettings(record);
+            if (observed.model) node.model = observed.model;
+            if (observed.effort) node.effort = observed.effort;
+          }
+        } catch {}
+      }
+      if (node.agentType !== 'codex' || !entry.providerSession?.id ||
+        typeof transcriptPath !== 'string' || !isPathInsideRoots(transcriptPath, getAllowedTranscriptRoots())) continue;
+      try {
+        for (const window of [512 * 1024, 16 * 1024 * 1024]) {
+          const recent = await readBoundedTranscriptLines(transcriptPath, null, 1, window, false, (line) => {
+            try { return JSON.parse(line).type === 'turn_context'; } catch { return false; }
+          });
+          if (!recent.lines.length) continue;
+          const context = JSON.parse(recent.lines[0]).payload;
+          if (typeof context?.model === 'string' && context.model.trim()) node.model = context.model;
+          if (typeof context?.effort === 'string' && context.effort.trim()) node.effort = context.effort;
+          break;
+        }
+      } catch {}
+    }
+  } catch {}
+
+  // For any agent nodes that didn't get model/effort from live hooks (e.g. standalone or resumed sessions)
+  for (const node of nodes) {
+    if (node.kind !== 'agent' && node.kind !== 'orchestrator') continue;
+    if (node.model) continue;
+
+    if (['opencode', 'kilo', 'kilocode'].includes(node.agentType || '')) {
+      try {
+        const nodeSource = globalSourceMaps.nodeSourceMap.get(node.id);
+        const rawPtyId = nodeSource?.ptyId || (nodeSource?.endpointIncarnation ? nodeSource.endpointIncarnation.slice(0, nodeSource.endpointIncarnation.lastIndexOf(':')) : null);
+        const worktreePath = node.worktreeId ? (node.worktreeId.includes('::') ? node.worktreeId.split('::')[1] : node.worktreeId) : null;
+        const found = findOpenCodeSession(
+          node.agentType!,
+          node.label,
+          (file) => isPathInsideRoots(file, getAllowedTranscriptRoots()),
+          { worktreePath, ptyId: rawPtyId }
+        );
+        if (found) {
+          const observed = readOpenCodeModel(found.dbPath, found.sessionId);
+          if (observed?.model) node.model = observed.model;
+          if (observed?.effort) node.effort = observed.effort;
+        }
+      } catch {}
+    }
+  }
+}
+
+// Helper to assemble progress and bounded activity
+function buildGraphActivitiesAndProgress(
+  nodes: Node[],
+  tasks: Task[],
+  taskCoverage: Progress['coverage'],
+  taskActivities: Activity[]
+): { progress: Progress; boundedActivity: Activity[] } {
+  const progress = taskProgress(tasks, taskCoverage);
+  const activities: Activity[] = [...taskActivities];
+
+  for (const n of nodes) {
+    if (n.lastActivityAt) {
+      activities.push({
+        id: hashId('act', `${n.id}:${n.state}:${n.lastActivityAt}`),
+        nodeId: n.id,
+        taskId: null,
+        at: n.lastActivityAt,
+        timestampKind: 'source',
+        kind: n.kind === 'agent' ? 'agent-status' : 'output-observed',
+        text: `${n.label} state: ${n.state}`,
+      });
+    }
+  }
+
+  activities.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+  const boundedActivity = activities.slice(0, 100);
+  return { progress, boundedActivity };
+}
+
+// Helper to build empty graph failure payload
+function buildEmptyGraphFailure(
+  runtimeId: string | null,
+  attemptedAt: string,
+  err: any
+): { graph: Graph; meta: SourceMeta; runtimeId: string | null; appVersion: string | null } {
+  return {
+    graph: {
+      runs: [],
+      selectedRunId: null,
+      nodes: [],
+      edges: [],
+      tasks: [],
+      progress: {
+        total: 0,
+        completed: 0,
+        failed: 0,
+        working: 0,
+        waiting: 0,
+        blocked: 0,
+        unknown: 0,
+        percent: null,
+        coverage: 'unavailable',
+        basis: 'completed-tasks',
+      },
+      activity: [],
+    },
+    meta: {
+      availability: 'unavailable',
+      observedAt: null,
+      attemptedAt,
+      stale: false,
+      partial: true,
+      issue: {
+        code: err.issue?.code || 'RUNTIME_UNAVAILABLE',
+        message: err.message || 'Failed to collect graph data',
+        retryable: true,
+      },
+    },
+    runtimeId,
+    appVersion: globalSourceMaps.observedAppVersion,
+  };
+}
+
 // 2. Collect Graph for a project
 export async function collectGraph(
   projectId: Id,
@@ -662,934 +1882,48 @@ export async function collectGraph(
   }
 
   try {
-    // A. Query worktree ps
-    const psRes = await runOrca<any>(['worktree', 'ps', '--limit', '200', '--json'], runner);
-    runtimeId = psRes._meta?.runtimeId ?? null;
-    const allWorktrees: any[] = psRes.result?.worktrees ?? [];
-    if (psRes.result?.truncated) partial = true;
-
-    // Filter worktrees for this project
-    const projectWorktrees = allWorktrees.filter((w) => {
-      if (w.repoId && projectEntry.repoIds.includes(w.repoId)) return true;
-      if (w.path && projectEntry.paths.some((p) => p.toLowerCase() === w.path.toLowerCase())) return true;
-      return false;
-    });
-
-    const nodes: Node[] = [];
-    const edges: Edge[] = [];
-    const nodeMap = new Map<Id, Node>();
-    const paneKeyToNodeId = new Map<string, Id>();
-    const terminalHandleToNodeId = new Map<string, Id>();
-    const worktreeIdToNodeId = new Map<string, Id>();
-
-    // Bound concurrent CLI processes while avoiding one terminal-list delay per worktree.
-    const terminalsByWorktree = new Map<string, any[]>();
-    for (let start = 0; start < projectWorktrees.length; start += 4) {
-      await Promise.all(projectWorktrees.slice(start, start + 4).map(async (wt) => {
-        try {
-          const termRes = await runOrca<any>(['terminal', 'list', '--worktree', `id:${wt.worktreeId}`, '--limit', '100', '--json'], runner);
-          terminalsByWorktree.set(wt.worktreeId, termRes.result?.terminals ?? []);
-        } catch {
-          partial = true;
-        }
-      }));
-    }
-
-    // B. Build worktree nodes and fetch terminals for each worktree
-    for (const wt of projectWorktrees) {
-      const wtNodeId = hashId('node', wt.worktreeId || wt.path || wt.displayName);
-      worktreeIdToNodeId.set(wt.worktreeId, wtNodeId);
-
-      const isFolder = wt.workspaceKind === 'folder' || wt.isFolder;
-      const wtNode: Node = {
-        id: wtNodeId,
-        kind: 'worktree',
-        label: isFolder ? `Folder: ${wt.displayName || wt.repo || 'workspace'}` : (wt.displayName || wt.branch || wt.repo || 'Worktree'),
-        worktreeId: wt.worktreeId || null,
-        runId: null,
-        agentType: null,
-        branch: isFolder ? null : (wt.branch || null),
-        path: wt.path || null,
-        state: mapToState(wt.status || wt.workspaceStatus),
-        rawState: wt.status || wt.workspaceStatus || null,
-        workspaceStatus: wt.workspaceStatus || null,
-        taskOutcome: null,
-        liveness: normalizeLiveness(wt.terminalVerdict),
-        model: null,
-        effort: null,
-        observedAt: toIsoOrNull(wt.lastActivityAt || wt.lastOutputAt),
-        lastActivityAt: toIsoOrNull(wt.lastActivityAt || wt.lastOutputAt),
-        stale: false,
-        taskIds: [],
-        preview: wt.preview ? stripAnsi(wt.preview.slice(0, 300)) : null,
-        outputAvailable: Boolean(wt.preview || wt.liveTerminalCount > 0),
-      };
-      nodes.push(wtNode);
-      nodeMap.set(wtNodeId, wtNode);
-      globalSourceMaps.nodeSourceMap.set(wtNodeId, { worktreeId: wt.worktreeId });
-
-      // Fetch terminals in this worktree
-      const terminals = terminalsByWorktree.get(wt.worktreeId) ?? [];
-
-      // Index terminals by tabId:leafId and by handle
-      const terminalByPane = new Map<string, any>();
-      for (const t of terminals) {
-        if (t.tabId && t.leafId) {
-          terminalByPane.set(`${t.tabId}:${t.leafId}`, t);
-        }
-        if (t.paneKey) {
-          terminalByPane.set(t.paneKey, t);
-        }
-      }
-
-      // C. Build agent nodes from wt.agents
-      const agents: any[] = Array.isArray(wt.agents) ? wt.agents : [];
-      const handledTerminalHandles = new Set<string>();
-
-      for (const ag of agents) {
-        const paneKey = ag.paneKey;
-        const matchingTerminal = paneKey ? terminalByPane.get(paneKey) : null;
-        const handle = matchingTerminal?.handle;
-        if (handle) handledTerminalHandles.add(handle);
-
-        const agentNodeId = hashId('node', paneKey || handle || `${wt.worktreeId}:agent:${nodes.length}`);
-        if (paneKey) paneKeyToNodeId.set(paneKey, agentNodeId);
-        if (handle) terminalHandleToNodeId.set(handle, agentNodeId);
-
-        let agState = mapToState(ag.state);
-        let liveness = matchingTerminal?.connected ? 'live' : normalizeLiveness(wt.terminalVerdict);
-        if ((agState === 'unknown' || liveness === 'unverifiable') && matchingTerminal?.preview && (matchingTerminal.preview.includes('5h limit') || matchingTerminal.preview.includes('heads up'))) {
-          agState = 'working';
-          liveness = 'live';
-        }
-
-        const agNode: Node = {
-          id: agentNodeId,
-          kind: 'agent',
-          label: ag.taskTitle || ag.displayName || ag.agentType || 'Agent',
-          worktreeId: wt.worktreeId || null,
-          runId: null, // will be attached when runs are associated
-          agentType: ag.agentType || matchingTerminal?.agentIdentity || null,
-          branch: null,
-          path: wt.path || null,
-          state: agState,
-          rawState: ag.state || null,
-          workspaceStatus: wt.workspaceStatus || null,
-          taskOutcome: null,
-          liveness,
-          model: ag.model || matchingTerminal?.model || null,
-          effort: ag.effort || matchingTerminal?.effort || null,
-          observedAt: toIsoOrNull(ag.updatedAt || ag.stateStartedAt),
-          lastActivityAt: toIsoOrNull(ag.updatedAt || matchingTerminal?.lastOutputAt),
-          stale: false,
-          taskIds: [],
-          preview: matchingTerminal?.preview ? stripAnsi(matchingTerminal.preview.slice(0, 300)) : null,
-          outputAvailable: Boolean(handle),
-        };
-        nodes.push(agNode);
-        nodeMap.set(agentNodeId, agNode);
-        const agEndpointIncarnation = matchingTerminal?.ptyId && matchingTerminal?.incarnationId
-          ? `${matchingTerminal.ptyId}:${matchingTerminal.incarnationId}`
-          : undefined;
-        globalSourceMaps.nodeSourceMap.set(agentNodeId, { handle, worktreeId: wt.worktreeId, paneKey, endpointIncarnation: agEndpointIncarnation });
-
-        // Worktree contains agent edge
-        edges.push({
-          id: hashId('edge', `${wtNodeId}->${agentNodeId}:membership`),
-          source: wtNodeId,
-          target: agentNodeId,
-          kind: 'contains',
-          evidence: 'workspace-membership',
-          active: agNode.state === 'working',
-        });
-      }
-
-      // D. Shell / unattached terminals become terminal nodes
-      for (const term of terminals) {
-        if (handledTerminalHandles.has(term.handle)) continue;
-
-        const termNodeId = hashId('node', term.handle);
-        terminalHandleToNodeId.set(term.handle, termNodeId);
-
-        const termNode: Node = {
-          id: termNodeId,
-          kind: 'terminal',
-          label: term.title ? stripAnsi(term.title) : `Terminal ${term.handle}`,
-          worktreeId: wt.worktreeId || null,
-          runId: null,
-          agentType: term.agentIdentity || null,
-          branch: null,
-          path: wt.path || null,
-          state: term.connected ? 'idle' : 'unknown',
-          rawState: term.connected ? 'connected' : 'disconnected',
-          workspaceStatus: wt.workspaceStatus || null,
-          taskOutcome: null,
-          liveness: term.connected ? 'live' : 'exited',
-          model: term.model || null,
-          effort: term.effort || null,
-          observedAt: toIsoOrNull(term.lastOutputAt),
-          lastActivityAt: toIsoOrNull(term.lastOutputAt),
-          stale: false,
-          taskIds: [],
-          preview: term.preview ? stripAnsi(term.preview.slice(0, 300)) : null,
-          outputAvailable: Boolean(term.handle),
-        };
-        nodes.push(termNode);
-        nodeMap.set(termNodeId, termNode);
-        const termEndpointIncarnation = term.ptyId && term.incarnationId
-          ? `${term.ptyId}:${term.incarnationId}`
-          : undefined;
-        globalSourceMaps.nodeSourceMap.set(termNodeId, { handle: term.handle, worktreeId: wt.worktreeId, endpointIncarnation: termEndpointIncarnation });
-
-        edges.push({
-          id: hashId('edge', `${wtNodeId}->${termNodeId}:membership`),
-          source: wtNodeId,
-          target: termNodeId,
-          kind: 'contains',
-          evidence: 'workspace-membership',
-          active: false,
-        });
-      }
-    }
-
-    // Pass 2: Establish parent-child and parent-pane edges now that all worktrees and panes are indexed
-    for (const wt of projectWorktrees) {
-      // E. Parent-child worktree edges
-      if (wt.parentWorktreeId) {
-        const parentNodeId = worktreeIdToNodeId.get(wt.parentWorktreeId);
-        const wtNodeId = worktreeIdToNodeId.get(wt.worktreeId);
-        if (parentNodeId && wtNodeId && parentNodeId !== wtNodeId) {
-          edges.push({
-            id: hashId('edge', `${parentNodeId}->${wtNodeId}:lineage`),
-            source: parentNodeId,
-            target: wtNodeId,
-            kind: 'lineage',
-            evidence: 'parent-worktree',
-            active: true,
-          });
-        }
-      }
-
-      // F. Agent parent-pane edges
-      const agents: any[] = Array.isArray(wt.agents) ? wt.agents : [];
-      for (const ag of agents) {
-        if (ag.parentPaneKey && ag.paneKey) {
-          const parentNodeId = paneKeyToNodeId.get(ag.parentPaneKey);
-          const childNodeId = paneKeyToNodeId.get(ag.paneKey);
-          if (parentNodeId && childNodeId && parentNodeId !== childNodeId) {
-            const childNode = nodeMap.get(childNodeId);
-            edges.push({
-              id: hashId('edge', `${parentNodeId}->${childNodeId}:parent-pane`),
-              source: parentNodeId,
-              target: childNodeId,
-              kind: 'delegates',
-              evidence: 'parent-pane',
-              active: childNode?.state === 'working',
-            });
-          }
-        }
-      }
-    }
-
-    // G. Discover Runs and associate with this project
-    const associatedRuns: Run[] = [];
-    let candidateRuns: any[] = [];
-    try {
-      const runListRes = await runOrca<any>(['orchestration', 'run-list', '--limit', '50', '--json'], runner);
-      candidateRuns = runListRes.result?.runs ?? [];
-    } catch {
-      partial = true;
-    }
-
-    let inspectedWorkersCount = 0;
-    const MAX_WORKER_INSPECTIONS = 5;
-
-    for (const r of candidateRuns) {
-      if (!r.id) continue;
-      const cacheKey = `${projectId}::${r.id}`;
-      const cachedAssoc = globalSourceMaps.runAssociationCache.get(cacheKey);
-
-      let association: 'coordinator-terminal' | 'worker-workspace' | null = null;
-      let coordinatorNodeId: Id | null = null;
-
-      if (cachedAssoc) {
-        if (cachedAssoc.associated) {
-          association = cachedAssoc.association!;
-          coordinatorNodeId =
-            cachedAssoc.coordinatorNodeId ??
-            (r.coordinator_handle ? terminalHandleToNodeId.get(r.coordinator_handle) || null : null);
-        }
-      } else {
-        // Fast path: Coordinator handle match requires 0 CLI calls
-        if (r.coordinator_handle && terminalHandleToNodeId.has(r.coordinator_handle)) {
-          association = 'coordinator-terminal';
-          coordinatorNodeId = terminalHandleToNodeId.get(r.coordinator_handle)!;
-          globalSourceMaps.runAssociationCache.set(cacheKey, {
-            associated: true,
-            association,
-            coordinatorNodeId,
-          });
-        } else if (inspectedWorkersCount < MAX_WORKER_INSPECTIONS) {
-          inspectedWorkersCount++;
-          try {
-            const wListRes = await runOrca<any>(
-              ['orchestration', 'worker-list', '--run', r.id, '--limit', '100', '--json'],
-              runner
-            );
-            const workers: any[] = wListRes.result?.workers ?? [];
-            for (const w of workers) {
-              const wWorktreeId = w.resource?.worktreeId || w.projection?.workspace?.id;
-              if (wWorktreeId && worktreeIdToNodeId.has(wWorktreeId)) {
-                association = 'worker-workspace';
-                break;
-              }
-            }
-            globalSourceMaps.runAssociationCache.set(cacheKey, {
-              associated: Boolean(association),
-              association: association || undefined,
-            });
-          } catch {
-            partial = true;
-          }
-        } else {
-          // Exceeded inspection budget for this tick
-          partial = true;
-        }
-      }
-
-      if (association) {
-        const runApiId = hashId('run', r.id);
-        const runObj: Run = {
-          id: runApiId,
-          sourceRunId: r.id,
-          objective: r.objective || r.id,
-          coordinatorNodeId,
-          association,
-        };
-        associatedRuns.push(runObj);
-
-        // If coordinator node found, update kind to 'orchestrator'
-        if (coordinatorNodeId) {
-          const coordNode = nodeMap.get(coordinatorNodeId);
-          if (coordNode) {
-            coordNode.kind = 'orchestrator';
-            try {
-              const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
-              const lastStatusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
-              if (fs.existsSync(lastStatusPath)) {
-                const raw = JSON.parse(fs.readFileSync(lastStatusPath, 'utf-8'));
-                const coordHandle = r.coordinator_handle;
-                const coordPane = globalSourceMaps.nodeSourceMap.get(coordNode.id)?.paneKey;
-                const entries = raw.entries || {};
-                let transcriptPath: string | null = null;
-                for (const k of Object.keys(entries)) {
-                  const ent = entries[k];
-                  if ((coordPane && k === coordPane) || ent.handle === coordHandle || ent.paneKey === coordHandle || k === coordHandle) {
-                    const cModel = ent.payload?.model || ent.turn_context?.model || ent.payload?.turn_context?.model || null;
-                    const cEffort = ent.payload?.effort || ent.turn_context?.effort || ent.payload?.turn_context?.effort || null;
-                    if (cModel) coordNode.model = String(cModel);
-                    if (cEffort) coordNode.effort = String(cEffort);
-                    if (typeof ent.providerSession?.transcriptPath === 'string') {
-                      transcriptPath = ent.providerSession.transcriptPath;
-                    }
-                    break;
-                  }
-                }
-                // If model/effort still missing on coordinator, inspect proven JSONL turn_context
-                if ((!coordNode.model || !coordNode.effort) && transcriptPath && fs.existsSync(transcriptPath)) {
-                  const allowedRoots = getAllowedTranscriptRoots();
-                  if (isPathInsideRoots(transcriptPath, allowedRoots)) {
-                    const fd = fs.openSync(transcriptPath, 'r');
-                    try {
-                      const stat = fs.fstatSync(fd);
-                      const readBytes = Math.min(stat.size, 512 * 1024);
-                      if (readBytes > 0) {
-                        const buf = Buffer.alloc(readBytes);
-                        const n = fs.readSync(fd, buf, 0, readBytes, 0);
-                        const text = buf.subarray(0, n).toString('utf-8');
-                        const lines = text.split('\n');
-                        for (const line of lines) {
-                          const trimmed = line.trim();
-                          if (!trimmed) continue;
-                          try {
-                            const obj = JSON.parse(trimmed);
-                            if (obj.type === 'turn_context' && obj.payload) {
-                              if (!coordNode.model && obj.payload.model) coordNode.model = String(obj.payload.model);
-                              if (!coordNode.effort && obj.payload.effort) coordNode.effort = String(obj.payload.effort);
-                              if (coordNode.model && coordNode.effort) break;
-                            }
-                          } catch {}
-                        }
-                      }
-                    } finally {
-                      fs.closeSync(fd);
-                    }
-                  }
-                }
-              }
-            } catch {}
-          }
-        }
-      }
-    }
-
-    // H. Select active run
-    let activeRun: Run | null = null;
-    if (selectedRunId) {
-      activeRun = associatedRuns.find((r) => r.id === selectedRunId) || null;
-      if (!activeRun) {
-        throw new CliError('RUN_NOT_FOUND', `Run ${selectedRunId} not found in project ${projectId}`);
-      }
-    } else if (associatedRuns.length > 0) {
-      // Pick newest
-      activeRun = associatedRuns[0];
-    }
-
-    // Preserve selected-run worker evidence & delegation
-    if (activeRun) {
-      // A terminal can coordinate multiple runs; bind it only after selection.
-      const coordinator = activeRun.coordinatorNodeId && nodeMap.get(activeRun.coordinatorNodeId);
-      if (coordinator) coordinator.runId = activeRun.id;
-
-      // Invalidate existing dispatch bindings for this project and activeRun before discovering
-      for (const key of Array.from(globalSourceMaps.dispatchMap.keys())) {
-        if (key.startsWith(`${projectId}::${activeRun.id}::`)) {
-          globalSourceMaps.dispatchMap.delete(key);
-        }
-      }
-
-      try {
-        const activeWorkers: any[] = [];
-        let workerCursor: string | null = null;
-        for (let page = 0; page < 10; page++) {
-          const listArgs = ['orchestration', 'worker-list', '--run', activeRun.sourceRunId, '--limit', '100'];
-          if (workerCursor) {
-            listArgs.push('--cursor', workerCursor);
-          }
-          listArgs.push('--json');
-          const workersRes = await runOrca<any>(listArgs, runner);
-          const pageWorkers: any[] = workersRes.result?.workers ?? [];
-          activeWorkers.push(...pageWorkers);
-          const nextCursor = workersRes.result?.page?.nextCursor ?? workersRes.result?.nextCursor;
-          if (!nextCursor || pageWorkers.length === 0) {
-            break;
-          }
-          workerCursor = nextCursor;
-        }
-
-        const handleToWorkers = new Map<string, any[]>();
-        for (const w of activeWorkers) {
-          const handle = w.agentTerminalHandle || w.resource?.terminalHandle;
-          if (handle) {
-            if (!handleToWorkers.has(handle)) handleToWorkers.set(handle, []);
-            handleToWorkers.get(handle)!.push(w);
-          }
-        }
-
-        const handleToSelectedWorker = new Map<string, any>();
-
-        for (const [handle, workersList] of handleToWorkers.entries()) {
-          const targetNodeId = terminalHandleToNodeId.get(handle);
-          if (targetNodeId) {
-            const dispatchKey = `${projectId}::${activeRun.id}::${targetNodeId}`;
-            const targetSource = globalSourceMaps.nodeSourceMap.get(targetNodeId);
-
-            let selectedWorker: any = null;
-
-            if (workersList.length === 1) {
-              selectedWorker = workersList[0];
-            } else {
-              // Disambiguate reused worker dispatches using proven facts:
-              // 1. Filter out dispatches that failed readiness or never materialized
-              const materialized = workersList.filter(
-                (w) => w.resource && w.resource.state !== 'absent' && w.projection?.stage?.detail !== 'agent_readiness'
-              );
-
-              let candidates = materialized.length > 0 ? materialized : workersList;
-
-              // 2. If node has an endpointIncarnation, match exactly
-              if (targetSource?.endpointIncarnation) {
-                const incMatch = candidates.filter(
-                  (w) => w.resource?.endpointIncarnation === targetSource.endpointIncarnation
-                );
-                if (incMatch.length > 0) {
-                  candidates = incMatch;
-                }
-              }
-
-              // 3. Match owner dispatch ID (where ownerDispatchId === dispatchId)
-              const ownerMatch = candidates.filter((w) => {
-                const dispId = w.dispatchId || (typeof w.id === 'string' && w.id.startsWith('ctx_') ? w.id : null);
-                return dispId && (w.resource?.ownerDispatchId === dispId || w.resource?.originDispatchId === dispId);
-              });
-
-              if (ownerMatch.length === 1) {
-                selectedWorker = ownerMatch[0];
-              } else if (candidates.length === 1) {
-                selectedWorker = candidates[0];
-              } else {
-                // 4. Try matching task IDs if node has associated tasks
-                const targetNode = nodeMap.get(targetNodeId);
-                if (targetNode && targetNode.taskIds.length > 0) {
-                  const taskMatch = candidates.filter((w) => targetNode.taskIds.includes(w.taskId));
-                  if (taskMatch.length === 1) {
-                    selectedWorker = taskMatch[0];
-                  }
-                }
-
-                // 5. Check orchestration.db worker_terminal_resources as authority
-                if (!selectedWorker) {
-                  let db: DatabaseSync | null = null;
-                  try {
-                    const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
-                    const orchDb = path.join(appData, 'orca', 'orchestration.db');
-                    if (fs.existsSync(orchDb)) {
-                      db = new DatabaseSync(orchDb, { readOnly: true });
-                      const resRow = db
-                        .prepare('SELECT owner_dispatch_id, origin_dispatch_id FROM worker_terminal_resources WHERE terminal_handle = ?')
-                        .get(handle) as any;
-                      if (resRow?.owner_dispatch_id) {
-                        const dbMatch = candidates.find((w) => {
-                          const dispId = w.dispatchId || (typeof w.id === 'string' && w.id.startsWith('ctx_') ? w.id : null);
-                          return dispId === resRow.owner_dispatch_id;
-                        });
-                        if (dbMatch) selectedWorker = dbMatch;
-                      }
-                    }
-                  } catch {} finally {
-                    try {
-                      db?.close();
-                    } catch {}
-                  }
-                }
-              }
-            }
-
-            if (!selectedWorker && workersList.length > 1) {
-              globalSourceMaps.dispatchMap.set(dispatchKey, { dispatchId: '', ambiguous: true });
-            } else if (selectedWorker) {
-              handleToSelectedWorker.set(handle, selectedWorker);
-              const dispId =
-                selectedWorker.dispatchId ||
-                (typeof selectedWorker.id === 'string' && selectedWorker.id.startsWith('ctx_') ? selectedWorker.id : null);
-              let toolInfo: { name: string; input: string | null } | null = null;
-              if (selectedWorker.projection?.tool?.name) {
-                toolInfo = {
-                  name: String(selectedWorker.projection.tool.name),
-                  input: selectedWorker.projection.tool.input ? String(selectedWorker.projection.tool.input) : null,
-                };
-              }
-              if (dispId) {
-                globalSourceMaps.dispatchMap.set(dispatchKey, {
-                  dispatchId: dispId,
-                  ambiguous: false,
-                  tool: toolInfo,
-                });
-              }
-            }
-          }
-        }
-
-        for (const [handle, w] of handleToSelectedWorker.entries()) {
-          const targetNodeId = terminalHandleToNodeId.get(handle);
-          if (targetNodeId) {
-            const targetNode = nodeMap.get(targetNodeId);
-            if (targetNode) {
-              targetNode.runId = activeRun.id;
-              const stageState = mapToState(w.projection?.stage?.activity);
-              const workerMappedState = mapToState(w.workerState);
-              if (stageState !== 'unknown') {
-                targetNode.rawState = w.projection.stage.activity;
-                targetNode.state = stageState;
-              } else if (workerMappedState !== 'unknown') {
-                targetNode.rawState = w.workerState;
-                targetNode.state = workerMappedState;
-              } else if (w.projection?.stage?.activity) {
-                targetNode.rawState = w.projection.stage.activity;
-                targetNode.state = stageState;
-              } else if (w.workerState) {
-                targetNode.rawState = w.workerState;
-                targetNode.state = workerMappedState;
-              }
-
-              if (w.projection?.outcome) {
-                targetNode.taskOutcome = w.projection.outcome;
-              } else if (w.outcome) {
-                targetNode.taskOutcome = w.outcome;
-              }
-
-              if (w.projection?.liveness?.verdict) {
-                const normLiveness = normalizeLiveness(w.projection.liveness.verdict);
-                if (normLiveness === 'unverifiable' && targetNode.liveness === 'live' && (w.projection.liveness?.reason === 'missing_status' || targetNode.preview?.includes('5h limit') || targetNode.preview?.includes('heads up'))) {
-                  // Retain live status proven by connected terminal or limit warning
-                } else {
-                  targetNode.liveness = normLiveness;
-                }
-              }
-              if (targetNode.preview && (targetNode.preview.includes('5h limit') || targetNode.preview.includes('heads up'))) {
-                if (targetNode.liveness === 'unverifiable' || targetNode.liveness === 'unknown') {
-                  targetNode.liveness = 'live';
-                }
-                if (targetNode.state === 'unknown') {
-                  targetNode.state = 'working';
-                }
-              }
-
-              if (w.projection?.liveness?.observedAt) {
-                targetNode.observedAt = toIsoOrNull(w.projection.liveness.observedAt) || targetNode.observedAt;
-              }
-
-              let workerModel =
-                w.startOptions?.launch?.effective?.model ||
-                w.projection?.provider?.model ||
-                w.projection?.session?.model ||
-                w.startOptions?.launch?.model ||
-                w.model ||
-                null;
-              let workerEffort =
-                w.startOptions?.launch?.effective?.effort ||
-                w.projection?.provider?.effort ||
-                w.projection?.session?.effort ||
-                w.startOptions?.launch?.effort ||
-                w.effort ||
-                null;
-
-              const dispId =
-                w.dispatchId ||
-                (typeof w.id === 'string' && w.id.startsWith('ctx_') ? w.id : null);
-              const targetSource = globalSourceMaps.nodeSourceMap.get(targetNodeId);
-              let endpointIncarnation = w.resource?.endpointIncarnation || targetSource?.endpointIncarnation || null;
-              let originDispatchId = w.resource?.originDispatchId || null;
-
-              if (!endpointIncarnation || !originDispatchId) {
-                let db: DatabaseSync | null = null;
-                try {
-                  const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
-                  const orchDb = path.join(appData, 'orca', 'orchestration.db');
-                  if (fs.existsSync(orchDb)) {
-                    db = new DatabaseSync(orchDb, { readOnly: true });
-                    const resRow = db
-                      .prepare('SELECT endpoint_incarnation, origin_dispatch_id FROM worker_terminal_resources WHERE terminal_handle = ?')
-                      .get(handle) as any;
-                    if (resRow) {
-                      if (!endpointIncarnation && resRow.endpoint_incarnation) {
-                        endpointIncarnation = resRow.endpoint_incarnation;
-                      }
-                      if (!originDispatchId && resRow.origin_dispatch_id) {
-                        originDispatchId = resRow.origin_dispatch_id;
-                      }
-                    }
-                  }
-                } catch {} finally {
-                  try {
-                    db?.close();
-                  } catch {}
-                }
-              }
-
-              const cacheKey = dispId ? `${dispId}::${endpointIncarnation || ''}` : null;
-              if (cacheKey && (!workerModel || !workerEffort)) {
-                if (workerLaunchCache.has(cacheKey)) {
-                  const cached = workerLaunchCache.get(cacheKey)!;
-                  if (!workerModel && cached.model) workerModel = cached.model;
-                  if (!workerEffort && cached.effort) workerEffort = cached.effort;
-                } else if (dispId) {
-                  let effModel: string | null = null;
-                  let effEffort: string | null = null;
-                  try {
-                    const showRes = await runOrca<any>(['orchestration', 'worker-show', '--dispatch', dispId, '--json'], runner);
-                    const launch = showRes.result?.worker?.startOptions?.launch;
-                    effModel = launch?.effective?.model || null;
-                    effEffort = launch?.effective?.effort || null;
-                    if (!originDispatchId && showRes.result?.terminalResource?.originDispatchId) {
-                      originDispatchId = showRes.result.terminalResource.originDispatchId;
-                    }
-                  } catch {}
-
-                  if ((!effModel || !effEffort) && originDispatchId && originDispatchId !== dispId) {
-                    const originCacheKey = `${originDispatchId}::${endpointIncarnation || ''}`;
-                    if (workerLaunchCache.has(originCacheKey)) {
-                      const originCached = workerLaunchCache.get(originCacheKey)!;
-                      if (!effModel && originCached.model) effModel = originCached.model;
-                      if (!effEffort && originCached.effort) effEffort = originCached.effort;
-                    } else {
-                      try {
-                        const originRes = await runOrca<any>(['orchestration', 'worker-show', '--dispatch', originDispatchId, '--json'], runner);
-                        const originWorker = originRes.result?.worker;
-                        const originInc =
-                          originWorker?.resource?.endpointIncarnation ||
-                          originWorker?.endpointIncarnation ||
-                          originRes.result?.terminalResource?.endpointIncarnation ||
-                          originRes.result?.dispatch?.processIncarnation ||
-                          (originRes.result?.terminal?.ptyId && originRes.result?.terminal?.incarnationId
-                            ? `${originRes.result.terminal.ptyId}:${originRes.result.terminal.incarnationId}`
-                            : null) ||
-                          null;
-                        const originHandle =
-                          originWorker?.agentTerminalHandle ||
-                          originWorker?.terminalHandle ||
-                          originRes.result?.terminal?.handle ||
-                          originRes.result?.dispatch?.assigneeHandle ||
-                          null;
-                        const sameIncarnation = Boolean(endpointIncarnation && originInc && originInc === endpointIncarnation);
-                        const sameHandle = Boolean(handle && originHandle && originHandle === handle);
-                        if (sameIncarnation && sameHandle) {
-                          const originLaunch = originWorker?.startOptions?.launch;
-                          const originModel = originLaunch?.effective?.model || null;
-                          const originEffort = originLaunch?.effective?.effort || null;
-                          workerLaunchCache.set(originCacheKey, { model: originModel, effort: originEffort });
-                          if (!effModel && originModel) effModel = originModel;
-                          if (!effEffort && originEffort) effEffort = originEffort;
-                        } else {
-                          workerLaunchCache.set(originCacheKey, { model: null, effort: null });
-                        }
-                      } catch {
-                        workerLaunchCache.set(originCacheKey, { model: null, effort: null });
-                      }
-                    }
-                  }
-
-                  if (!effModel || !effEffort) {
-                    try {
-                      const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
-                      const lastStatusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
-                      if (fs.existsSync(lastStatusPath)) {
-                        const raw = JSON.parse(fs.readFileSync(lastStatusPath, 'utf-8'));
-                        const entries = raw.entries || {};
-                        for (const k of Object.keys(entries)) {
-                          const ent = entries[k];
-                          if (
-                            ent.handle === handle ||
-                            ent.terminalHandle === handle ||
-                            ent.paneKey === handle ||
-                            (targetSource?.paneKey && ent.paneKey === targetSource.paneKey) ||
-                            k === handle
-                          ) {
-                            const m = ent.payload?.model || ent.turn_context?.model || ent.payload?.turn_context?.model || null;
-                            const ef = ent.payload?.effort || ent.turn_context?.effort || ent.payload?.turn_context?.effort || null;
-                            if (!effModel && m) effModel = String(m);
-                            if (!effEffort && ef) effEffort = String(ef);
-                            break;
-                          }
-                        }
-                      }
-                    } catch {}
-                  }
-
-                  workerLaunchCache.set(cacheKey, { model: effModel, effort: effEffort });
-                  if (!workerModel && effModel) workerModel = effModel;
-                  if (!workerEffort && effEffort) workerEffort = effEffort;
-                }
-              }
-
-              targetNode.model = workerModel ? String(workerModel) : null;
-              targetNode.effort = workerEffort ? String(workerEffort) : null;
-
-              // Delegation edge from coordinator to worker
-              if (activeRun.coordinatorNodeId && activeRun.coordinatorNodeId !== targetNodeId) {
-                const edgeId = hashId('edge', `${activeRun.coordinatorNodeId}->${targetNodeId}:run-dispatch`);
-                if (!edges.some((e) => e.id === edgeId)) {
-                  edges.push({
-                    id: edgeId,
-                    source: activeRun.coordinatorNodeId,
-                    target: targetNodeId,
-                    kind: 'delegates',
-                    evidence: 'run-dispatch',
-                    active: targetNode.state === 'working',
-                  });
-                }
-              }
-            }
-          }
-        }
-      } catch {
-        partial = true;
-      }
-    } else {
-      for (const key of Array.from(globalSourceMaps.dispatchMap.keys())) {
-        if (key.startsWith(`${projectId}::`)) {
-          globalSourceMaps.dispatchMap.delete(key);
-        }
-      }
-    }
-
-    const tasks: Task[] = [];
-    let taskCoverage: Progress['coverage'] = 'unavailable';
-    const activities: Activity[] = [];
-
-    // I. Collect Tasks for active run
-    if (activeRun) {
-      try {
-        const taskRes = await runOrca<any>(['orchestration', 'task-list', '--run', activeRun.sourceRunId, '--json'], runner);
-        if (!Array.isArray(taskRes.result?.tasks)) throw new Error('Invalid task inventory');
-        const rawTasks: any[] = taskRes.result.tasks;
-        taskCoverage = taskRes.result.truncated || taskRes.result.partial ? 'partial' : 'complete';
-        if (taskCoverage === 'partial') partial = true;
-
-        for (const t of rawTasks) {
-          const taskId = hashId('task', `${activeRun.id}:${t.id}`);
-          const assigneeNodeId = t.assignee_handle ? terminalHandleToNodeId.get(t.assignee_handle) || null : null;
-          const tState = mapToState(t.status);
-
-          let depIds: Id[] = [];
-          if (typeof t.deps === 'string') {
-            try {
-              const parsed = JSON.parse(t.deps);
-              if (Array.isArray(parsed)) {
-                depIds = parsed.map((d: any) => hashId('task', `${activeRun!.id}:${d}`));
-              }
-            } catch {
-              // deps parsing
-            }
-          } else if (Array.isArray(t.deps)) {
-            depIds = t.deps.map((d: any) => hashId('task', `${activeRun!.id}:${d}`));
-          }
-
-          const taskObj: Task = {
-            id: taskId,
-            runId: activeRun.id,
-            title: t.task_title || t.id,
-            spec: t.spec || null,
-            specTruncated: Boolean(t.spec_truncated),
-            rawStatus: String(t.status || 'unknown'),
-            state: tState,
-            assigneeNodeId,
-            result: t.result || null,
-            dependencyIds: depIds,
-            createdAt: toIsoOrNull(t.created_at),
-            completedAt: toIsoOrNull(t.completed_at),
-          };
-          tasks.push(taskObj);
-
-          if (assigneeNodeId) {
-            const assigneeNode = nodeMap.get(assigneeNodeId);
-            if (assigneeNode) {
-              assigneeNode.taskIds.push(taskId);
-              assigneeNode.runId = activeRun.id;
-              if (t.result && !assigneeNode.taskOutcome) assigneeNode.taskOutcome = t.result;
-            }
-          }
-
-          // Build activity entry from task
-          if (t.status) {
-            activities.push({
-              id: hashId('act', `${taskId}:${t.status}:${t.created_at || attemptedAt}`),
-              nodeId: assigneeNodeId,
-              taskId,
-              at: toIsoOrNull(t.completed_at || t.created_at) || attemptedAt,
-              timestampKind: (t.completed_at || t.created_at) ? 'source' : 'observed',
-              kind: 'task-status',
-              text: `Task '${t.task_title || t.id}' status: ${t.status}`,
-            });
-          }
-        }
-      } catch {
-        taskCoverage = tasks.length ? 'partial' : 'unavailable';
-        partial = true;
-      }
-    }
-
-    // Pane hooks cover agents launched outside orchestration as well as workers.
-    try {
-      const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
-      const statusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
-      const entries = JSON.parse(fs.readFileSync(statusPath, 'utf-8')).entries ?? {};
-      for (const node of nodes) {
-        if (node.kind !== 'agent' && node.kind !== 'orchestrator') continue;
-        const paneKey = globalSourceMaps.nodeSourceMap.get(node.id)?.paneKey;
-        const entry = paneKey ? entries[paneKey] : null;
-        if (!entry || (entry.worktreeId && entry.worktreeId !== node.worktreeId) ||
-          (entry.source && node.agentType && entry.source !== node.agentType)) continue;
-        const model = entry.payload?.model;
-        const effort = entry.payload?.effort;
-        if (typeof model === 'string' && model.trim()) node.model = model;
-        if (typeof effort === 'string' && effort.trim()) node.effort = effort;
-
-        if (node.agentType === 'antigravity' && entry.providerSession?.key === 'conversation_id' &&
-          typeof entry.providerSession.id === 'string') {
-          const observed = readAntigravityModel(entry.providerSession.id,
-            (file) => isPathInsideRoots(file, getAllowedTranscriptRoots()));
-          if (observed) {
-            node.model = observed.model;
-            node.effort = observed.effort;
-          }
-        }
-
-        // Codex records effective settings per turn. Inspect the recent bounded
-        // window so model/effort changes are reflected rather than the first turn.
-        const transcriptPath = entry.providerSession?.transcriptPath;
-        if (entry.providerSession?.id && ['opencode', 'kilo', 'kilocode'].includes(node.agentType || '')) {
-          try {
-            const file = openCodeDatabase(node.agentType!, entry.providerSession.id,
-              (file) => isPathInsideRoots(file, getAllowedTranscriptRoots()));
-            const observed = file ? readOpenCodeModel(file, entry.providerSession.id) : null;
-            if (observed) { node.model = observed.model; node.effort = observed.effort; }
-          } catch {}
-        }
-        if (entry.providerSession?.id && ['claude', 'pi', 'omp'].includes(node.agentType || '') &&
-          typeof transcriptPath === 'string' && isPathInsideRoots(transcriptPath, getAllowedTranscriptRoots())) {
-          try {
-            const recent = await readBoundedTranscriptLines(transcriptPath, null, 200, 512 * 1024);
-            for (const line of recent.lines) {
-              const record = JSON.parse(line);
-              if (record.sessionId && record.sessionId !== entry.providerSession.id) continue;
-              const observed = transcriptSettings(record);
-              if (observed.model) node.model = observed.model;
-              if (observed.effort) node.effort = observed.effort;
-            }
-          } catch {}
-        }
-        if (node.agentType !== 'codex' || !entry.providerSession?.id ||
-          typeof transcriptPath !== 'string' || !isPathInsideRoots(transcriptPath, getAllowedTranscriptRoots())) continue;
-        try {
-          // Long tool output can push the current turn outside the small tail.
-          for (const window of [512 * 1024, 16 * 1024 * 1024]) {
-            const recent = await readBoundedTranscriptLines(transcriptPath, null, 1, window, false, (line) => {
-              try { return JSON.parse(line).type === 'turn_context'; } catch { return false; }
-            });
-            if (!recent.lines.length) continue;
-            const context = JSON.parse(recent.lines[0]).payload;
-            if (typeof context?.model === 'string' && context.model.trim()) node.model = context.model;
-            if (typeof context?.effort === 'string' && context.effort.trim()) node.effort = context.effort;
-            break;
-          }
-        } catch {
-          // Keep other observed metadata when the transcript is unavailable.
-        }
-      }
-    } catch {
-      // Hooks are optional; CLI metadata remains available.
-    }
-
-    // J. Progress calculation
-    const progress = taskProgress(tasks, taskCoverage);
-
-    // Node activities
-    for (const n of nodes) {
-      if (n.lastActivityAt) {
-        activities.push({
-          id: hashId('act', `${n.id}:${n.state}:${n.lastActivityAt}`),
-          nodeId: n.id,
-          taskId: null,
-          at: n.lastActivityAt,
-          timestampKind: 'source',
-          kind: n.kind === 'agent' ? 'agent-status' : 'output-observed',
-          text: `${n.label} state: ${n.state}`,
-        });
-      }
-    }
-
-    activities.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
-    const boundedActivity = activities.slice(0, 100);
+    // A. Query and filter project worktrees
+    const wtResult = await fetchProjectWorktrees(projectEntry, runner);
+    runtimeId = wtResult.runtimeId;
+    if (wtResult.partial) partial = true;
+
+    // B. Query worktree terminals in parallel batches
+    const termResult = await fetchWorktreeTerminals(wtResult.projectWorktrees, runner);
+    if (termResult.partial) partial = true;
+
+    // C. Build worktree, agent, and terminal nodes plus membership and hierarchy edges
+    const { nodes, edges, nodeMap, terminalHandleToNodeId, worktreeIdToNodeId } =
+      buildWorktreeAndAgentNodes(wtResult.projectWorktrees, termResult.terminalsByWorktree, termResult.visualLayoutsByWorktree);
+
+    // D. Discover and associate orchestration runs
+    const runResult = await discoverAssociatedRuns(projectId, terminalHandleToNodeId, worktreeIdToNodeId, nodeMap, runner);
+    if (runResult.partial) partial = true;
+
+    // E. Resolve active run
+    const activeRun = resolveActiveRun(selectedRunId, runResult.associatedRuns, projectId);
+
+    // F. Bind active run workers and dispatches
+    const workerResult = await bindActiveRunWorkers(projectId, activeRun, nodeMap, terminalHandleToNodeId, edges, runner);
+    if (workerResult.partial) partial = true;
+
+    // G. Collect tasks for active run
+    const taskResult = await collectActiveRunTasks(activeRun, terminalHandleToNodeId, nodeMap, attemptedAt, runner);
+    if (taskResult.partial) partial = true;
+
+    // H. Enrich agent models and effort from hooks and transcripts
+    await enrichAgentModelsAndEffort(nodes);
+
+    // I. Build progress and activities
+    const { progress, boundedActivity } = buildGraphActivitiesAndProgress(nodes, taskResult.tasks, taskResult.taskCoverage, taskResult.taskActivities);
 
     const observedAt = new Date().toISOString();
     return {
       graph: {
-        runs: associatedRuns,
+        runs: runResult.associatedRuns,
         selectedRunId: activeRun?.id ?? null,
         nodes,
         edges,
-        tasks,
+        tasks: taskResult.tasks,
         progress,
         activity: boundedActivity,
       },
@@ -1608,42 +1942,7 @@ export async function collectGraph(
     if (err instanceof CliError && (err.issue.code === 'PROJECT_NOT_FOUND' || err.issue.code === 'RUN_NOT_FOUND')) {
       throw err;
     }
-    return {
-      graph: {
-        runs: [],
-        selectedRunId: null,
-        nodes: [],
-        edges: [],
-        tasks: [],
-        progress: {
-          total: 0,
-          completed: 0,
-          failed: 0,
-          working: 0,
-          waiting: 0,
-          blocked: 0,
-          unknown: 0,
-          percent: null,
-          coverage: 'unavailable',
-          basis: 'completed-tasks',
-        },
-        activity: [],
-      },
-      meta: {
-        availability: 'unavailable',
-        observedAt: null,
-        attemptedAt,
-        stale: false,
-        partial: true,
-        issue: {
-          code: err.issue?.code || 'RUNTIME_UNAVAILABLE',
-          message: err.message || 'Failed to collect graph data',
-          retryable: true,
-        },
-      },
-      runtimeId,
-      appVersion: globalSourceMaps.observedAppVersion,
-    };
+    return buildEmptyGraphFailure(runtimeId, attemptedAt, err);
   }
 }
 
@@ -1761,23 +2060,97 @@ export async function resolveCoordinatorConversation(
   let transcriptPath: string | null = null;
   let provider: string | null = null;
   let providerSessionId: string | null = null;
+  let isSourceMismatch = false;
 
   if (coordPaneKey && fs.existsSync(lastStatusPath)) {
     try {
       const rawStatus = fs.readFileSync(lastStatusPath, 'utf-8');
       const statusData = JSON.parse(rawStatus);
       const entry = statusData.entries?.[coordPaneKey];
-      if (entry && entry.providerSession && (!standaloneAgent ||
-        (entry.source === node.agentType && localTranscriptProviders.includes(entry.source) &&
-          (!entry.worktreeId || entry.worktreeId === node.worktreeId) &&
-          typeof entry.providerSession.id === 'string' && entry.providerSession.id.trim()))) {
-        if (typeof entry.providerSession.transcriptPath === 'string') {
-          transcriptPath = entry.providerSession.transcriptPath;
+      if (entry) {
+        if (standaloneAgent && entry.source && entry.source !== node.agentType) {
+          isSourceMismatch = true;
+        } else if (entry.providerSession && (!standaloneAgent ||
+          (entry.source === node.agentType && localTranscriptProviders.includes(entry.source) &&
+            (!entry.worktreeId || entry.worktreeId === node.worktreeId) &&
+            typeof entry.providerSession.id === 'string' && entry.providerSession.id.trim()))) {
+          if (typeof entry.providerSession.transcriptPath === 'string') {
+            transcriptPath = entry.providerSession.transcriptPath;
+          }
+          providerSessionId = entry.providerSession.id || null;
+          provider = entry.source || entry.agentPresence?.agent || entry.payload?.agentType || null;
         }
-        providerSessionId = entry.providerSession.id || null;
-        provider = entry.source || entry.agentPresence?.agent || entry.payload?.agentType || null;
       }
     } catch {}
+  }
+
+  // Fallback for resumed or standalone Codex sessions
+  if (!transcriptPath && node.agentType === 'codex' && !isSourceMismatch && node.label) {
+    transcriptPath = findCodexTranscript(node.label);
+    const journalDbPath = path.join(orcaDir, 'agent-session-journal.db');
+    const cleanLabel = node.label.trim();
+    const isGeneric = ['codex', 'terminal'].some((g) => cleanLabel.toLowerCase().startsWith(g));
+    if (!transcriptPath && !isGeneric && fs.existsSync(journalDbPath)) {
+      let jdb: DatabaseSync | null = null;
+      try {
+        jdb = new DatabaseSync(journalDbPath, { readOnly: true });
+        const rows = jdb
+          .prepare("SELECT record_json FROM agent_session_records WHERE json_extract(record_json, '$.provider') = 'codex' ORDER BY createdAt DESC LIMIT 20")
+          .all() as any[];
+        for (const row of rows) {
+          if (!row.record_json) continue;
+          const parsed = JSON.parse(row.record_json);
+          const threadId = parsed.providerHandleChain?.[0]?.handle?.threadId;
+          const matchesSpecific =
+            parsed.sessionId === cleanLabel ||
+            threadId === cleanLabel ||
+            (parsed.title && (parsed.title.toLowerCase() === cleanLabel.toLowerCase() || cleanLabel.toLowerCase().includes(parsed.title.toLowerCase())));
+          if (matchesSpecific && threadId) {
+            const found = findCodexTranscript(threadId);
+            if (found) {
+              transcriptPath = found;
+              providerSessionId = threadId;
+              break;
+            }
+          }
+        }
+      } catch {} finally {
+        try {
+          jdb?.close();
+        } catch {}
+      }
+    }
+    if (transcriptPath) {
+      provider = 'codex';
+    }
+  }
+
+  // Fallback for resumed OpenCode / Kilo sessions
+  if (!transcriptPath && ['opencode', 'kilo', 'kilocode'].includes(node.agentType || '') && !isSourceMismatch && node.label) {
+    const nodeSource = globalSourceMaps.nodeSourceMap.get(node.id);
+    const rawPtyId = nodeSource?.ptyId || (nodeSource?.endpointIncarnation ? nodeSource.endpointIncarnation.slice(0, nodeSource.endpointIncarnation.lastIndexOf(':')) : null);
+    const worktreePath = node.worktreeId ? (node.worktreeId.includes('::') ? node.worktreeId.split('::')[1] : node.worktreeId) : null;
+    const ocMatch = findOpenCodeSession(
+      node.agentType!,
+      node.label,
+      (file) => isPathInsideRoots(file, getAllowedTranscriptRoots()),
+      { worktreePath, ptyId: rawPtyId }
+    );
+    if (ocMatch) {
+      transcriptPath = ocMatch.dbPath;
+      provider = node.agentType;
+      providerSessionId = ocMatch.sessionId;
+    }
+  }
+
+  // Fallback for resumed Claude sessions
+  if (!transcriptPath && node.agentType === 'claude' && !isSourceMismatch && node.label) {
+    const claudeMatch = findClaudeTranscript(node.label, (file) => isPathInsideRoots(file, getAllowedTranscriptRoots()));
+    if (claudeMatch) {
+      transcriptPath = claudeMatch.transcriptPath;
+      provider = 'claude';
+      providerSessionId = claudeMatch.sessionId;
+    }
   }
 
   if (!transcriptPath && coordSessionId) {
@@ -1810,6 +2183,14 @@ export async function resolveCoordinatorConversation(
     try { transcriptPath = openCodeDatabase(provider!, providerSessionId, (file) => isPathInsideRoots(file, getAllowedTranscriptRoots())); } catch {}
   }
 
+  if (databaseProvider && transcriptPath && providerSessionId && !node.model) {
+    try {
+      const observed = readOpenCodeModel(transcriptPath, providerSessionId);
+      if (observed?.model) node.model = observed.model;
+      if (observed?.effort) node.effort = observed.effort;
+    } catch {}
+  }
+
   if (!transcriptPath || !fs.existsSync(transcriptPath)) {
     return {
       data: null,
@@ -1821,7 +2202,9 @@ export async function resolveCoordinatorConversation(
         partial: false,
         issue: {
           code: 'CONVERSATION_UNSUPPORTED',
-          message: standaloneAgent ? 'Agent transcript provenance not found or unsupported' : 'Coordinator transcript provenance not found or unsupported',
+          message: standaloneAgent
+            ? 'Agent transcript provenance not found or unsupported'
+            : 'Coordinator transcript provenance not found or unsupported',
           retryable: false,
         },
       },
@@ -2053,23 +2436,124 @@ export async function resolveCoordinatorConversation(
   };
 }
 
-// A planner step is only a chat turn when the provider recorded public reply text.
-// Thinking-only steps and tool calls are not assistant replies.
-export function isCodexChatRecord(line: string): boolean {
-  try {
-    const record = JSON.parse(line);
-    const payload = record.payload;
-    if (payload?.role === 'assistant' && payload?.channel === 'analysis') return false;
-    if (record.type !== 'response_item' || !['user', 'assistant'].includes(payload?.role)) return false;
-    return Array.isArray(payload.content) && payload.content.some((block: any) => {
-      if (!['input_text', 'output_text', 'text'].includes(block?.type) || typeof block.text !== 'string') return false;
-      const text = block.text.trim();
-      return Boolean(text) && !(payload.role === 'user' && /^(<(environment_context|skills_instructions|permissions instructions|collaboration_mode|multi_agent_role|multi_agent_mode|skill)>|# AGENTS\.md instructions)/.test(text));
-    });
-  } catch {
-    return false;
+export { findCodexTranscript };
+
+// Helper to locate Antigravity session conversation ID from hooks, labels, terminal history checkpoints, or vault cache
+export function findAntigravityConversationId(
+  node: Node,
+  nodeSource?: { handle?: string; worktreeId?: string; paneKey?: string; endpointIncarnation?: string; ptyId?: string }
+): { conversationId: string; title?: string; worktreeId?: string; source: string } | null {
+  const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
+  const lastStatusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
+
+  // 1. Direct match in last-status.json by paneKey (live running session)
+  if (nodeSource?.paneKey && fs.existsSync(lastStatusPath)) {
+    try {
+      const rawStatus = fs.readFileSync(lastStatusPath, 'utf-8');
+      const statusData = JSON.parse(rawStatus);
+      const entry = statusData.entries?.[nodeSource.paneKey];
+      if (
+        entry &&
+        entry.source === 'antigravity' &&
+        entry.providerSession?.key === 'conversation_id' &&
+        typeof entry.providerSession.id === 'string'
+      ) {
+        return {
+          conversationId: entry.providerSession.id,
+          worktreeId: entry.worktreeId || undefined,
+          source: 'live-hook',
+        };
+      }
+    } catch {}
   }
+
+  // 2. UUID directly in node label
+  if (node?.label) {
+    const uuidMatch = node.label.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
+    if (uuidMatch) {
+      return { conversationId: uuidMatch[0], source: 'label-uuid' };
+    }
+  }
+
+  // Clean label
+  const cleanLabel = (node?.label || '').replace(/^✳\s*/, '').replace(/^(?:antigravity|agy)\s*\|\s*/i, '').split(/\s*\|\s*/)[0].trim();
+  const isGenericLabel = !cleanLabel || ['antigravity', 'agent', 'worker', 'coordinator', 'cmd.exe', 'powershell', 'bash', 'zsh', 'terminal'].some((g) => cleanLabel.toLowerCase().startsWith(g));
+
+  // 3. Extract prompt from terminal history checkpoint if available
+  let checkpointPrompt: string | null = null;
+  const rawPtyId = nodeSource?.ptyId || (nodeSource?.endpointIncarnation ? nodeSource.endpointIncarnation.slice(0, nodeSource.endpointIncarnation.lastIndexOf(':')) : null);
+  if (rawPtyId) {
+    const encodedPty = encodeURIComponent(rawPtyId);
+    const cpPath = path.join(appData, 'orca', 'terminal-history', encodedPty, 'checkpoint.json');
+    if (fs.existsSync(cpPath)) {
+      try {
+        const cp = JSON.parse(fs.readFileSync(cpPath, 'utf-8'));
+        if (cp.snapshotAnsi) {
+          const cleanText = stripAnsi(cp.snapshotAnsi);
+          const prompts = cleanText
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => /^>\s+/.test(l) && !/^>\s+(Accept-edits|Reject-edits|Esc to|for shortcuts)/i.test(l))
+            .map((l) => l.replace(/^>\s+/, '').trim());
+          if (prompts.length > 0) {
+            checkpointPrompt = prompts[0];
+          }
+        }
+      } catch {}
+    }
+  }
+
+  const searchTarget = (!isGenericLabel ? cleanLabel : null) || checkpointPrompt;
+
+  // 4. Search in Orca AI Vault session parse cache
+  const vaultCachePath = path.join(appData, 'orca', 'ai-vault', 'session-parse-cache.json');
+  if (searchTarget && fs.existsSync(vaultCachePath)) {
+    try {
+      const cache = JSON.parse(fs.readFileSync(vaultCachePath, 'utf-8'));
+      if (Array.isArray(cache.entries)) {
+        for (const [, data] of cache.entries) {
+          const s = data.session;
+          if (s && s.agent === 'antigravity' && s.sessionId) {
+            const sTitle = s.title ? s.title.toLowerCase().trim() : '';
+            const sPrompt = s.lastUserPrompt ? s.lastUserPrompt.toLowerCase().trim() : '';
+            const targetLower = searchTarget.toLowerCase().trim();
+            if (sTitle === targetLower || sPrompt === targetLower || targetLower.includes(sTitle) || (sTitle && targetLower.startsWith(sTitle.slice(0, 30)))) {
+              return { conversationId: s.sessionId, title: s.title || undefined, source: 'vault-cache' };
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 5. Search in Antigravity conversation_summaries.db
+  const geminiBase = process.env.GEMINI_APPDATA_DIR || process.env.ANTIGRAVITY_APPDATA_DIR || path.join(os.homedir(), '.gemini', 'antigravity-cli');
+  const summariesDbPath = path.join(geminiBase, 'conversation_summaries.db');
+  if (searchTarget && fs.existsSync(summariesDbPath)) {
+    let db: DatabaseSync | null = null;
+    try {
+      db = new DatabaseSync(summariesDbPath, { readOnly: true });
+      const targetLower = searchTarget.toLowerCase().trim();
+      const rows = db.prepare('SELECT conversation_id, title, preview FROM conversation_summaries ORDER BY last_modified_time DESC').all() as any[];
+      for (const row of rows) {
+        const title = (row.title || '').toLowerCase().trim();
+        const preview = (row.preview || '').toLowerCase().trim();
+        if (title && (title === targetLower || targetLower.includes(title) || title.includes(targetLower))) {
+          return { conversationId: row.conversation_id, title: row.title || undefined, source: 'summaries-db' };
+        }
+        if (preview && (preview.includes(targetLower) || targetLower.includes(preview.slice(0, 40)))) {
+          return { conversationId: row.conversation_id, title: row.title || undefined, source: 'summaries-db-preview' };
+        }
+      }
+    } catch {} finally {
+      try { db?.close(); } catch {}
+    }
+  }
+
+  return null;
 }
+
+export { isCodexChatRecord };
 
 export function isAntigravityChatRecord(line: string): boolean {
   try {
@@ -2106,10 +2590,10 @@ export async function resolveAntigravityConversation(
     };
   }
 
-  const appData = process.env.ORCA_APPDATA_DIR || process.env.APPDATA || '';
-  const lastStatusPath = path.join(appData, 'orca', 'agent-hooks', 'last-status.json');
+  const nodeSource = globalSourceMaps.nodeSourceMap.get(node.id);
+  const resolved = findAntigravityConversationId(node, nodeSource);
 
-  if (!fs.existsSync(lastStatusPath)) {
+  if (!resolved) {
     return {
       data: null,
       meta: {
@@ -2120,54 +2604,17 @@ export async function resolveAntigravityConversation(
         partial: false,
         issue: {
           code: 'CONVERSATION_UNSUPPORTED',
-          message: 'Orca agent hook status not found',
+          message: 'Agent transcript provenance not found or unsupported',
           retryable: false,
         },
       },
     };
   }
 
-  let conversationId: string | null = null;
-  let worktreeId: string | null = null;
-  const nodeSource = globalSourceMaps.nodeSourceMap.get(node.id);
-
-  try {
-    const rawStatus = fs.readFileSync(lastStatusPath, 'utf-8');
-    const statusData = JSON.parse(rawStatus);
-    const entries = statusData.entries ?? {};
-
-    let matchedEntry: any = null;
-    if (nodeSource?.paneKey && entries[nodeSource.paneKey]) {
-      matchedEntry = entries[nodeSource.paneKey];
-    }
-
-    if (matchedEntry && matchedEntry.source === 'antigravity') {
-      if (
-        matchedEntry.providerSession?.key === 'conversation_id' &&
-        typeof matchedEntry.providerSession.id === 'string'
-      ) {
-        conversationId = matchedEntry.providerSession.id;
-        worktreeId = matchedEntry.worktreeId || null;
-      }
-    }
-  } catch {}
-
-  if (!conversationId || !/^[a-zA-Z0-9_-]+$/.test(conversationId)) {
-    return {
-      data: null,
-      meta: {
-        availability: 'unsupported',
-        observedAt: null,
-        attemptedAt: new Date().toISOString(),
-        stale: false,
-        partial: false,
-        issue: {
-          code: 'CONVERSATION_UNSUPPORTED',
-          message: 'Antigravity session provenance not found in hook entries',
-          retryable: false,
-        },
-      },
-    };
+  const conversationId = resolved.conversationId;
+  const worktreeId = resolved.worktreeId || null;
+  if (resolved.title && (isGenericShellTitle(node.label) || ['agent', 'antigravity', 'terminal'].some((g) => node.label.toLowerCase().startsWith(g)))) {
+    node.label = resolved.title;
   }
 
   // Validate workspace if both worktreeId and node.worktreeId exist
@@ -3111,6 +3558,199 @@ export async function sendAgentMessage(
   }
 
   throw new CliError('NODE_NOT_FOUND', `No active terminal or dispatch found for node ${nodeId}`);
+}
+
+export async function deleteWorktree(
+  projectId: Id,
+  nodeId: Id,
+  runner: CommandRunner = defaultCommandRunner
+): Promise<{ ok: boolean; message: string }> {
+  const source = globalSourceMaps.nodeSourceMap.get(nodeId);
+  let worktreeId = source?.worktreeId;
+
+  if (!worktreeId) {
+    try {
+      const psRes = await runOrca<any>(['worktree', 'ps', '--limit', '100', '--json'], runner);
+      const allWorktrees = psRes.result?.worktrees ?? [];
+      const matched = allWorktrees.find((w: any) => {
+        const wtNodeId = hashId('node', w.worktreeId || w.path || w.displayName);
+        return wtNodeId === nodeId || w.worktreeId === nodeId || w.path === nodeId;
+      });
+      if (matched?.worktreeId) {
+        worktreeId = matched.worktreeId;
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  if (!worktreeId) {
+    throw new CliError('NODE_NOT_FOUND', `Worktree node ${nodeId} not found`);
+  }
+
+  const selector = worktreeId.startsWith('id:') || worktreeId.startsWith('path:')
+    ? worktreeId
+    : `id:${worktreeId}`;
+
+  await runOrca<any>(['worktree', 'rm', '--worktree', selector, '--force', '--json'], runner);
+  globalSourceMaps.nodeSourceMap.delete(nodeId);
+  return { ok: true, message: 'Worktree deleted successfully' };
+}
+
+export async function closeAgentTab(
+  projectId: Id,
+  nodeId: Id,
+  runner: CommandRunner = defaultCommandRunner
+): Promise<{ ok: boolean; message: string }> {
+  const source = globalSourceMaps.nodeSourceMap.get(nodeId);
+  let handle = source?.handle;
+
+  if (!handle || !/^term_[a-zA-Z0-9_-]+$/.test(handle)) {
+    if (source?.worktreeId) {
+      try {
+        const termRes = await runOrca<any>(
+          ['terminal', 'list', '--worktree', `id:${source.worktreeId}`, '--limit', '100', '--json'],
+          runner
+        );
+        const terminals = termRes.result?.terminals ?? [];
+        if (source.paneKey) {
+          const matched = terminals.find((t: any) => `${t.tabId}:${t.leafId}` === source.paneKey || t.paneKey === source.paneKey);
+          if (matched?.handle) {
+            handle = matched.handle;
+          }
+        }
+        if (!handle && terminals.length > 0) {
+          const activeTerm = terminals.find((t: any) => t.connected && t.handle);
+          if (activeTerm?.handle) {
+            handle = activeTerm.handle;
+          }
+        }
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  if (!handle || !/^term_[a-zA-Z0-9_-]+$/.test(handle)) {
+    throw new CliError('NODE_NOT_FOUND', `No active terminal found for agent node ${nodeId}`);
+  }
+
+  await runOrca<any>(['terminal', 'close', '--terminal', handle, '--tab', '--json'], runner);
+
+  if (source) {
+    source.handle = undefined;
+  }
+  return { ok: true, message: 'Agent tab closed successfully' };
+}
+
+export async function renameNodeTitle(
+  projectId: Id,
+  nodeId: Id,
+  title: string,
+  runner: CommandRunner = defaultCommandRunner
+): Promise<RenameNodeTitleResponse> {
+  const source = globalSourceMaps.nodeSourceMap.get(nodeId);
+  let handle = source?.handle;
+
+  if (!handle || !/^term_[a-zA-Z0-9_-]+$/.test(handle)) {
+    if (source?.worktreeId) {
+      try {
+        const termRes = await runOrca<any>(
+          ['terminal', 'list', '--worktree', `id:${source.worktreeId}`, '--limit', '100', '--json'],
+          runner
+        );
+        const terminals = termRes.result?.terminals ?? [];
+        if (source.paneKey) {
+          const matched = terminals.find(
+            (t: any) => `${t.tabId}:${t.leafId}` === source.paneKey || t.paneKey === source.paneKey
+          );
+          if (matched?.handle) {
+            handle = matched.handle;
+          }
+        }
+        if (!handle && terminals.length > 0) {
+          const activeTerm = terminals.find((t: any) => t.connected && t.handle);
+          if (activeTerm?.handle) {
+            handle = activeTerm.handle;
+          }
+        }
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  if (!handle || !/^term_[a-zA-Z0-9_-]+$/.test(handle)) {
+    throw new CliError('NODE_NOT_FOUND', `No active terminal found for agent node ${nodeId}`);
+  }
+
+  const cleanTitle = (title || '').trim();
+  const args = cleanTitle
+    ? ['terminal', 'rename', '--terminal', handle, '--title', cleanTitle, '--json']
+    : ['terminal', 'rename', '--terminal', handle, '--json'];
+
+  await runOrca<any>(args, runner);
+  return { ok: true, title: cleanTitle, message: 'Agent tab renamed successfully' };
+}
+
+export async function createWorktreeAgent(
+  projectId: Id,
+  nodeId: Id,
+  command: string,
+  title?: string,
+  runner: CommandRunner = defaultCommandRunner
+): Promise<CreateAgentResponse> {
+  const source = globalSourceMaps.nodeSourceMap.get(nodeId);
+  let worktreeId = source?.worktreeId;
+  let worktreePath = source?.worktreePath;
+
+  if (!worktreeId && !worktreePath) {
+    try {
+      const psRes = await runOrca<any>(['worktree', 'ps', '--limit', '100', '--json'], runner);
+      const allWorktrees = psRes.result?.worktrees ?? [];
+      const matched = allWorktrees.find((w: any) => {
+        const wtNodeId = hashId('node', w.worktreeId || w.path || w.displayName);
+        return wtNodeId === nodeId || w.worktreeId === nodeId || w.path === nodeId;
+      });
+      if (matched) {
+        worktreeId = matched.worktreeId;
+        worktreePath = matched.path;
+      }
+    } catch {
+      // Fall through
+    }
+  }
+
+  if (!worktreeId && !worktreePath) {
+    throw new CliError('NODE_NOT_FOUND', `Worktree node ${nodeId} not found`);
+  }
+
+  const selector = worktreePath
+    ? `path:${worktreePath}`
+    : worktreeId!.startsWith('id:') || worktreeId!.startsWith('path:')
+      ? worktreeId!
+      : `id:${worktreeId}`;
+
+  const cleanCmd = (command || '').trim();
+  if (!cleanCmd) {
+    throw new CliError('INVALID_ARGUMENT', 'Command is required');
+  }
+
+  const cleanTitle = (title || '').trim();
+  const args = ['terminal', 'create', '--worktree', selector, '--command', cleanCmd];
+  if (cleanTitle) {
+    args.push('--title', cleanTitle);
+  }
+  args.push('--json');
+
+  const res = await runOrca<any>(args, runner);
+  const handle = res.result?.terminal?.handle || res.result?.handle;
+  return {
+    ok: true,
+    handle,
+    title: cleanTitle || undefined,
+    message: 'Agent created successfully',
+  };
 }
 
 export function resolveOrcaAppExecutable(): string | null {

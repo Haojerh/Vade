@@ -76,6 +76,9 @@ export function parseGitRemoteOutput(output: string): ParsedRepo {
         if (err.issue?.code === 'REMOTE_UNSUPPORTED') {
           throw err;
         }
+        if (process.env.NODE_ENV !== 'test') {
+          console.debug(`[parseGitRemoteOutput] Skipping remote '${remoteName}' (${url}): ${err.message || err}`);
+        }
       }
     }
   }

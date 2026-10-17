@@ -2493,36 +2493,34 @@ dialog.node-modal-dialog {
   outline: none;
 }
 
-dialog.reset-layout-dialog {
-  width: min(420px, calc(100vw - 32px));
-  height: fit-content;
-  padding: 24px;
-  box-sizing: border-box;
+dialog.node-modal-dialog:not(.confirmation-dialog) {
+  min-height: min(480px, 85vh);
 }
-.reset-layout-dialog h2 {
-  margin: 0 0 12px;
-  font-size: 18px;
-}
-.reset-layout-dialog p {
-  margin: 0;
-  color: var(--text-secondary);
-  line-height: 1.6;
-}
-.reset-layout-actions {
+
+.modal-loading-state {
   display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 24px;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 0;
 }
-.reset-layout-actions .btn-danger {
-  background: var(--state-failed-bg);
-  color: var(--state-failed-text);
-  border-color: var(--state-failed-border);
+.modal-loading-state .skeleton-line {
+  height: 12px;
+  border-radius: 4px;
+  background: linear-gradient(100deg, var(--border-main) 25%, var(--border-strong) 45%, var(--surface-active) 55%, var(--border-main) 75%);
+  background-size: 250% 100%;
+  animation: github-skeleton-shimmer 1.6s linear infinite;
+  width: 100%;
 }
-.reset-layout-actions .btn-danger:hover:not(:disabled) {
-  background: var(--state-failed-bg);
-  border-color: var(--state-failed-text);
+.modal-loading-state .skeleton-line.short {
+  width: 45%;
 }
+@media (prefers-reduced-motion: reduce) {
+  .modal-loading-state .skeleton-line {
+    animation: none;
+  }
+}
+
+
 .message-attachments { min-width: 0; width: 100%; }
 .message-attachment-list {
   display: flex;
@@ -3835,4 +3833,406 @@ kbd {
   50% { transform: scale(1.3); opacity: 1; }
   100% { transform: scale(0.9); opacity: 0.4; }
 }
+
+/* Worktree Context Menu & Action Buttons */
+.worktree-context-menu {
+  position: fixed;
+  background: var(--surface-1);
+  border: 1px solid var(--border-main);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 175px;
+  z-index: 1000;
+  animation: contextMenuFadeIn 0.1s ease-out;
+}
+
+@keyframes contextMenuFadeIn {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.context-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-main);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.15s ease, color 0.15s ease;
+  width: 100%;
+}
+
+.context-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.context-menu-item-danger {
+  color: var(--state-failed-text);
+}
+
+.context-menu-item-danger:hover {
+  background: var(--state-failed-bg);
+  color: var(--state-failed-text);
+}
+
+.delete-worktree-dialog {
+  max-width: 440px;
+}
+
+.delete-worktree-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.delete-worktree-dialog p {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.btn-close-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.btn-delete-worktree {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  background: var(--state-failed-bg);
+  color: var(--state-failed-text);
+  border-color: var(--state-failed-border);
+}
+
+.btn-delete-worktree:hover:not(:disabled) {
+  background: var(--state-failed-bg);
+  border-color: var(--state-failed-text);
+}
+
+.btn-add-agent {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+/* Reusable Confirmation Dialog */
+dialog.confirmation-dialog {
+  width: min(440px, calc(100vw - 32px));
+  height: fit-content;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.confirmation-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+}
+
+.confirmation-dialog-desc {
+  margin: 0;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.confirmation-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 24px;
+}
+
+.confirmation-dialog-actions .btn-danger {
+  background: var(--state-failed-bg);
+  color: var(--state-failed-text);
+  border-color: var(--state-failed-border);
+}
+
+.confirmation-dialog-actions .btn-danger:hover:not(:disabled) {
+  background: var(--state-failed-bg);
+  border-color: var(--state-failed-text);
+}
+
+/* Add Agent Dialog (matching Orca Settings style) */
+dialog.add-agent-dialog {
+  width: min(640px, calc(100vw - 32px));
+  max-height: min(800px, 90vh);
+  display: flex;
+  flex-direction: column;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.add-agent-dialog-scroll {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  margin: 12px 0;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.agent-catalog-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.agent-catalog-section-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.agent-catalog-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 9999px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.agent-catalog-badge.badge-accent {
+  background: var(--surface-active);
+  color: var(--accent);
+  border: 1px solid var(--border-main);
+}
+
+.agent-catalog-badge.badge-muted {
+  background: var(--surface-2);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-subtle);
+}
+
+.agent-catalog-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface-1);
+  overflow: hidden;
+}
+
+.agent-catalog-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-subtle);
+  transition: background 0.15s ease;
+  cursor: pointer;
+}
+
+.agent-catalog-item:last-child {
+  border-bottom: none;
+}
+
+.agent-catalog-item:hover {
+  background: var(--surface-2);
+}
+
+.agent-catalog-item.is-selected {
+  background: var(--surface-active);
+  border-bottom-color: var(--border-subtle);
+}
+
+.agent-catalog-item.is-selected:last-child {
+  border-bottom: none;
+}
+
+.agent-catalog-item-icon {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.agent-catalog-item-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.agent-catalog-item-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-main);
+  line-height: 1.2;
+}
+
+.agent-catalog-item-cmd {
+  font-size: 11px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 3px;
+}
+
+.agent-catalog-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.add-agent-input {
+  outline: none !important;
+  transition: border-color 0.15s ease;
+}
+
+.add-agent-input:focus,
+.add-agent-input:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+  border-color: var(--accent) !important;
+  box-shadow: none !important;
+}
+
+.confirmation-dialog input[type="text"]:focus,
+.confirmation-dialog input[type="text"]:focus-visible {
+  outline: none !important;
+  outline-offset: 0 !important;
+  border-color: var(--accent) !important;
+  box-shadow: none !important;
+}
+
+/* Worktree Agent Drag-to-Reorder styles */
+.worktree-agents-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 40px;
+}
+
+.worktree-agents-stack .graph-node-card {
+  position: relative;
+  will-change: transform;
+}
+
+.worktree-agents-stack .graph-node-card.is-member-dragging {
+  opacity: 0.3;
+  filter: grayscale(40%);
+  border-style: dashed !important;
+  box-shadow: none !important;
+}
+
+/* Worktree Drag & Drop Preview Slot & Card */
+.worktree-drop-preview-slot {
+  width: 260px;
+  max-width: 260px;
+  box-sizing: border-box;
+  animation: dropSlotFadeIn 0.15s ease-out;
+  pointer-events: none;
+}
+
+@keyframes dropSlotFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.worktree-drop-preview-card {
+  width: 260px;
+  max-width: 260px;
+  box-sizing: border-box;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1.5px dashed #10b981;
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.22);
+}
+
+.worktree-drop-preview-card .node-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.worktree-drop-preview-card .agent-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.worktree-drop-preview-card .agent-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-drop-preview-card .node-badge-state.preview-pill {
+  background: #059669 !important;
+  color: #ffffff !important;
+  border: 1px solid #10b981 !important;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  letter-spacing: 0.01em;
+}
+
+.worktree-drop-preview-card .node-badge-state.preview-pill span,
+.worktree-drop-preview-card .node-badge-state.preview-pill svg {
+  color: #ffffff !important;
+}
+
+.worktree-drop-preview-card .preview-hint-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  display: block;
+}
+
+
 

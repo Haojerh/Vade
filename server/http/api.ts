@@ -12,14 +12,26 @@ import {
   HealthResponse,
   GitHubQuery,
   PrerequisitesStatus,
+  RenameNodeTitleRequest,
+  CreateAgentRequest,
 } from '../../shared/contracts.js';
 import { CommandRunner, defaultCommandRunner, CliError } from '../integrations/cli.js';
-import { collectInventory, globalSourceMaps, sendAgentMessage, checkPrerequisites } from '../integrations/orca.js';
+import {
+  collectInventory,
+  globalSourceMaps,
+  sendAgentMessage,
+  checkPrerequisites,
+  deleteWorktree,
+  closeAgentTab,
+  renameNodeTitle,
+  createWorktreeAgent,
+} from '../integrations/orca.js';
 import { collectGitHubData } from '../integrations/github.js';
 import { SnapshotManager, defaultSnapshotManager } from '../services/snapshot.js';
 import { UsageCollector } from '../integrations/usage.js';
 import { decodeAttachments, storeAttachments } from '../services/attachments.js';
 import { runOrca } from '../integrations/cli.js';
+import { getAgentCatalog } from '../integrations/agents.js';
 
 export interface ApiServerOptions {
   runner?: CommandRunner;
@@ -129,7 +141,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
     }
 
     // 2. Reject unsupported write methods
-    if (reqMethod !== 'GET' && reqMethod !== 'HEAD' && reqMethod !== 'POST') {
+    if (reqMethod !== 'GET' && reqMethod !== 'HEAD' && reqMethod !== 'POST' && reqMethod !== 'DELETE') {
       sendError(405, 'METHOD_NOT_ALLOWED', `Method ${reqMethod} is not allowed`);
       return;
     }
@@ -137,9 +149,27 @@ export function createApiHandler(options: ApiServerOptions = {}) {
     const reqUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
     const pathname = reqUrl.pathname;
 
-    // POST is strictly allowed only for agent node messaging
-    const isMessagePost = pathname.match(/^\/api\/projects\/[a-zA-Z0-9_.-]+\/nodes\/[a-zA-Z0-9_.-]+\/message$/);
-    if (reqMethod === 'POST' && !isMessagePost) {
+    // Allowed mutations:
+    const isMessagePost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/message$/);
+    const isCloseTabPost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/close-tab$/);
+    const isRenamePost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/rename$/);
+    const isCreateAgentPost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/create-agent$/);
+    const isDeleteWorktreePost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/delete-worktree$/);
+    const isDeleteWorktreeDelete = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/worktree$/);
+
+    if (
+      reqMethod === 'POST' &&
+      !isMessagePost &&
+      !isCloseTabPost &&
+      !isRenamePost &&
+      !isCreateAgentPost &&
+      !isDeleteWorktreePost
+    ) {
+      sendError(405, 'METHOD_NOT_ALLOWED', `Method ${reqMethod} is not allowed for ${pathname}`);
+      return;
+    }
+
+    if (reqMethod === 'DELETE' && !isDeleteWorktreeDelete) {
       sendError(405, 'METHOD_NOT_ALLOWED', `Method ${reqMethod} is not allowed for ${pathname}`);
       return;
     }
@@ -198,6 +228,17 @@ export function createApiHandler(options: ApiServerOptions = {}) {
             checkOrchestrationSkillInstallation: options.checkOrchestrationSkillInstallation,
           });
           sendJson(200, prereqs);
+          return;
+        }
+
+        // GET /api/agents/catalog: detected installed and available agents on host
+        if (pathname === '/api/agents/catalog') {
+          if (Object.keys(query).length > 0) {
+            sendError(400, 'INVALID_ARGUMENT', 'No query parameters allowed on /api/agents/catalog');
+            return;
+          }
+          const catalog = getAgentCatalog();
+          sendJson(200, catalog);
           return;
         }
 
@@ -388,6 +429,84 @@ export function createApiHandler(options: ApiServerOptions = {}) {
             attachments = { provider: node.agentType, files: await storeAttachments(decoded) };
           }
           const result = await sendAgentMessage(projectId, nodeId, body.message.trim() || 'Please inspect the attached files.', runner, attachments);
+          sendJson(200, result);
+          return;
+        }
+
+        // POST /api/projects/:projectId/nodes/:nodeId/close-tab
+        if (isCloseTabPost && reqMethod === 'POST') {
+          const projectId = decodeURIComponent(isCloseTabPost[1]);
+          const nodeId = decodeURIComponent(isCloseTabPost[2]);
+          const result = await closeAgentTab(projectId, nodeId, runner);
+          sendJson(200, result);
+          return;
+        }
+
+        // POST /api/projects/:projectId/nodes/:nodeId/rename
+        if (isRenamePost && reqMethod === 'POST') {
+          const projectId = decodeURIComponent(isRenamePost[1]);
+          const nodeId = decodeURIComponent(isRenamePost[2]);
+          if (!req.headers['content-type']?.startsWith('application/json')) {
+            sendError(400, 'INVALID_ARGUMENT', 'Rename requires application/json');
+            return;
+          }
+          const body = await parseJsonBody<RenameNodeTitleRequest>(req, 1024 * 64);
+          if (
+            !body ||
+            typeof body.title !== 'string' ||
+            body.title.length > 100 ||
+            body.title.includes('\n') ||
+            body.title.includes('\r')
+          ) {
+            sendError(400, 'INVALID_ARGUMENT', 'Field "title" must be a single-line string up to 100 characters');
+            return;
+          }
+          const result = await renameNodeTitle(projectId, nodeId, body.title, runner);
+          sendJson(200, result);
+          return;
+        }
+
+        // POST /api/projects/:projectId/nodes/:nodeId/create-agent
+        if (isCreateAgentPost && reqMethod === 'POST') {
+          const projectId = decodeURIComponent(isCreateAgentPost[1]);
+          const nodeId = decodeURIComponent(isCreateAgentPost[2]);
+          if (!req.headers['content-type']?.startsWith('application/json')) {
+            sendError(400, 'INVALID_ARGUMENT', 'Create agent requires application/json');
+            return;
+          }
+          const body = await parseJsonBody<CreateAgentRequest>(req, 1024 * 64);
+          if (
+            !body ||
+            typeof body.command !== 'string' ||
+            body.command.trim().length === 0 ||
+            body.command.length > 200 ||
+            body.command.includes('\n') ||
+            body.command.includes('\r')
+          ) {
+            sendError(400, 'INVALID_ARGUMENT', 'Field "command" must be a non-empty string up to 200 characters');
+            return;
+          }
+          if (
+            body.title !== undefined &&
+            (typeof body.title !== 'string' ||
+              body.title.length > 100 ||
+              body.title.includes('\n') ||
+              body.title.includes('\r'))
+          ) {
+            sendError(400, 'INVALID_ARGUMENT', 'Field "title" must be a string up to 100 characters');
+            return;
+          }
+          const result = await createWorktreeAgent(projectId, nodeId, body.command.trim(), body.title?.trim(), runner);
+          sendJson(200, result);
+          return;
+        }
+
+        // POST /api/projects/:projectId/nodes/:nodeId/delete-worktree or DELETE /api/projects/:projectId/nodes/:nodeId/worktree
+        if ((isDeleteWorktreePost && reqMethod === 'POST') || (isDeleteWorktreeDelete && reqMethod === 'DELETE')) {
+          const match = isDeleteWorktreePost || isDeleteWorktreeDelete!;
+          const projectId = decodeURIComponent(match[1]);
+          const nodeId = decodeURIComponent(match[2]);
+          const result = await deleteWorktree(projectId, nodeId, runner);
           sendJson(200, result);
           return;
         }
