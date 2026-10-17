@@ -1,6 +1,6 @@
 # Provider Assets Attribution & Provenance
 
-All provider marks in this directory are official vendor assets obtained directly from vendor-owned repositories and official brand sites in accordance with vendor brand guidelines. No third-party logo services or unofficial approximations are used.
+The shared ProviderIcon component now mirrors Orca's glyph rendering and bundled assets. Current sources, pinned revision, and license are recorded in [orca/ATTRIBUTION.md](orca/ATTRIBUTION.md). The original standalone SVG files listed below are retained as legacy assets.
 
 ## 1. Codex / OpenAI
 - **File**: `codex.svg`

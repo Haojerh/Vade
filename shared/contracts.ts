@@ -50,6 +50,24 @@ export interface Inventory {
   projects: Project[];
 }
 
+export interface UsageWindow {
+  label: string;
+  usedPercent: number;
+  resetsAt: ISO | null;
+}
+
+export interface ProviderUsage {
+  provider: string;
+  label: string;
+  windows: UsageWindow[];
+  buckets: UsageWindow[];
+  meta: SourceMeta;
+}
+
+export interface UsageData {
+  providers: ProviderUsage[];
+}
+
 export interface Run {
   id: Id;
   sourceRunId: string;
@@ -181,9 +199,11 @@ export interface NodeDetailsQuery {
   limit?: number;
 }
 
-export type GitHubQuery =
+export type GitHubActivity = 'commits' | 'prs' | 'issues';
+export type GitHubQuery = (
   | { scope: 'general' }
-  | { scope: 'worktree'; nodeId: Id };
+  | { scope: 'worktree'; nodeId: Id }
+) & { activity?: GitHubActivity; page?: number };
 
 export interface GitHubScope {
   kind: 'general' | 'worktree';
@@ -226,6 +246,8 @@ export interface GitHubIssue {
 }
 
 export interface GitHubData {
+  pagination?: Record<GitHubActivity, { nextPage: number | null }>;
+  projectKind?: 'git' | 'folder' | 'unknown';
   repository: {
     owner: string;
     name: string;
@@ -243,3 +265,32 @@ export interface HealthResponse {
   status: 'ok';
   readOnly: boolean;
 }
+
+export interface SendMessageRequest {
+  message: string;
+  attachments?: MessageAttachment[];
+}
+
+export const MAX_MESSAGE_ATTACHMENTS = 8;
+export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+export const MAX_MESSAGE_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export interface MessageAttachment {
+  name: string;
+  mimeType: string;
+  dataBase64: string;
+}
+
+export interface SendMessageResponse {
+  ok: boolean;
+  message?: string;
+}
+
+export interface PrerequisitesStatus {
+  orcaApp: boolean;
+  orcaCli: boolean;
+  orchestrationSkill: boolean;
+  ready: boolean;
+  version?: string | null;
+  issues?: string[];
+}
+
