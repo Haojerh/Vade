@@ -9,9 +9,28 @@ import {
   runDeduplicatedCommand,
   CliError,
   CommandRunner,
+  defaultCommandRunner,
 } from './cli.js';
 
 describe('server/cli', () => {
+  test('replacement environment does not restore inherited startup variables', async () => {
+    const previous = process.env.ORCA_LAUNCH_ENV_TEST;
+    process.env.ORCA_LAUNCH_ENV_TEST = 'inherited';
+    try {
+      const env = { ...process.env, LAUNCH_MARKER: 'isolated' };
+      delete (env as NodeJS.ProcessEnv).ORCA_LAUNCH_ENV_TEST;
+      const result = await defaultCommandRunner(process.execPath, [
+        '-e', 'process.stdout.write(JSON.stringify({ inherited: process.env.ORCA_LAUNCH_ENV_TEST ?? null, marker: process.env.LAUNCH_MARKER }))',
+      ], { env, replaceEnv: true });
+      assert.equal(result.exitCode, 0);
+      assert.deepEqual(JSON.parse(result.stdout), { inherited: null, marker: 'isolated' });
+      assert.equal(process.env.ORCA_LAUNCH_ENV_TEST, 'inherited');
+    } finally {
+      if (previous === undefined) delete process.env.ORCA_LAUNCH_ENV_TEST;
+      else process.env.ORCA_LAUNCH_ENV_TEST = previous;
+    }
+  });
+
   test('allows bounded GitHub pages and rejects extra or duplicate parameters', () => {
     assert.doesNotThrow(() => validateGhEndpoint('repos/owner/repo/commits?per_page=20&page=2'));
     for (const suffix of ['0', '-1', '10001', '2&page=3', '2&other=true']) {

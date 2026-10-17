@@ -15,6 +15,7 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
   onRecheck,
   isChecking,
 }) => {
+
   // If loading initially with no data yet, show loading splash
   if (loading && !prerequisites) {
     return (
@@ -36,8 +37,10 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
   }
 
   const isOrcaAppMissing = !prerequisites?.orcaApp;
+  const isOrcaAppClosed = !isOrcaAppMissing && !prerequisites?.orcaAppOpen;
   const isCliMissing = !prerequisites?.orcaCli;
   const isSkillMissing = !prerequisites?.orchestrationSkill;
+  const isCliSkillMissing = !prerequisites?.orcaCliSkill;
 
   return (
     <div
@@ -66,7 +69,7 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
         <div className="prereq-checklist">
           {/* 1. Orca Desktop App */}
           <div
-            className={`prereq-item ${isOrcaAppMissing ? 'prereq-item--missing' : 'prereq-item--ok'}`}
+            className={`prereq-item ${isOrcaAppMissing || isOrcaAppClosed ? 'prereq-item--missing' : 'prereq-item--ok'}`}
             data-testid="prereq-item-app"
           >
             <div className="prereq-item-header">
@@ -82,6 +85,8 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
                 <span className="prereq-item-summary">
                   {isOrcaAppMissing
                     ? 'Orca not downloaded'
+                    : isOrcaAppClosed
+                    ? (prerequisites?.version ? `Installed (v${prerequisites.version}) - Closed` : 'Installed - Closed')
                     : prerequisites?.version
                     ? `Detected (v${prerequisites.version})`
                     : 'Detected'}
@@ -92,6 +97,11 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
                   <span className="prereq-badge prereq-badge--missing">
                     <AlertIcon />
                     Not Downloaded
+                  </span>
+                ) : isOrcaAppClosed ? (
+                  <span className="prereq-badge prereq-badge--missing">
+                    <AlertIcon />
+                    Not Running
                   </span>
                 ) : (
                   <span className="prereq-badge prereq-badge--ok">
@@ -123,6 +133,17 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
                     </svg>
                   </a>
                   <span className="prereq-link-caption">https://www.onorca.dev/</span>
+                </div>
+              </div>
+            )}
+
+            {isOrcaAppClosed && (
+              <div className="prereq-item-body">
+                <p className="prereq-item-detail">
+                  The Orca desktop application is installed, but it is currently closed. Orca must be running to observe and coordinate tasks.
+                </p>
+                <div className="prereq-callout" data-testid="prereq-app-closed-notice">
+                  <strong>Action required:</strong> Please open the <strong>Orca</strong> desktop application on your computer. This screen will automatically unlock once Orca is running.
                 </div>
               </div>
             )}
@@ -218,8 +239,60 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
                 </p>
                 <div className="prereq-callout">
                   <strong>How to download & install:</strong> Open the Orca desktop app, navigate to the{' '}
-                  <code className="prereq-inline-code">Settings &gt; Orchestration</code> tab, search for{' '}
+                  <code className="prereq-inline-code">Settings &gt; Skills</code> tab, search for{' '}
                   <strong>&ldquo;Orchestration&rdquo;</strong>, and click <strong>&ldquo;Install&rdquo;</strong>.
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 4. Orca CLI Agent Skill */}
+          <div
+            className={`prereq-item ${isCliSkillMissing ? 'prereq-item--missing' : 'prereq-item--ok'}`}
+            data-testid="prereq-item-cli-skill"
+          >
+            <div className="prereq-item-header">
+              <div className="prereq-item-icon" aria-hidden="true">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z" />
+                </svg>
+              </div>
+              <div className="prereq-item-info">
+                <span className="prereq-item-title">Orca CLI Agent Skill (orca-cli)</span>
+                <span className="prereq-item-summary">
+                  {isCliSkillMissing ? 'Orca-cli skill not installed' : 'Installed and detected'}
+                </span>
+              </div>
+              <div className="prereq-item-badge-wrap">
+                {isCliSkillMissing ? (
+                  <span className="prereq-badge prereq-badge--missing">
+                    <AlertIcon />
+                    Not Installed
+                  </span>
+                ) : (
+                  <span className="prereq-badge prereq-badge--ok">
+                    <CheckIcon />
+                    Detected
+                  </span>
+                )}
+              </div>
+            </div>
+
+            {isCliSkillMissing && (
+              <div className="prereq-item-body">
+                <p className="prereq-item-detail">
+                  The <code className="prereq-inline-code">orca-cli</code> agent skill is required for coding agents to manage Orca worktrees, terminals, and progress workflows.
+                </p>
+                <div className="prereq-callout">
+                  <strong>How to download & install:</strong> Run the following command in your terminal:
+                  <div style={{ marginTop: '6px' }}>
+                    <code className="prereq-inline-code" style={{ userSelect: 'all', display: 'inline-block', padding: '4px 8px' }}>
+                      npx skills add https://github.com/stablyai/orca --skill orca-cli
+                    </code>
+                  </div>
+                  <div style={{ marginTop: '4px', fontSize: '11px', opacity: 0.85 }}>
+                    Or install it through the Orca desktop app under <strong>Settings &gt; Orca CLI &gt; CLI skill</strong>.
+                  </div>
                 </div>
               </div>
             )}

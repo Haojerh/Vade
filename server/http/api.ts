@@ -29,6 +29,9 @@ export interface ApiServerOptions {
   devMode?: boolean;
   usageCollector?: UsageCollector;
   checkAppInstallation?: () => boolean;
+  checkAppOpen?: () => Promise<boolean> | boolean;
+  checkCliSkillInstallation?: () => boolean;
+  checkOrchestrationSkillInstallation?: () => boolean;
 }
 
 const MIME_TYPES: Record<string, string> = {
@@ -135,7 +138,8 @@ export function createApiHandler(options: ApiServerOptions = {}) {
     const pathname = reqUrl.pathname;
 
     // POST is strictly allowed only for agent node messaging
-    if (reqMethod === 'POST' && !pathname.match(/^\/api\/projects\/[a-zA-Z0-9_.-]+\/nodes\/[a-zA-Z0-9_.-]+\/message$/)) {
+    const isMessagePost = pathname.match(/^\/api\/projects\/[a-zA-Z0-9_.-]+\/nodes\/[a-zA-Z0-9_.-]+\/message$/);
+    if (reqMethod === 'POST' && !isMessagePost) {
       sendError(405, 'METHOD_NOT_ALLOWED', `Method ${reqMethod} is not allowed for ${pathname}`);
       return;
     }
@@ -189,6 +193,9 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           }
           const prereqs = await checkPrerequisites(runner, {
             checkAppInstallation: options.checkAppInstallation,
+            checkAppOpen: options.checkAppOpen,
+            checkCliSkillInstallation: options.checkCliSkillInstallation,
+            checkOrchestrationSkillInstallation: options.checkOrchestrationSkillInstallation,
           });
           sendJson(200, prereqs);
           return;

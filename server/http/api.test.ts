@@ -142,11 +142,18 @@ describe('server/api', () => {
           exitCode: 0,
         };
       }
+      if (cmd.includes('open')) {
+        return {
+          stdout: JSON.stringify({ ok: true, result: { app: { running: true } } }),
+          stderr: '',
+          exitCode: 0,
+        };
+      }
       return { stdout: '{}', stderr: '', exitCode: 0 };
     };
 
     const snapshotManager = new SnapshotManager(fakeRunner);
-    server = createServer({ runner: fakeRunner, snapshotManager, usageCollector: new UsageCollector(async () => ({
+    server = createServer({ runner: fakeRunner, snapshotManager, checkCliSkillInstallation: () => true, usageCollector: new UsageCollector(async () => ({
       accounts: [{ email: 'private@example.test', token: 'secret' }],
       rateLimits: { codex: { provider: 'codex', status: 'ok', updatedAt: Date.now(),
         session: { usedPercent: 8, resetsAt: Date.now() + 3600000 } } },
@@ -187,13 +194,24 @@ describe('server/api', () => {
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(typeof body.orcaApp, 'boolean');
+    assert.equal(typeof body.orcaAppOpen, 'boolean');
     assert.equal(typeof body.orcaCli, 'boolean');
     assert.equal(typeof body.orchestrationSkill, 'boolean');
+    assert.equal(typeof body.orcaCliSkill, 'boolean');
     assert.equal(typeof body.ready, 'boolean');
     assert.equal(body.orcaApp, true);
+    assert.equal(body.orcaAppOpen, true);
     assert.equal(body.orcaCli, true);
     assert.equal(body.orchestrationSkill, true);
+    assert.equal(body.orcaCliSkill, true);
     assert.equal(body.ready, true);
+  });
+
+  test('POST /api/prerequisites returns 405 Method Not Allowed', async () => {
+    const res = await fetch(`${baseUrl}/api/prerequisites`, { method: 'POST' });
+    assert.equal(res.status, 405);
+    const body = await res.json();
+    assert.equal(body.error.code, 'METHOD_NOT_ALLOWED');
   });
 
   test('GET /api/prerequisites with unexpected query returns 400', async () => {

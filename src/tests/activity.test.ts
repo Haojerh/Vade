@@ -447,8 +447,10 @@ test('NodeDetails does not render settings button and respects visibleSections',
 test('PrerequisitesGate returns null when all prerequisites are ready', () => {
   const readyStatus: PrerequisitesStatus = {
     orcaApp: true,
+    orcaAppOpen: true,
     orcaCli: true,
     orchestrationSkill: true,
+    orcaCliSkill: true,
     ready: true,
     version: '1.4.224',
   };
@@ -464,8 +466,10 @@ test('PrerequisitesGate returns null when all prerequisites are ready', () => {
 test('PrerequisitesGate shows "Orca not downloaded" and link to https://www.onorca.dev/ when orcaApp is missing', () => {
   const missingApp: PrerequisitesStatus = {
     orcaApp: false,
+    orcaAppOpen: false,
     orcaCli: false,
     orchestrationSkill: false,
+    orcaCliSkill: false,
     ready: false,
   };
   const html = renderToStaticMarkup(createElement(PrerequisitesGate, {
@@ -480,11 +484,36 @@ test('PrerequisitesGate shows "Orca not downloaded" and link to https://www.onor
   assert.ok(html.includes('Download Orca'));
 });
 
+test('PrerequisitesGate shows app closed notice when installed but not open', () => {
+  const appClosed: PrerequisitesStatus = {
+    orcaApp: true,
+    orcaAppOpen: false,
+    orcaCli: true,
+    orchestrationSkill: true,
+    orcaCliSkill: true,
+    ready: false,
+    version: '1.4.224',
+  };
+  const html = renderToStaticMarkup(createElement(PrerequisitesGate, {
+    prerequisites: appClosed,
+    loading: false,
+    onRecheck: () => {},
+    isChecking: false,
+  }));
+  assert.ok(html.includes('Not Running'));
+  assert.ok(html.includes('Installed (v1.4.224) - Closed'));
+  assert.ok(html.includes('Orca desktop application is installed, but it is currently closed.'));
+  assert.ok(html.includes('Please open the'));
+  assert.ok(html.includes('data-testid="prereq-app-closed-notice"'));
+});
+
 test('PrerequisitesGate asks to download through Orca app when CLI or Orchestration skill is missing', () => {
   const missingCliAndSkill: PrerequisitesStatus = {
     orcaApp: true,
+    orcaAppOpen: true,
     orcaCli: false,
     orchestrationSkill: false,
+    orcaCliSkill: true,
     ready: false,
     version: '1.4.224',
   };
@@ -503,6 +532,27 @@ test('PrerequisitesGate asks to download through Orca app when CLI or Orchestrat
   // Skill is missing and asks to install through Orca app
   assert.ok(html.includes('Orchestration skill not downloaded'));
   assert.ok(html.includes('Skills'));
+});
+
+test('PrerequisitesGate shows orca-cli skill missing and command to install', () => {
+  const missingSkill: PrerequisitesStatus = {
+    orcaApp: true,
+    orcaAppOpen: true,
+    orcaCli: true,
+    orchestrationSkill: true,
+    orcaCliSkill: false,
+    ready: false,
+    version: '1.4.224',
+  };
+  const html = renderToStaticMarkup(createElement(PrerequisitesGate, {
+    prerequisites: missingSkill,
+    loading: false,
+    onRecheck: () => {},
+    isChecking: false,
+  }));
+  assert.ok(html.includes('Orca CLI Agent Skill (orca-cli)'));
+  assert.ok(html.includes('Orca-cli skill not installed'));
+  assert.ok(html.includes('npx skills add https://github.com/stablyai/orca --skill orca-cli'));
 });
 
 test('PrerequisitesGate renders loading state when initially loading without data', () => {

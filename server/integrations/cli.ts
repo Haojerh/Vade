@@ -19,6 +19,7 @@ export type CommandRunner = (
     maxStderr?: number;
     cwd?: string;
     env?: NodeJS.ProcessEnv;
+    replaceEnv?: boolean;
   }
 ) => Promise<CommandResult>;
 
@@ -106,7 +107,7 @@ export const defaultCommandRunner: CommandRunner = async (
         cwd: options.cwd,
         shell: false,
         windowsHide: true,
-        env: options.env ? { ...process.env, ...options.env } : process.env,
+        env: options.replaceEnv ? options.env : options.env ? { ...process.env, ...options.env } : process.env,
       });
 
       const timer = setTimeout(() => {
@@ -166,11 +167,11 @@ export const defaultCommandRunner: CommandRunner = async (
 export async function runDeduplicatedCommand(
   executable: string,
   args: string[],
-  options?: { timeoutMs?: number; maxStdout?: number; maxStderr?: number; cwd?: string; env?: NodeJS.ProcessEnv },
+  options?: { timeoutMs?: number; maxStdout?: number; maxStderr?: number; cwd?: string; env?: NodeJS.ProcessEnv; replaceEnv?: boolean },
   runner: CommandRunner = defaultCommandRunner
 ): Promise<CommandResult> {
   const environmentKey = options?.env ? crypto.createHash('sha256').update(JSON.stringify(options.env)).digest('hex') : '';
-  const cacheKey = `${executable}::${JSON.stringify(args)}::${options?.cwd ?? ''}::${environmentKey}`;
+  const cacheKey = `${executable}::${JSON.stringify(args)}::${options?.cwd ?? ''}::${options?.replaceEnv ?? false}::${environmentKey}`;
   const existing = inFlightRequests.get(cacheKey);
   if (existing) {
     return existing;
@@ -191,6 +192,7 @@ export function validateOrcaArgs(args: string[]): void {
 
   const sub = args[0];
   if (sub === 'status' && args.length === 2 && args[1] === '--json') return;
+  if (sub === 'skills' && args[1] === 'installed' && args[2] === '--json' && args.length === 3) return;
   if (sub === 'project' && args[1] === 'list' && args[2] === '--json') return;
   if (sub === 'project' && args[1] === 'setups' && args[2] === '--json') return;
   if (sub === 'repo' && args[1] === 'list' && args[2] === '--json') return;
@@ -396,13 +398,24 @@ export function cleanErrorMessage(msg: string): string {
   return cleaned || msg;
 }
 
+export interface RunOrcaOptions {
+  timeoutMs?: number;
+  env?: NodeJS.ProcessEnv;
+  replaceEnv?: boolean;
+}
+
 export async function runOrca<T = any>(
   args: string[],
-  runner: CommandRunner = defaultCommandRunner
+  runner: CommandRunner = defaultCommandRunner,
+  options?: RunOrcaOptions
 ): Promise<OrcaEnvelope<T>> {
   validateOrcaArgs(args);
 
-  const res = await runDeduplicatedCommand(ORCA_PATH, args, { timeoutMs: 8000 }, runner);
+  const timeoutMs = options?.timeoutMs ?? 8000;
+  const res = await runDeduplicatedCommand(ORCA_PATH, args, {
+    timeoutMs,
+    ...(options?.env ? { env: options.env, replaceEnv: options.replaceEnv } : {}),
+  }, runner);
 
   if (res.exitCode !== 0) {
     let msg = `Orca CLI exited with code ${res.exitCode}`;

@@ -69,8 +69,10 @@ export const App: React.FC = () => {
     } catch {
       setPrerequisites({
         orcaApp: false,
+        orcaAppOpen: false,
         orcaCli: false,
         orchestrationSkill: false,
+        orcaCliSkill: false,
         ready: false,
         issues: ['Prerequisites check failed to connect to local server.'],
       });

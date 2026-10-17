@@ -1,3 +1,4 @@
+import child_process from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -3112,7 +3113,7 @@ export async function sendAgentMessage(
   throw new CliError('NODE_NOT_FOUND', `No active terminal or dispatch found for node ${nodeId}`);
 }
 
-export function detectOrcaAppInstallation(): boolean {
+export function resolveOrcaAppExecutable(): string | null {
   const localAppData = process.env.LOCALAPPDATA || '';
   const programFiles = process.env.ProgramFiles || 'C:\\Program Files';
   const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
@@ -3138,6 +3139,127 @@ export function detectOrcaAppInstallation(): boolean {
   for (const candidate of candidates) {
     try {
       if (fs.existsSync(candidate)) {
+        return candidate;
+      }
+    } catch {
+      // Ignore filesystem errors
+    }
+  }
+  return null;
+}
+
+export function isCliOnPath(): boolean {
+  try {
+    if (process.platform === 'win32') {
+      // 1. Check process.env.PATH
+      const pathEnv = process.env.PATH || process.env.Path || '';
+      const pathEntries = pathEnv.split(';').map((p) => p.trim());
+      const isDirectlyOnEnvPath = pathEntries.some((entry) => {
+        if (!entry) return false;
+        try {
+          return fs.existsSync(path.join(entry, 'orca.exe')) || fs.existsSync(path.join(entry, 'orca.cmd'));
+        } catch {
+          return false;
+        }
+      });
+      if (isDirectlyOnEnvPath) return true;
+
+      // 2. Check where.exe orca
+      try {
+        const whereOut = child_process.execSync('where.exe orca', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true,
+          timeout: 2000,
+        });
+        if (whereOut && whereOut.trim().length > 0) return true;
+      } catch {
+        // where.exe failed or not found
+      }
+
+      // 3. Check HKCU\Environment\Path in Windows registry
+      try {
+        const regOut = child_process.execSync('reg query "HKCU\\Environment" /v Path', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true,
+          timeout: 2000,
+        });
+        const match = regOut.match(/Path\s+REG_(?:EXPAND_)?SZ\s+(.*)/i);
+        if (match && match[1]) {
+          const userPathEntries = match[1].split(';').map((p) => p.trim());
+          return userPathEntries.some((entry) => {
+            if (!entry) return false;
+            try {
+              return fs.existsSync(path.join(entry, 'orca.exe')) || fs.existsSync(path.join(entry, 'orca.cmd'));
+            } catch {
+              return false;
+            }
+          });
+        }
+      } catch {
+        // reg query failed
+      }
+      return false;
+    } else {
+      // Unix / macOS: check process.env.PATH and `which orca`
+      const pathEnv = process.env.PATH || '';
+      const pathEntries = pathEnv.split(':').map((p) => p.trim());
+      const isOnPath = pathEntries.some((entry) => {
+        if (!entry) return false;
+        try {
+          return fs.existsSync(path.join(entry, 'orca'));
+        } catch {
+          return false;
+        }
+      });
+      if (isOnPath) return true;
+
+      try {
+        const whichOut = child_process.execSync('which orca', {
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+          timeout: 2000,
+        });
+        return Boolean(whichOut && whichOut.trim().length > 0);
+      } catch {
+        return false;
+      }
+    }
+  } catch {
+    return false;
+  }
+}
+
+export function detectOrcaCliInstallation(): boolean {
+  return isCliOnPath();
+}
+
+export function detectOrcaAppInstallation(): boolean {
+  return resolveOrcaAppExecutable() !== null;
+}
+
+export function detectOrcaCliSkillInstallation(): boolean {
+  const homeDir = process.env.USERPROFILE || process.env.HOME || '';
+  const candidates: string[] = [
+    // Claude Code
+    path.join(homeDir, '.claude', 'skills', 'orca-cli'),
+    // Canonical / Codex / general agent skills
+    path.join(homeDir, '.agents', 'skills', 'orca-cli'),
+    path.join(homeDir, '.codex', 'skills', 'orca-cli'),
+    // Antigravity / Gemini CLI
+    path.join(homeDir, '.gemini', 'config', 'skills', 'orca-cli'),
+    path.join(homeDir, '.gemini', 'skills', 'orca-cli'),
+    // Cursor
+    path.join(homeDir, '.cursor', 'skills', 'orca-cli'),
+    // Universal .skills / .orca
+    path.join(homeDir, '.skills', 'orca-cli'),
+    path.join(homeDir, '.orca', 'skills', 'orca-cli'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
         return true;
       }
     } catch {
@@ -3147,9 +3269,92 @@ export function detectOrcaAppInstallation(): boolean {
   return false;
 }
 
+export function detectOrchestrationSkillInstallation(): boolean {
+  const homeDir = process.env.USERPROFILE || process.env.HOME || '';
+  const candidates: string[] = [
+    // Codex / general agent skills
+    path.join(homeDir, '.codex', 'skills', 'orchestration'),
+    path.join(homeDir, '.agents', 'skills', 'orchestration'),
+    // Claude Code
+    path.join(homeDir, '.claude', 'skills', 'orchestration'),
+    // Antigravity / Gemini CLI
+    path.join(homeDir, '.gemini', 'config', 'skills', 'orchestration'),
+    path.join(homeDir, '.gemini', 'skills', 'orchestration'),
+    // Cursor
+    path.join(homeDir, '.cursor', 'skills', 'orchestration'),
+    // OpenCode / Factory / Continue / etc.
+    path.join(homeDir, '.config', 'opencode', 'skills', 'orchestration'),
+    path.join(homeDir, '.factory', 'skills', 'orchestration'),
+    path.join(homeDir, '.continue', 'skills', 'orchestration'),
+    path.join(homeDir, '.trae-cn', 'skills', 'orchestration'),
+    path.join(homeDir, '.grok', 'skills', 'orchestration'),
+    path.join(homeDir, '.augment', 'skills', 'orchestration'),
+    path.join(homeDir, '.config', 'muse', 'skills', 'orchestration'),
+    path.join(homeDir, '.zcode', 'skills', 'orchestration'),
+    // Universal .skills / .orca
+    path.join(homeDir, '.skills', 'orchestration'),
+    path.join(homeDir, '.orca', 'skills', 'orchestration'),
+  ];
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) {
+        return true;
+      }
+    } catch {
+      // Ignore filesystem errors
+    }
+  }
+  return false;
+}
+
+export function isOrcaAppProcessRunning(): boolean {
+  try {
+    if (process.platform === 'win32') {
+      const out = child_process.execSync('tasklist /FI "IMAGENAME eq Orca.exe" /FO CSV', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        windowsHide: true,
+        timeout: 2000,
+      });
+      const lines = out.split('\n').filter((l) => l.toLowerCase().includes('"orca.exe"'));
+      if (lines.length === 0) return false;
+      // Headless daemon-host is 1 or 2 processes with modest memory. The desktop app spawns 6+ processes.
+      if (lines.length > 2) return true;
+      for (const line of lines) {
+        const match = line.match(/"([\d,]+)\s*K"/i);
+        if (match) {
+          const memK = parseInt(match[1].replace(/,/g, ''), 10);
+          if (memK > 120000) return true;
+        }
+      }
+      return false;
+    } else if (process.platform === 'darwin') {
+      const out = child_process.execSync('pgrep -x "Orca" || pgrep -f "Orca.app"', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 2000,
+      });
+      return out.trim().length > 0;
+    } else {
+      const out = child_process.execSync('pgrep -x "orca-app" || pgrep -x "orca"', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 2000,
+      });
+      return out.trim().length > 0;
+    }
+  } catch {
+    return false;
+  }
+}
+
 export interface CheckPrerequisitesOptions {
   checkAppInstallation?: () => boolean;
+  checkAppOpen?: () => Promise<boolean> | boolean;
   checkCliInstallation?: () => boolean;
+  checkCliSkillInstallation?: () => boolean;
+  checkOrchestrationSkillInstallation?: () => boolean;
 }
 
 export async function checkPrerequisites(
@@ -3157,18 +3362,22 @@ export async function checkPrerequisites(
   options?: CheckPrerequisitesOptions
 ): Promise<PrerequisitesStatus> {
   const checkApp = options?.checkAppInstallation ?? detectOrcaAppInstallation;
+  const checkCli = options?.checkCliInstallation ?? detectOrcaCliInstallation;
+  const checkCliSkill = options?.checkCliSkillInstallation ?? detectOrcaCliSkillInstallation;
+  const checkOrchSkill = options?.checkOrchestrationSkillInstallation ?? detectOrchestrationSkillInstallation;
+
   let orcaApp = checkApp();
-  let orcaCli = false;
+  let orcaAppOpen = false;
+  let orcaCli = checkCli();
   let orchestrationSkill = false;
+  let orcaCliSkill = false;
   let version: string | null = null;
   const issues: string[] = [];
 
   let statusResult: any = null;
-  let cliMissing = false;
   try {
     const res = await runOrca<any>(['status', '--json'], runner);
     statusResult = res?.result;
-    orcaCli = true;
     const meta = res?._meta as any;
     if (meta?.appVersion || statusResult?.runtime?.appVersion) {
       version = meta?.appVersion || statusResult?.runtime?.appVersion || null;
@@ -3181,61 +3390,101 @@ export async function checkPrerequisites(
       err?.issue?.code === 'CLI_MISSING' ||
       (err?.message && (err.message.includes('ENOENT') || err.message.includes('not found') || err.message.includes('not recognized')))
     ) {
-      cliMissing = true;
       orcaCli = false;
+    }
+  }
+
+  // Check Skills: Authoritatively from Orca daemon if CLI runnable, otherwise fallback to user home dirs
+  if (orcaCli) {
+    const capabilities = statusResult?.runtime?.capabilities;
+    const runtimeHasOrch = Array.isArray(capabilities)
+      ? capabilities.some((cap: string) => typeof cap === 'string' && cap.startsWith('orchestration.'))
+      : true;
+
+    if (runtimeHasOrch) {
+      let queriedSkills = false;
+      try {
+        const skillsRes = await runOrca<any>(['skills', 'installed', '--json'], runner);
+        if (skillsRes?.result?.skills && Array.isArray(skillsRes.result.skills)) {
+          queriedSkills = true;
+          const installedSkills: any[] = skillsRes.result.skills;
+          const isHomeOrBundled = (s: any) => s.sourceKind === 'home' || s.sourceKind === 'bundled';
+          const hasOrch = installedSkills.some(
+            (s: any) =>
+              (s.name === 'orchestration' || s.id === 'orchestration') &&
+              isHomeOrBundled(s)
+          );
+          const hasCli = installedSkills.some(
+            (s: any) =>
+              (s.name === 'orca-cli' || s.id === 'orca-cli') &&
+              isHomeOrBundled(s)
+          );
+          orchestrationSkill = options?.checkOrchestrationSkillInstallation
+            ? options.checkOrchestrationSkillInstallation()
+            : hasOrch;
+          orcaCliSkill = options?.checkCliSkillInstallation
+            ? options.checkCliSkillInstallation()
+            : hasCli;
+        }
+      } catch {
+        // Fall through to file-based check
+      }
+
+      if (!queriedSkills) {
+        orchestrationSkill = checkOrchSkill();
+        orcaCliSkill = checkCliSkill();
+      }
     } else {
-      const exists = options?.checkCliInstallation ? options.checkCliInstallation() : (path.isAbsolute(ORCA_PATH) && fs.existsSync(ORCA_PATH));
-      if (exists) {
-        orcaCli = true;
-      }
-    }
-  }
-
-  if (!cliMissing && !orcaCli) {
-    const exists = options?.checkCliInstallation ? options.checkCliInstallation() : (path.isAbsolute(ORCA_PATH) && fs.existsSync(ORCA_PATH));
-    if (exists) {
-      orcaCli = true;
-    }
-  }
-
-  // Check Orchestration Skill
-  const capabilities = statusResult?.runtime?.capabilities;
-  if (Array.isArray(capabilities)) {
-    if (capabilities.some((cap: string) => typeof cap === 'string' && cap.startsWith('orchestration.'))) {
-      orchestrationSkill = true;
-    }
-  }
-
-  if (orcaCli && !orchestrationSkill) {
-    try {
-      const orchRes = await runOrca<any>(['orchestration', 'run-list', '--limit', '1', '--json'], runner);
-      if (orchRes && (orchRes.ok || orchRes.result)) {
-        orchestrationSkill = true;
-      }
-    } catch {
       orchestrationSkill = false;
+      orcaCliSkill = checkCliSkill();
     }
+  } else {
+    orchestrationSkill = false;
+    orcaCliSkill = checkCliSkill();
+  }
+
+  // Determine if Orca desktop application is currently running / open
+  if (options?.checkAppOpen) {
+    orcaAppOpen = await Promise.resolve(options.checkAppOpen());
+  } else if (statusResult?.app?.desktopWindowStatus === 'available') {
+    orcaAppOpen = true;
+  } else if (typeof statusResult?.app?.desktopWindowStatus === 'string' && statusResult.app.desktopWindowStatus !== 'available') {
+    orcaAppOpen = false;
+  } else if (statusResult?.app?.running === true) {
+    orcaAppOpen = true;
+  } else if (statusResult?.app?.running === false) {
+    orcaAppOpen = false;
+  } else if (orcaApp) {
+    // If statusResult was not conclusive or CLI call failed, check the OS process table
+    orcaAppOpen = isOrcaAppProcessRunning();
   }
 
   if (!orcaApp) {
     issues.push('Orca desktop application is not installed.');
+  } else if (!orcaAppOpen) {
+    issues.push('Orca desktop application is closed / not running.');
   }
+
   if (!orcaCli) {
     issues.push('Orca CLI is not installed or not in PATH.');
   }
   if (!orchestrationSkill) {
-    issues.push('Orca Orchestration skill is not installed or enabled.');
+    issues.push('Orca Orchestration skill is not installed.');
+  }
+  if (!orcaCliSkill) {
+    issues.push('Orca CLI skill (orca-cli) is not installed.');
   }
 
-  const ready = orcaApp && orcaCli && orchestrationSkill;
+  const ready = orcaApp && orcaAppOpen && orcaCli && orchestrationSkill && orcaCliSkill;
 
   return {
     orcaApp,
+    orcaAppOpen,
     orcaCli,
     orchestrationSkill,
+    orcaCliSkill,
     ready,
     version,
     ...(issues.length > 0 ? { issues } : {}),
   };
 }
-

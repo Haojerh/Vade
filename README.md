@@ -17,6 +17,8 @@ Open **http://127.0.0.1:5173** and select an Orca project. For GitHub activity, 
 
 ## Prerequisites
 
+The prerequisite gate verifies that the Orca desktop application is installed and running, the CLI is available on `PATH`, and required agent skills are installed. If Orca is closed, launch the Orca desktop application on your computer to unlock the dashboard.
+
 - **Node.js**: Node.js 22.13+ with built-in `node:sqlite` support.
 - **Orca Desktop Application**: Locally installed Orca desktop application (available from [https://www.onorca.dev/](https://www.onorca.dev/)). If Orca is not detected on webapp startup, access is blocked and users are directed to download Orca from the official website.
 - **Orca CLI (`orca-cli`)**: Locally installed Orca CLI binary accessible via `PATH` or discovered automatically at `%LOCALAPPDATA%\Programs\orca\resources\bin\orca.exe` (can also be customized via `ORCA_PATH` environment variable). If missing, install it through the Orca desktop app (`Settings > CLI`).

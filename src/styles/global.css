@@ -3725,9 +3725,26 @@ dialog.node-modal-dialog.is-closing::backdrop {
   border-color: #2563eb;
 }
 
-.prereq-btn--primary:hover {
+.prereq-btn--primary:hover:not(:disabled) {
   background: #2563eb;
   transform: translateY(-1px);
+}
+
+.prereq-btn--primary:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.prereq-spinner-sm {
+  width: 13px;
+  height: 13px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: prereqSpin 0.8s linear infinite;
+  display: inline-block;
+  vertical-align: middle;
 }
 
 .prereq-link-caption {

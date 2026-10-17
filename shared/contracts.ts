@@ -287,8 +287,10 @@ export interface SendMessageResponse {
 
 export interface PrerequisitesStatus {
   orcaApp: boolean;
+  orcaAppOpen: boolean;
   orcaCli: boolean;
   orchestrationSkill: boolean;
+  orcaCliSkill: boolean;
   ready: boolean;
   version?: string | null;
   issues?: string[];
