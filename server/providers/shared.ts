@@ -1,5 +1,9 @@
 export const localTranscriptProviders = ['codex', 'claude', 'omp', 'pi', 'opencode', 'kilocode', 'kilo'];
 
+export function sameTranscriptProvider(a: string, b: string): boolean {
+  return a === b || (['kilo', 'kilocode'].includes(a) && ['kilo', 'kilocode'].includes(b));
+}
+
 export function stripAnsiCodes(str: string): string {
   return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
 }

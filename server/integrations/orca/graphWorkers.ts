@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { Id, Run, Node, Edge } from '../../../shared/contracts.js';
 import { runOrca, CommandRunner } from '../cli.js';
 import { readAntigravityModel } from '../../providers/antigravity.js';
-import { transcriptSettings } from '../../providers/shared.js';
+import { transcriptSettings, sameTranscriptProvider } from '../../providers/shared.js';
 import { openCodeDatabase, readOpenCodeModel, findOpenCodeSession } from '../../providers/opencode.js';
 import {
   hashId,
@@ -536,7 +536,7 @@ export async function enrichAgentModelsAndEffort(nodes: Node[]): Promise<void> {
       if (
         !entry ||
         (entry.worktreeId && entry.worktreeId !== node.worktreeId) ||
-        (entry.source && node.agentType && entry.source !== node.agentType)
+        (entry.source && node.agentType && !sameTranscriptProvider(entry.source, node.agentType))
       ) {
         continue;
       }
@@ -547,8 +547,9 @@ export async function enrichAgentModelsAndEffort(nodes: Node[]): Promise<void> {
   // For any agent nodes that didn't get model/effort from live hooks (e.g. standalone or resumed sessions)
   for (const node of nodes) {
     if (node.kind !== 'agent' && node.kind !== 'orchestrator') continue;
-    if (node.model) continue;
     if (!['opencode', 'kilo', 'kilocode'].includes(node.agentType || '')) continue;
+    if (!node.toolActivity) await collectToolActivity(node, null, isAllowedPath);
+    if (node.model) continue;
 
     try {
       const nodeSource = globalSourceMaps.nodeSourceMap.get(node.id);

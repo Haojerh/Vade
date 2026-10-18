@@ -15,6 +15,7 @@ export interface NodeSourceEntry {
   paneKey?: string;
   endpointIncarnation?: string;
   ptyId?: string;
+  terminalTitle?: string;
 }
 
 // In-memory mappings between source identifiers and API IDs

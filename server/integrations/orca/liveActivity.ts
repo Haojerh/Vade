@@ -3,7 +3,8 @@ import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import type { Edge, Node, Run, Section, ToolActivity } from '../../../shared/contracts.js';
 import { databaseToolActivity, transcriptToolActivity } from '../../providers/toolActivity.js';
-import { openCodeDatabase } from '../../providers/opencode.js';
+import { openCodeDatabase, findExactOpenCodePaneSession } from '../../providers/opencode.js';
+import { sameTranscriptProvider } from '../../providers/shared.js';
 import { readAntigravityToolActivity } from '../../providers/antigravity.js';
 import { globalSourceMaps } from './state.js';
 import { hashId, readBoundedTranscriptLines } from './utils.js';
@@ -17,8 +18,19 @@ export async function collectToolActivity(node: Node, entry: any, allowed: (file
     observedAt: failed ? null : now, stale: false, partial: true,
     issue: failed ? { code: 'SOURCE_CHANGED', message: 'Tool activity could not be read from the bound provider session.', retryable: true } : null,
   } });
+  const observed = (items: ToolActivity[]) => section([...new Map(items.map((item) => [item.id, item])).values()].slice(-200));
   if (!providers.includes(node.agentType || '')) return;
-  if ((entry.source && entry.source !== node.agentType) || (entry.worktreeId && entry.worktreeId !== node.worktreeId)) {
+  if (!entry && ['opencode', 'kilo', 'kilocode'].includes(node.agentType!)) {
+    const source = globalSourceMaps.nodeSourceMap.get(node.id);
+    try {
+      const found = source?.terminalTitle && node.path
+        ? findExactOpenCodePaneSession(node.agentType!, source.terminalTitle, node.path, allowed) : null;
+      if (!found) { node.toolActivity = section(null, true); return; }
+      node.toolActivity = observed(databaseToolActivity(found.dbPath, found.sessionId));
+    } catch { node.toolActivity = section(null, true); }
+    return;
+  }
+  if (!entry || (entry.source && !sameTranscriptProvider(entry.source, node.agentType!)) || (entry.worktreeId && entry.worktreeId !== node.worktreeId)) {
     node.toolActivity = section(null, true);
     return;
   }
@@ -43,7 +55,7 @@ export async function collectToolActivity(node: Node, entry: any, allowed: (file
         (line) => transcriptToolActivity(node.agentType!, session, line).length > 0);
       items = recent.lines.flatMap((line) => transcriptToolActivity(node.agentType!, session, line));
     }
-    node.toolActivity = section([...new Map(items.map((item) => [item.id, item])).values()].slice(-200));
+    node.toolActivity = observed(items);
   } catch { node.toolActivity = section(null, true); }
 }
 

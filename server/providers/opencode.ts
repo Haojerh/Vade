@@ -39,6 +39,33 @@ export function openCodeDatabase(provider: string, sessionId: string, allowed: (
   return null;
 }
 
+/** Older Orca versions do not emit Kilo hooks. Accept only a provider-owned terminal title
+ * with one exact matching session in the discovered directory; ambiguity never chooses newest.
+ */
+export function findExactOpenCodePaneSession(provider: string, terminalTitle: string, directory: string, allowed: (file: string) => boolean): { dbPath: string; sessionId: string } | null {
+  const prefix = provider === 'opencode' ? /^(?:OC|OpenCode)\s*\|\s*/i : /^(?:Kilo(?:\s+(?:CLI|Code))?|KC)\s*\|\s*/i;
+  if (!directory || !prefix.test(terminalTitle)) return null;
+  const title = terminalTitle.replace(prefix, '').trim();
+  if (!title || /\.{2,}$|…$/.test(title)) return null;
+  const normalizeDirectory = (value: string) => path.normalize(value).replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+  const expectedDirectory = normalizeDirectory(directory);
+  const matches: { dbPath: string; sessionId: string }[] = [];
+  for (const file of openCodeDatabaseCandidates(provider).candidates) {
+    if (!allowed(file) || !fs.existsSync(file)) continue;
+    const db = new DatabaseSync(file, { readOnly: true });
+    try {
+      const rows = db.prepare('SELECT id, directory FROM session WHERE lower(trim(title)) = ? LIMIT 201').all(title.toLowerCase());
+      if (rows.length > 200) return null;
+      for (const row of rows) {
+        if (typeof row.id !== 'string' || typeof row.directory !== 'string' || normalizeDirectory(row.directory) !== expectedDirectory) continue;
+        matches.push({ dbPath: file, sessionId: row.id });
+        if (matches.length > 1) return null;
+      }
+    } finally { db.close(); }
+  }
+  return matches[0] ?? null;
+}
+
 export function readOpenCodePage(
   file: string,
   sessionId: string,

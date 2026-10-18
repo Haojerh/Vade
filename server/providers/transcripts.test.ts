@@ -5,14 +5,57 @@ import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { publicTranscriptRecord, transcriptSettings } from './shared.js';
-import { readOpenCodePage, readOpenCodeModel, findOpenCodeSession } from './opencode.js';
+import { readOpenCodePage, readOpenCodeModel, findOpenCodeSession, findExactOpenCodePaneSession } from './opencode.js';
 import { findClaudeTranscript } from './claude.js';
 import { findCodexTranscript } from './codex.js';
 import { resolveAntigravityConversation, readAntigravityToolActivity } from './antigravity.js';
 import { collectToolActivity } from '../integrations/orca/liveActivity.js';
+import { enrichAgentModelsAndEffort } from '../integrations/orca/graphWorkers.js';
 import { resolveCoordinatorConversation } from '../integrations/orca/nodeDetails.js';
 import { globalSourceMaps } from '../integrations/orca/state.js';
 import { transcriptToolActivity, databaseToolActivity, toolLabel } from './toolActivity.js';
+
+test('hookless Kilo tool activity uses a unique exact terminal title and directory even when model is already known', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-kilo-pane-'));
+  const file = path.join(dir, 'kilo.db');
+  const previousDb = process.env.KILO_DB, previousApp = process.env.ORCA_APPDATA_DIR;
+  process.env.KILO_DB = file;
+  process.env.ORCA_APPDATA_DIR = dir;
+  const db = new DatabaseSync(file);
+  const node = { id: 'kilo-exact-pane', kind: 'agent', agentType: 'kilo', label: 'Custom display name', path: dir, worktreeId: 'wt', model: 'observed-model' } as any;
+  try {
+    db.exec('CREATE TABLE session(id TEXT,title TEXT,directory TEXT); CREATE TABLE part(id TEXT,session_id TEXT,data TEXT)');
+    const insert = db.prepare('INSERT INTO session VALUES(?,?,?)');
+    insert.run('ses_exact', 'Testing tools', dir);
+    insert.run('ses_similar', 'Testing tools extended', dir);
+    insert.run('ses_elsewhere', 'Testing tools', dir + '-elsewhere');
+    db.prepare('INSERT INTO part VALUES(?,?,?)').run('p1', 'ses_exact', JSON.stringify({ type: 'tool', callID: 'call-1', tool: 'bash', state: { input: { command: 'npm test' }, time: { start: Date.now() } } }));
+    const allowed = (candidate: string) => candidate === file;
+    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools', dir, allowed)?.sessionId, 'ses_exact');
+    assert.equal(findExactOpenCodePaneSession('kilocode', 'Kilo Code | Testing tools', dir, allowed)?.sessionId, 'ses_exact');
+    assert.equal(findExactOpenCodePaneSession('kilo', 'Testing tools', dir, allowed), null);
+    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing', dir, allowed), null);
+    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools...', dir, allowed), null);
+    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools', dir + '-wrong', allowed), null);
+    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools', dir, () => false), null);
+    globalSourceMaps.nodeSourceMap.set(node.id, { handle: 'term-kilo', paneKey: 'pane-kilo', terminalTitle: 'Kilo CLI | Testing tools' });
+    await enrichAgentModelsAndEffort([node]);
+    assert.equal(node.model, 'observed-model');
+    assert.equal(node.toolActivity.meta.availability, 'ready');
+    assert.deepEqual(node.toolActivity.data.map((item: any) => item.label), ['Run: npm test']);
+    await collectToolActivity(node, { source: 'kilocode', worktreeId: 'wt', providerSession: { key: 'session_id', id: 'ses_exact' } }, allowed);
+    assert.equal(node.toolActivity.meta.availability, 'ready');
+    insert.run('ses_duplicate', 'Testing tools', dir);
+    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools', dir, allowed), null);
+    await collectToolActivity(node, null, allowed);
+    assert.equal(node.toolActivity.meta.availability, 'unavailable');
+  } finally {
+    db.close(); globalSourceMaps.nodeSourceMap.delete(node.id);
+    if (previousDb === undefined) delete process.env.KILO_DB; else process.env.KILO_DB = previousDb;
+    if (previousApp === undefined) delete process.env.ORCA_APPDATA_DIR; else process.env.ORCA_APPDATA_DIR = previousApp;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test('tool metadata adapters cover Claude, Codex, Pi, OMP and omit output and thinking', () => {
   for (const provider of ['claude', 'pi', 'omp']) {

@@ -236,6 +236,7 @@ function createAgentNodeFromWorktreeAgent(
       paneKey,
       endpointIncarnation,
       ptyId: matchingTerminal?.ptyId,
+      terminalTitle: matchingTerminal?.title,
     },
   };
 }
@@ -294,6 +295,7 @@ function createTerminalNode(
       paneKey: termPaneKey || undefined,
       endpointIncarnation,
       ptyId: term.ptyId,
+      terminalTitle: term.title,
     },
   };
 }
