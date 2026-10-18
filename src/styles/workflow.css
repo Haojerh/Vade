@@ -835,3 +835,40 @@
   max-width: 100%;
   display: block;
 }
+.tool-activity-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  pointer-events: none;
+  color: #49ce89;
+}
+.tool-activity-event {
+  animation: tool-event-enter 180ms var(--ease-out) both, tool-event-exit 180ms var(--ease-out) 4.3s forwards;
+}
+.tool-activity-connection { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.tool-activity-node {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 250px;
+  width: 250px;
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid currentColor;
+  border-radius: 9px;
+  background: var(--bg-panel, #202421);
+  box-shadow: 0 4px 16px #0003;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tool-activity-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+@keyframes tool-event-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes tool-event-exit { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) {
+  .tool-activity-event { animation-name: tool-event-fade-in, tool-event-fade-out; }
+}
+@keyframes tool-event-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes tool-event-fade-out { from { opacity: 1; } to { opacity: 0; } }

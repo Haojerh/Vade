@@ -118,7 +118,7 @@ export function isPathInsideRoots(targetPath: string, allowedRoots: string[]): b
     } catch {
       canonicalTarget = path.resolve(targetPath);
     }
-    const normTarget = path.normalize(canonicalTarget).toLowerCase();
+    const normTarget = path.normalize(path.toNamespacedPath(canonicalTarget)).toLowerCase();
 
     return allowedRoots.some((root) => {
       if (!root) return false;
@@ -128,7 +128,7 @@ export function isPathInsideRoots(targetPath: string, allowedRoots: string[]): b
       } catch {
         canonicalRoot = path.resolve(root);
       }
-      const normRoot = path.normalize(canonicalRoot).toLowerCase();
+      const normRoot = path.normalize(path.toNamespacedPath(canonicalRoot)).toLowerCase();
       return (
         normTarget === normRoot ||
         normTarget.startsWith(normRoot.endsWith(path.sep) ? normRoot : normRoot + path.sep)

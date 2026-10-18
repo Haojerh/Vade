@@ -8,6 +8,42 @@ import { CommandRunner } from '../cli.js';
 import { hashId } from './utils.js';
 import { globalSourceMaps, workerLaunchCache } from './state.js';
 import { collectGraph } from './graph.js';
+import { collectOrchestrationMessages } from './liveActivity.js';
+import type { Node, Edge, Run } from '../../../shared/contracts.js';
+
+test('packets come only from exact-run toolkit messages and preserve reply direction', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-mail-events-'));
+  const previous = process.env.ORCA_APPDATA_DIR;
+  fs.mkdirSync(path.join(dir, 'orca'));
+  const db = new DatabaseSync(path.join(dir, 'orca', 'orchestration.db'));
+  try {
+    process.env.ORCA_APPDATA_DIR = dir;
+    db.exec('CREATE TABLE messages(id TEXT, run_id TEXT, from_handle TEXT, to_handle TEXT, created_at TEXT)');
+    const insert = db.prepare('INSERT INTO messages VALUES(?,?,?,?,?)');
+    insert.run('send', 'run1', 'coord', 'worker', '2026-10-18 01:00:00');
+    insert.run('reply', 'run1', 'worker', 'coord', '2026-10-18 01:01:00');
+    insert.run('wrong-run', 'run2', 'worker', 'coord', '2026-10-18 01:01:00');
+    insert.run('unknown-pane', 'run1', 'stranger', 'coord', '2026-10-18 01:01:00');
+    globalSourceMaps.nodeSourceMap.set('mail-coord', { handle: 'coord' });
+    globalSourceMaps.nodeSourceMap.set('mail-worker', { handle: 'worker' });
+    const nodes = [{ id: 'mail-coord' }, { id: 'mail-worker' }] as Node[];
+    const edge = { id: 'mail-edge', source: 'mail-coord', target: 'mail-worker', kind: 'delegates', active: true } as Edge;
+    collectOrchestrationMessages({ id: 'r1', sourceRunId: 'run1' } as Run, nodes, [edge]);
+    assert.equal(edge.messages?.length, 2);
+    assert.equal(edge.messages?.[0].source, 'mail-coord');
+    assert.equal(edge.messages?.[1].source, 'mail-worker');
+    assert.equal(edge.messages?.[0].at, '2026-10-18T01:00:00.000Z');
+    const idleEdge = { ...edge, messages: undefined };
+    collectOrchestrationMessages(null, nodes, [idleEdge]);
+    assert.equal(idleEdge.messages, undefined);
+  } finally {
+    db.close();
+    globalSourceMaps.nodeSourceMap.delete('mail-coord');
+    globalSourceMaps.nodeSourceMap.delete('mail-worker');
+    if (previous === undefined) delete process.env.ORCA_APPDATA_DIR; else process.env.ORCA_APPDATA_DIR = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 describe('server/orca/graphWorkers', () => {
   test('pages worker-list with --cursor when worker list exceeds single page limit', async () => {

@@ -98,6 +98,21 @@ export interface Node {
   outputAvailable: boolean;
   model?: string | null;
   effort?: string | null;
+  toolActivity?: Section<ToolActivity[]>;
+}
+
+/** Observed tool metadata only; never tool output, file contents or private reasoning. */
+export interface ToolActivity {
+  id: Id;
+  at: ISO | null;
+  label: string;
+}
+
+export interface OrchestrationMessage {
+  id: Id;
+  source: Id;
+  target: Id;
+  at: ISO;
 }
 
 export interface Edge {
@@ -108,6 +123,7 @@ export interface Edge {
   evidence: 'workspace-membership' | 'parent-worktree' | 'parent-pane'
     | 'run-dispatch';
   active: boolean;
+  messages?: OrchestrationMessage[];
 }
 
 export interface Task {

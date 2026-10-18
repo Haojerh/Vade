@@ -20,6 +20,7 @@ import {
   toIsoOrNull,
 } from './utils.js';
 import { globalSourceMaps } from './state.js';
+import { collectOrchestrationMessages } from './liveActivity.js';
 import {
   fetchProjectWorktrees,
   fetchWorktreeTerminals,
@@ -413,6 +414,7 @@ export async function collectGraph(
     if (taskResult.partial) partial = true;
 
     await enrichAgentModelsAndEffort(nodes);
+    collectOrchestrationMessages(activeRun, nodes, edges);
 
     const { progress, boundedActivity } = buildGraphActivitiesAndProgress(
       nodes,

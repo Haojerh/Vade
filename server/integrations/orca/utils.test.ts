@@ -18,6 +18,17 @@ import {
 import { globalSourceMaps, cursorStore, workerLaunchCache } from './state.js';
 import { collectInventory } from './inventory.js';
 import { collectGraph } from './graph.js';
+
+test('transcript root boundaries accept equivalent Windows namespace paths without accepting siblings', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-path-boundary-'));
+  try {
+    const file = path.join(root, 'session.jsonl');
+    fs.writeFileSync(file, '');
+    assert.equal(isPathInsideRoots(path.toNamespacedPath(file), [root]), true);
+    assert.equal(isPathInsideRoots(file, [path.toNamespacedPath(root)]), true);
+    assert.equal(isPathInsideRoots(path.toNamespacedPath(root + '-sibling/session.jsonl'), [root]), false);
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
 import { collectNodeDetails, resolveCoordinatorConversation } from './nodeDetails.js';
 import {
   deleteWorktree,

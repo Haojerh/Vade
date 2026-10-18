@@ -16,6 +16,7 @@ import {
   toIsoOrNull,
 } from './utils.js';
 import { globalSourceMaps, workerLaunchCache, NodeSourceEntry } from './state.js';
+import { collectToolActivity } from './liveActivity.js';
 
 function workerDispatchId(w: any): string | null {
   return w.dispatchId || (typeof w.id === 'string' && w.id.startsWith('ctx_') ? w.id : null);
@@ -443,6 +444,7 @@ async function enrichNodeFromLiveHookEntry(
   entry: any,
   isAllowedPath: (file: string) => boolean
 ): Promise<void> {
+  await collectToolActivity(node, entry, isAllowedPath);
   const model = entry.payload?.model;
   const effort = entry.payload?.effort;
   if (typeof model === 'string' && model.trim()) node.model = model;

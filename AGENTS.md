@@ -85,6 +85,7 @@ Standard error codes:
 - `server/http/`: request validation, routing (`api.ts`, `readRoutes.ts`, `actionRoutes.ts`), loopback/origin constraints, and response envelopes (`httpUtils.ts`).
 - `server/integrations/` and `server/integrations/orca/`: fixed read-only Orca (`inventory.ts`, `graph.ts`, `graphNodes.ts`, `graphWorkers.ts`, `nodeDetails.ts`, `actions.ts`, `prerequisites.ts`, `state.ts`, `utils.ts`), GitHub, CLI (`cli.ts`, `cliValidators.ts`), and usage adapters.
 - `server/providers/`: exact-session transcript parsers and effective model/effort readers.
+- `server/providers/toolActivity.ts` decodes bounded tool-call metadata separately from public conversation; `server/integrations/orca/liveActivity.ts` binds it to exact panes and reads run-scoped toolkit mailbox metadata. Graph packets must use stable observed event IDs, never working-state inference.
 - `server/services/`: snapshot collection, caching, and subscriptions. `server/index.ts` stays the process entry.
 - `shared/contracts.ts` stays dependency-free and shared by both layers.
 - Keep backend tests next to their modules; frontend behavior/render tests live in `src/tests/`.

@@ -106,6 +106,8 @@ export const App: React.FC = () => {
     setOrchestrationSeparated,
     commitGraphEnabled,
     setCommitGraphEnabled,
+    toolActivityEnabled,
+    setToolActivityEnabled,
     visibleSections,
     handleToggleVisibleSection,
     handleResetVisibleSections,
@@ -204,6 +206,8 @@ export const App: React.FC = () => {
           cardStateColors={cardStateColors}
           commitGraphEnabled={commitGraphEnabled}
           onToggleCommitGraph={setCommitGraphEnabled}
+          toolActivityEnabled={toolActivityEnabled}
+          onToggleToolActivity={setToolActivityEnabled}
           onToggleCardStateColors={setCardStateColors}
           orchestrationSeparated={orchestrationSeparated}
           onToggleOrchestrationSeparated={setOrchestrationSeparated}
@@ -280,6 +284,7 @@ export const App: React.FC = () => {
               onSelectNode={setSelectedNodeId}
               isLocallyStale={isLocallyStale || Boolean(graphMeta?.stale) || (graphMeta ? graphMeta.availability !== 'ready' : false)}
               orchestrationSeparated={orchestrationSeparated}
+              toolActivityEnabled={toolActivityEnabled}
             />
 
             {/* Bottom Panels Container (Independently hideable, expandable, and vertically draggable) */}

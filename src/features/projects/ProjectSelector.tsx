@@ -31,6 +31,8 @@ export interface ProjectSelectorProps {
   onResetVisibleSections?: () => void;
   commitGraphEnabled?: boolean;
   onToggleCommitGraph?: (enabled: boolean) => void;
+  toolActivityEnabled?: boolean;
+  onToggleToolActivity?: (enabled: boolean) => void;
 }
 
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
@@ -54,6 +56,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   onResetVisibleSections,
   commitGraphEnabled,
   onToggleCommitGraph,
+  toolActivityEnabled,
+  onToggleToolActivity,
 }) => {
   const { present: isSettingsOpen, closing: isSettingsClosing, close: closeSettings, toggle: toggleSettings } = usePopoverState();
   const settingsTriggerRef = React.useRef<HTMLButtonElement>(null);
@@ -317,6 +321,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                 </button>
               </div>
               <div className="settings-popover-body">
+                <label className="settings-option-row"><div className="settings-option-text"><span className="settings-option-label font-semibold">Live Tool Nodes</span><span className="settings-option-desc text-xs text-muted">Show observed tool calls near their agent.</span></div><input type="checkbox" className="settings-checkbox" checked={toolActivityEnabled ?? true} onChange={e => onToggleToolActivity?.(e.target.checked)} /></label>
                 <label className="settings-option-row"><div className="settings-option-text"><span className="settings-option-label font-semibold">Commit Graph History</span><span className="settings-option-desc text-xs text-muted">Show local branches and merges in the Commits tab.</span></div><input type="checkbox" className="settings-checkbox" checked={commitGraphEnabled ?? false} onChange={e => onToggleCommitGraph?.(e.target.checked)} /></label>
                 <label className="settings-option-row">
                   <div className="settings-option-text">

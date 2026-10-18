@@ -11,6 +11,8 @@ import { WorktreeBox } from './WorktreeBox';
 import { usePrefersReducedMotion, useWorkflowCanvas } from './useWorkflowCanvas';
 import { useWorktreeMemberOrder } from './useWorktreeMemberOrder';
 import { useWorkflowOverlays, WorkflowOverlays } from './WorkflowOverlays';
+import { useLiveGraphActivity } from './useLiveGraphActivity';
+import { ToolActivityOverlay } from './ToolActivityOverlay';
 
 interface WorkflowGraphProps {
   projectId: string | null;
@@ -22,6 +24,7 @@ interface WorkflowGraphProps {
   isLocallyStale: boolean;
   loading: boolean;
   orchestrationSeparated?: boolean;
+  toolActivityEnabled?: boolean;
   project?: Project | null;
   onRefresh?: () => void;
 }
@@ -85,10 +88,12 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   isLocallyStale,
   loading,
   orchestrationSeparated = true,
+  toolActivityEnabled = true,
   project,
   onRefresh,
 }) => {
   const prefersReducedMotion = usePrefersReducedMotion();
+  const { tools, packets } = useLiveGraphActivity(`${projectId}:${runId}`, nodes, edges, toolActivityEnabled && !isLocallyStale);
   const [preview, setPreview] = useState<{ nodeId: string; anchor: HTMLElement } | null>(null);
   const suppressPreviewRef = useRef(false);
   const closePreview = useCallback(() => setPreview(null), []);
@@ -586,7 +591,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
           nodeMap={nodeMap}
           canvasSize={canvasSize}
           prefersReducedMotion={prefersReducedMotion}
+          packets={isLocallyStale ? [] : packets}
         />
+        <ToolActivityOverlay tools={isLocallyStale ? [] : tools} positions={positions} reducedMotion={prefersReducedMotion} canvasWidth={canvasSize.width} />
 
         {nodes.length === 0 ? (
           <div className="graph-empty-state">

@@ -10,6 +10,37 @@ import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/Node
 import { WorkflowGraph } from '../features/workflow/WorkflowGraph';
 import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
 import type { Node, Edge, NodeDetails as NodeDetailsType } from '../../shared/contracts';
+import { WorkflowEdgesSvg } from '../features/workflow/WorkflowEdgesSvg';
+import { ToolActivityOverlay } from '../features/workflow/ToolActivityOverlay';
+
+test('working graph edges animate only explicit message packets, once and in the observed direction', () => {
+  const source = { id: 'source', kind: 'orchestrator' } as Node;
+  const target = { id: 'target', kind: 'agent', state: 'working' } as Node;
+  const props = {
+    edges: [{ id: 'edge', source: source.id, target: target.id, kind: 'delegates', isActive: true }],
+    nodeMap: new Map([[source.id, source], [target.id, target]]),
+    positions: new Map([[source.id, { x: 0, y: 0, width: 100, height: 100 }], [target.id, { x: 200, y: 0, width: 100, height: 100 }]]),
+    canvasSize: { width: 600, height: 400 }, prefersReducedMotion: false,
+  };
+  assert.equal(renderToStaticMarkup(createElement(WorkflowEdgesSvg, props)).includes('animateMotion'), false);
+  const packets = [{ id: 'reply', source: target.id, target: source.id, at: new Date().toISOString(), expiresAt: Date.now() + 1600 }];
+  const html = renderToStaticMarkup(createElement(WorkflowEdgesSvg, { ...props, packets }));
+  assert.match(html, /repeatCount="1"/);
+  assert.match(html, /keyPoints="1;0"/);
+  assert.equal(html.includes('indefinite'), false);
+  assert.equal(renderToStaticMarkup(createElement(WorkflowEdgesSvg, { ...props, packets, prefersReducedMotion: true })).includes('animateMotion'), false);
+  const toolHtml = renderToStaticMarkup(createElement(ToolActivityOverlay, { positions: props.positions, reducedMotion: false,
+    tools: [{ id: 'tool', nodeId: 'target', label: 'Read: index.html', at: null, expiresAt: Date.now() + 4500 }] }));
+  assert.match(toolHtml, /Read: index.html/);
+  assert.match(toolHtml, /repeatCount="1"/);
+  assert.match(toolHtml, /left:328px/);
+  const outside = renderToStaticMarkup(createElement(ToolActivityOverlay, {
+    positions: new Map([['target', { x: 400, y: 80, width: 260, height: 100 }]]), canvasWidth: 700, reducedMotion: true,
+    tools: [{ id: 'tool', nodeId: 'target', label: 'Read: index.html', at: null, expiresAt: Date.now() + 4500 }],
+  }));
+  assert.match(outside, /left:122px/);
+  assert.equal(outside.includes('animateMotion'), false);
+});
 
 test('workflow collision layout separates dragged boxes and only moves later boxes on chat expansion', () => {
   const above = { id: 'above', x: 0, y: 0, width: 260, height: 100 };

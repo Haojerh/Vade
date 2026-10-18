@@ -5,6 +5,12 @@ import {
 } from '../features/workflow/NodeDetails';
 
 export function useDashboardLayoutPrefs() {
+  const [toolActivityEnabled, setToolActivityEnabled] = useState(() => {
+    try { return localStorage.getItem('orca-tool-activity') !== 'false'; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('orca-tool-activity', String(toolActivityEnabled)); } catch { /* Storage unavailable. */ }
+  }, [toolActivityEnabled]);
   // 1. Persistent Theme state
   const [theme, setTheme] = useState<'dark' | 'light'>(() => {
     try {
@@ -397,6 +403,8 @@ export function useDashboardLayoutPrefs() {
     : Math.max(280, windowWidth - minCenterWidth - (leftSidebarOpen ? leftWidth : 0));
 
   return {
+    toolActivityEnabled,
+    setToolActivityEnabled,
     theme,
     toggleTheme,
     cardStateColors,

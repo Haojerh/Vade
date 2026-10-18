@@ -4,6 +4,10 @@ A local dashboard for inspecting Orca multi-agent workflows, worktree relationsh
 
 The dashboard runs locally alongside the user's installed Orca runtime. It displays projects, worktree groups, orchestrators, worker agents, task progress, bounded activity feeds, and GitHub pull requests, commits, and issues.
 
+**Settings → Live Tool Nodes** (enabled by default) shows tool-call labels near their agent with a green connector and one delivery packet. Claude, Codex, Pi, OMP, OpenCode and Kilo Code use exact pane/session bindings from Orca hooks. Collection is bounded to recent transcript records or database parts; calls outside that window or without an exact session cannot be displayed. Initial history establishes a baseline rather than replaying old calls. Tool output, reasoning and file contents are excluded. Motion respects reduced-motion preferences.
+
+Blue orchestration packets represent newly observed Orca CLI toolkit mailbox messages in the associated run, including replies in the reverse direction. Working state alone never emits packets. The adapter reads bounded message metadata from Orca's local database in read-only mode; unsupported schemas or unresolved endpoints produce no inferred packets.
+
 Create worktrees with **Add Worktree** beside Reset Layout or by right-clicking empty topology space. The dialog supports a name, branch/PR/issue source, optional installed agent, setup policy, and Create more. It creates an independent worktree in the selected Git project using Orca's repository default base unless a base is supplied. Open Inspect Worktree and use its edit icon to rename the display name; the checkout path and Git branch stay unchanged.
 
 Both agent dialogs share a searchable picker with provider icons. Its installed choices come from host detection in `server/integrations/agents.ts` through `/api/agents/catalog`; the frontend has no hardcoded installed-agent fallback. Detection failures expose retry controls.

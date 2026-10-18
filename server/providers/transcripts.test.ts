@@ -11,6 +11,43 @@ import { findCodexTranscript } from './codex.js';
 import { resolveAntigravityConversation } from './antigravity.js';
 import { resolveCoordinatorConversation } from '../integrations/orca/nodeDetails.js';
 import { globalSourceMaps } from '../integrations/orca/state.js';
+import { transcriptToolActivity, databaseToolActivity, toolLabel } from './toolActivity.js';
+
+test('tool metadata adapters cover Claude, Codex, Pi, OMP and omit output and thinking', () => {
+  for (const provider of ['claude', 'pi', 'omp']) {
+    const record = { timestamp: '2026-10-18T01:00:00Z', message: { role: 'assistant', content: [
+      { type: provider === 'claude' ? 'tool_use' : 'toolCall', id: 'call-1', name: 'Read', input: { file_path: 'index.html' } },
+      { type: 'thinking', thinking: 'private' }, { type: 'tool_result', content: 'private output' },
+    ] } };
+    const items = transcriptToolActivity(provider, 'session', JSON.stringify(record));
+    assert.equal(items.length, 1);
+    assert.equal(items[0].label, 'Read: index.html');
+    assert.equal(transcriptToolActivity(provider, 'other', JSON.stringify(record))[0].id === items[0].id, false);
+    assert.deepEqual(transcriptToolActivity(provider, 'session', JSON.stringify({ ...record, sessionId: 'other' })), []);
+    assert.equal(JSON.stringify(items).includes('private'), false);
+  }
+  const call = { type: 'response_item', payload: { type: 'function_call', call_id: 'c1', name: 'exec_command', arguments: JSON.stringify({ cmd: 'npm test' }) } };
+  assert.equal(transcriptToolActivity('codex', 's', JSON.stringify(call))[0].label, 'Run: npm test');
+  assert.deepEqual(transcriptToolActivity('codex', 's', JSON.stringify({ ...call, payload: { ...call.payload, type: 'function_call_output' } })), []);
+  assert.equal(toolLabel('apply_patch', '*** Begin Patch\n*** Update File: server.ts\nsecret diff'), 'Edit: server.ts');
+  assert.equal(toolLabel('Edit', { file_path: 'server.ts', old_string: 'secret', new_string: 'private' }), 'Edit: server.ts');
+});
+
+test('OpenCode and Kilo tool parts expose bounded exact-session metadata without results', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-tool-parts-'));
+  const file = path.join(dir, 'tools.db');
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('CREATE TABLE part(id TEXT, session_id TEXT, data TEXT)');
+    for (const session of ['exact', 'other']) db.prepare('INSERT INTO part VALUES(?,?,?)').run('p1', session,
+      JSON.stringify({ type: 'tool', callID: 'c1', tool: 'edit', state: { input: { filePath: 'server.ts' }, output: 'private result', time: { start: 1000 } } }));
+    const items = databaseToolActivity(file, 'exact');
+    assert.equal(items.length, 1);
+    assert.equal(items[0].label, 'Edit: server.ts');
+    assert.equal(JSON.stringify(items).includes('private'), false);
+    assert.deepEqual(databaseToolActivity(file, 'missing'), []);
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 test('Claude, Pi and OMP expose public text and omit tools, thinking and injected turns', () => {
   for (const provider of ['claude', 'pi', 'omp']) {
