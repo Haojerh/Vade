@@ -2,6 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { layoutCommitGraph } from '../features/github/commitGraphLayout';
 import type { CommitGraphEntry } from '../../shared/contracts';
+import { commitGraphNotificationKey } from '../features/github/useCommitGraph';
+import { acknowledgeGitHubItem, observeGitHubItems, readUnreadHistory, saveUnreadHistory } from '../features/github/githubUnread';
+import { CommitHistoryGraph } from '../features/github/CommitHistoryGraph';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
 const entry = (sha: string, parents: string[]): CommitGraphEntry => ({ sha, parents, message: sha, author: 'Author', committedAt: '', refs: [] });
 test('merge graph splits lanes, converges parents and preserves unrelated branch lanes', () => {
@@ -18,4 +23,28 @@ test('merge graph splits lanes, converges parents and preserves unrelated branch
 test('unrelated roots do not fabricate incoming edges', () => {
   const rows = layoutCommitGraph([entry('one', []), entry('two', [])]);
   assert.deepEqual(rows.map(r => r.connected), [false, false]);
+});
+
+test('local commit notifications persist, acknowledge individually and isolate project/repository/branch scopes', () => {
+  const key = commitGraphNotificationKey('project', 'node', 'main', 'repo');
+  for (const other of [commitGraphNotificationKey('other', 'node', 'main', 'repo'), commitGraphNotificationKey('project', 'other', 'main', 'repo'), commitGraphNotificationKey('project', 'node', 'feature', 'repo'), commitGraphNotificationKey('project', 'node', 'main', 'other')]) assert.notEqual(key, other);
+  const baseline = observeGitHubItems(undefined, ['old']);
+  assert.equal(baseline.unread.size, 0);
+  const arrivals = observeGitHubItems(baseline, ['new-a', 'new-b', 'old']);
+  const store = new Map<string, string>();
+  const storage = { setItem: (k: string, value: string) => { store.set(k, value); }, getItem: (k: string) => store.get(k) ?? null };
+  saveUnreadHistory(key, arrivals, storage);
+  const reloaded = readUnreadHistory(key, storage)!;
+  assert.deepEqual([...reloaded.unread], ['new-a', 'new-b']);
+  assert.deepEqual([...acknowledgeGitHubItem(reloaded, 'new-a').unread], ['new-b']);
+});
+
+test('graph marks unread commits without replacing branch lane colors', () => {
+  const html = renderToStaticMarkup(createElement(CommitHistoryGraph, { observation: {
+    key: 'scope', section: { data: { commits: [entry('new', ['old']), entry('old', [])], truncated: false }, meta: { availability: 'ready', observedAt: null, attemptedAt: '', stale: false, partial: false, issue: null } },
+    loading: false, error: '', unread: new Set(['new']), acknowledge: () => {}, retry: () => {},
+  } }));
+  assert.equal((html.match(/title="New commit"/g) ?? []).length, 1);
+  assert.ok(html.includes('github-new-indicator'));
+  assert.ok(html.includes('#3899ff'));
 });

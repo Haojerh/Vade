@@ -543,7 +543,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 </Disclosure>
               )}
 
-              {isWorktree && projectId && <Disclosure key={`${projectId}:${node.id}`} title="Branch History" lazy><WorktreeHistory projectId={projectId} nodeId={node.id} commitGraphEnabled={commitGraphEnabled} /></Disclosure>}
+              {isWorktree && projectId && <Disclosure key={`${projectId}:${node.id}`} title="Branch History" lazy><WorktreeHistory projectId={projectId} nodeId={node.id} branch={node.branch ?? undefined} commitGraphEnabled={commitGraphEnabled} /></Disclosure>}
 
               {/* Assigned Tasks (agents only, below status & workspace if exists) */}
               {activeVisibleSections.tasks && !isWorktree && assignedTasks.length > 0 && (

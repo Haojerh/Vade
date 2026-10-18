@@ -4,6 +4,7 @@ import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { Icon } from '../../components/ui/Icon';
 import { useGitHubPagination } from './useGitHubPagination';
 import { CommitHistoryGraph } from './CommitHistoryGraph';
+import { useCommitGraph } from './useCommitGraph';
 import type {
   GitHubData,
   GitHubQuery,
@@ -26,6 +27,7 @@ interface GitHubPanelProps {
   onRefresh: () => void;
   onCollapse?: () => void;
   commitGraphEnabled?: boolean;
+  worktreeBranch?: string;
 }
 
 const REPOSITORY_QUERY: GitHubQuery = { scope: 'general' };
@@ -44,6 +46,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   onRefresh,
   onCollapse,
   commitGraphEnabled = false,
+  worktreeBranch,
 }) => {
   const instanceId = React.useId();
   const titleId = `${instanceId}-github-title`;
@@ -55,9 +58,8 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     data?.projectKind === 'folder';
   const [activeTab, setActiveTab] = useState<TabKey>('commits');
   const [graphRefresh, setGraphRefresh] = useState(0);
-  const graphScopeKey = `${projectId}:${query.scope === 'worktree' ? query.nodeId : 'all'}`;
-  const [graphCount, setGraphCount] = useState<{ key: string; count: number; truncated: boolean } | null>(null);
-  const handleGraphCount = React.useCallback((count: number, truncated: boolean) => setGraphCount({ key: graphScopeKey, count, truncated }), [graphScopeKey]);
+  const graph = useCommitGraph(projectId, query.scope === 'worktree' ? query.nodeId : undefined, worktreeBranch, graphRefresh, commitGraphEnabled && !isFolder, project?.repoIds.join('|'));
+  const graphUnread = graph.unread.size;
   const [prFilter, setPrFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
   const history = useRef(new Map<string, UnreadHistory>());
@@ -367,13 +369,14 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           id={tabId('commits')}
           aria-selected={activeTab === 'commits'}
           aria-controls={panelId('commits')}
-          className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${!commitGraphEnabled && unread.commits.size ? 'github-has-new' : ''}`}
+          className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${(commitGraphEnabled ? graphUnread : unread.commits.size) ? 'github-has-new' : ''}`}
           onClick={() => selectTab('commits')}
         >
           Commits
           {!commitGraphEnabled && unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
+          {commitGraphEnabled && graphUnread > 0 && <span className="sr-only">{graphUnread} new items</span>}
           {!commitGraphEnabled && <span className="tab-count font-mono" title={`${commits.length} loaded`}>{commits.length}{pagination.nextPage('commits') ? '+' : ''}</span>}
-          {commitGraphEnabled && graphCount?.key === graphScopeKey && <span className="tab-count font-mono" title={`${graphCount.count} local commits loaded`}>{graphCount.count}{graphCount.truncated ? '+' : ''}</span>}
+          {commitGraphEnabled && graph.section?.data && <span className="tab-count font-mono" title={`${graph.section.data.commits.length} local commits loaded`}>{graph.section.data.commits.length}{graph.section.data.truncated ? '+' : ''}</span>}
         </button>
 
         <button
@@ -417,7 +420,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             aria-labelledby={tabId('commits')}
             className="tab-pane"
           >
-            {commitGraphEnabled && projectId ? <CommitHistoryGraph key={graphScopeKey} projectId={projectId} nodeId={query.scope === 'worktree' ? query.nodeId : undefined} refresh={graphRefresh} onCount={handleGraphCount} /> : <>
+            {commitGraphEnabled && projectId ? <CommitHistoryGraph key={graph.key} observation={graph} /> : <>
             {renderSectionMeta(data?.commits, 'Commits')}
             {commits.length === 0 ? (
               <div className="empty-hint">
