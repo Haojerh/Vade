@@ -4,7 +4,8 @@ import http from 'node:http';
 import { createServer } from './api.js';
 import { CommandRunner } from '../integrations/cli.js';
 import { SnapshotManager } from '../services/snapshot.js';
-import { hashId, globalSourceMaps } from '../integrations/orca.js';
+import { hashId } from '../integrations/orca/utils.js';
+import { globalSourceMaps } from '../integrations/orca/state.js';
 import { UsageCollector } from '../integrations/usage.js';
 
 describe('server/api', () => {

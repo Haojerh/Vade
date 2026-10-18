@@ -1,6 +1,7 @@
 import type { CreateWorktreeRequest, CreateWorktreeResponse, RenameNodeTitleResponse, Project } from '../../shared/contracts.js';
 import { CliError, runOrca, type CommandRunner, defaultCommandRunner } from './cli.js';
-import { collectInventory, hashId } from './orca.js';
+import { collectInventory } from './orca/inventory.js';
+import { hashId } from './orca/utils.js';
 import { KNOWN_AGENTS } from './agents.js';
 
 export async function requireProject(projectId: string, runner: CommandRunner): Promise<Project> {

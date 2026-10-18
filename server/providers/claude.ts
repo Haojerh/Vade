@@ -32,14 +32,19 @@ export function findClaudeTranscript(
   if (!fs.existsSync(claudeDir)) return null;
   const uuidMatch = labelOrId.match(/[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/);
   const projectsDir = path.join(claudeDir, 'projects');
-  if (uuidMatch && fs.existsSync(projectsDir)) {
-    const id = uuidMatch[0];
-    for (const p of fs.readdirSync(projectsDir)) {
-      const candidate = path.join(projectsDir, p, `${id}.jsonl`);
+  const findProjectSession = (id: string) => {
+    for (const project of fs.readdirSync(projectsDir)) {
+      const candidate = path.join(projectsDir, project, `${id}.jsonl`);
       if (fs.existsSync(candidate) && (!allowed || allowed(candidate))) {
         return { transcriptPath: candidate, sessionId: id };
       }
     }
+    return null;
+  };
+  if (uuidMatch && fs.existsSync(projectsDir)) {
+    const id = uuidMatch[0];
+    const match = findProjectSession(id);
+    if (match) return match;
   }
   if (!clean || ['claude', 'claude code', 'agent'].includes(clean.toLowerCase())) return null;
   const hPath = path.join(claudeDir, 'history.jsonl');
@@ -49,12 +54,8 @@ export function findClaudeTranscript(
       for (let i = lines.length - 1; i >= Math.max(0, lines.length - 200); i--) {
         const item = JSON.parse(lines[i]);
         if (item.sessionId && item.display && item.display.toLowerCase().includes(clean.toLowerCase())) {
-          for (const p of fs.readdirSync(projectsDir)) {
-            const candidate = path.join(projectsDir, p, `${item.sessionId}.jsonl`);
-            if (fs.existsSync(candidate) && (!allowed || allowed(candidate))) {
-              return { transcriptPath: candidate, sessionId: item.sessionId };
-            }
-          }
+          const match = findProjectSession(item.sessionId);
+          if (match) return match;
         }
       }
     } catch {}

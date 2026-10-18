@@ -7,7 +7,7 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 - **Application Type**: Local React 19 + TypeScript frontend with a lightweight native Node HTTP backend.
 - **Runtime scope**: Collection is observational. The explicit agent-message endpoint may send user-authored messages and attachments to discovered agent terminals. Never create runs or modify task status from the dashboard.
 - **Contract-First Design**: The backend and frontend communicate through normative types defined in [`shared/contracts.ts`](shared/contracts.ts). Any updates to data models must originate or be mirrored in `shared/contracts.ts`.
-- **Zero Raw CLI Passthrough**: The server strictly validates all CLI invocation arguments against an internal allowlist in [`server/integrations/cli.ts`](server/integrations/cli.ts). Never accept arbitrary command flags or user inputs as executable commands.
+- **Zero Raw CLI Passthrough**: The server strictly validates all CLI invocation arguments against an internal allowlist in [`server/integrations/cliValidators.ts`](server/integrations/cliValidators.ts) and [`server/integrations/cli.ts`](server/integrations/cli.ts). Never accept arbitrary command flags or user inputs as executable commands.
 - **Localhost & Origin Constraints**:
   - Backend runs on `127.0.0.1:4317`.
   - Frontend development runs on `127.0.0.1:5173`.
@@ -24,7 +24,7 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 
 ## HTTP Endpoints & API Contract
 
-Implemented in [`server/http/api.ts`](server/http/api.ts). Collection uses `GET` or `HEAD`. Allowed mutation actions include agent-message, closing an agent tab, renaming a node title or worktree display name, creating a worktree or worktree agent, and deleting a worktree; other mutations return `405 METHOD_NOT_ALLOWED`.
+Implemented in [`server/http/api.ts`](server/http/api.ts), [`server/http/readRoutes.ts`](server/http/readRoutes.ts), and [`server/http/actionRoutes.ts`](server/http/actionRoutes.ts). Collection uses `GET` or `HEAD`. Allowed mutation actions include agent-message, closing an agent tab, renaming a node title or worktree display name, creating a worktree or worktree agent, and deleting a worktree; other mutations return `405 METHOD_NOT_ALLOWED`.
 
 | Endpoint | Query Parameters | Response / Behavior | Description |
 |---|---|---|---|
@@ -81,9 +81,9 @@ Standard error codes:
 - `src/features/`: workflow, GitHub, usage, projects, and activity UI with feature-specific helpers.
 - `src/features/github/useGitHubActivity.ts`: shared repository/worktree activity loading; worktree history lives in Inspect Worktree while the sidebar remains repository-wide.
 - `src/components/ui/` and `src/components/providers/`: shared Modal, Popover, ContextMenu, Select, AgentPicker, dialog actions/errors, reusable controls and provider icons. Use these primitives instead of duplicating overlay lifecycle or dismissal code.
-- `src/hooks/`, `src/styles/`, `src/assets/`: common hooks, styles, and attributed assets.
-- `server/http/`: request validation, routing, loopback/origin constraints, and response envelopes.
-- `server/integrations/`: fixed read-only Orca, GitHub, CLI, and usage adapters.
+- `src/hooks/`, `src/styles/`, `src/assets/`: common hooks, domain-scoped stylesheets (`tokens.css`, `base.css`, `layout.css`, `workflow.css`, `panels.css`, `modals.css` imported via `global.css`), and attributed assets.
+- `server/http/`: request validation, routing (`api.ts`, `readRoutes.ts`, `actionRoutes.ts`), loopback/origin constraints, and response envelopes (`httpUtils.ts`).
+- `server/integrations/` and `server/integrations/orca/`: fixed read-only Orca (`inventory.ts`, `graph.ts`, `graphNodes.ts`, `graphWorkers.ts`, `nodeDetails.ts`, `actions.ts`, `prerequisites.ts`, `state.ts`, `utils.ts`), GitHub, CLI (`cli.ts`, `cliValidators.ts`), and usage adapters.
 - `server/providers/`: exact-session transcript parsers and effective model/effort readers.
 - `server/services/`: snapshot collection, caching, and subscriptions. `server/index.ts` stays the process entry.
 - `shared/contracts.ts` stays dependency-free and shared by both layers.

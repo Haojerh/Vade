@@ -1,8 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createProjectWorktree, renameWorktree, validateCreateWorktree } from './worktrees.js';
-import { hashId } from './orca.js';
-import { validateOrcaArgs, type CommandRunner } from './cli.js';
+import { hashId } from './orca/utils.js';
+import type { CommandRunner } from './cli.js';
+import { validateOrcaArgs } from './cliValidators.js';
 import { collectCommitGraph, COMMIT_GRAPH_ARGS, parseCommitGraph } from './commitGraph.js';
 import { createServer } from '../http/api.js';
 import type { AddressInfo } from 'node:net';

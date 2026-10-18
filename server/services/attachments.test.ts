@@ -4,8 +4,9 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { attachmentPaste, decodeAttachments, storeAttachments } from './attachments.js';
-import { globalSourceMaps, sendAgentMessage } from '../integrations/orca.js';
-import { validateOrcaArgs } from '../integrations/cli.js';
+import { globalSourceMaps } from '../integrations/orca/state.js';
+import { sendAgentMessage } from '../integrations/orca/actions.js';
+import { validateOrcaArgs } from '../integrations/cliValidators.js';
 
 const image = { name: 'test.png', mimeType: 'image/png', dataBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX2kAAAAASUVORK5CYII=' };
 

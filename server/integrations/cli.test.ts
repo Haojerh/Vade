@@ -1,16 +1,15 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  validateOrcaArgs,
   runOrca,
   runGit,
   runGh,
-  validateGhEndpoint,
   runDeduplicatedCommand,
   CliError,
   CommandRunner,
   defaultCommandRunner,
 } from './cli.js';
+import { validateOrcaArgs, validateGhEndpoint } from './cliValidators.js';
 
 describe('server/cli', () => {
   test('replacement environment does not restore inherited startup variables', async () => {

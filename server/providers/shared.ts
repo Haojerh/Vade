@@ -1,5 +1,3 @@
-import type { BoundedTranscriptReadResult } from '../integrations/orca.js';
-
 export const localTranscriptProviders = ['codex', 'claude', 'omp', 'pi', 'opencode', 'kilocode', 'kilo'];
 
 export function stripAnsiCodes(str: string): string {

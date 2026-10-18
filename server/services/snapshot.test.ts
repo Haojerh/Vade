@@ -2,7 +2,8 @@ import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import { SnapshotManager } from './snapshot.js';
 import { CommandRunner, CliError } from '../integrations/cli.js';
-import { hashId, globalSourceMaps } from '../integrations/orca.js';
+import { hashId } from '../integrations/orca/utils.js';
+import { globalSourceMaps } from '../integrations/orca/state.js';
 
 describe('server/snapshot', () => {
   test('SnapshotManager deduplicates in-flight calls and creates stable revisions', async () => {

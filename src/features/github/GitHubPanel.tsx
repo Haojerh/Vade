@@ -3,16 +3,18 @@ import { acknowledgeGitHubItem, observeGitHubItems, readUnreadHistory, saveUnrea
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { Icon } from '../../components/ui/Icon';
 import { useGitHubPagination } from './useGitHubPagination';
-import { CommitHistoryGraph } from './CommitHistoryGraph';
 import { useCommitGraph } from './useCommitGraph';
+import {
+  CommitsTabPane,
+  PullRequestsTabPane,
+  IssuesTabPane,
+  isSafeGitHubUrl,
+  type GitHubTabKey,
+} from './GitHubTabPanes';
 import type {
   GitHubData,
   GitHubQuery,
-  PullRequest,
-  Commit,
-  GitHubIssue,
   Project,
-  Section,
 } from '../../../shared/contracts';
 
 interface GitHubPanelProps {
@@ -32,8 +34,6 @@ interface GitHubPanelProps {
 
 const REPOSITORY_QUERY: GitHubQuery = { scope: 'general' };
 
-type TabKey = 'commits' | 'prs' | 'issues';
-
 export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   projectId,
   project,
@@ -50,49 +50,24 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
 }) => {
   const instanceId = React.useId();
   const titleId = `${instanceId}-github-title`;
-  const tabId = (tab: TabKey) => `${instanceId}-tab-${tab}`;
-  const panelId = (tab: TabKey) => `${instanceId}-panel-${tab}`;
+  const tabId = (tab: GitHubTabKey) => `${instanceId}-tab-${tab}`;
+  const panelId = (tab: GitHubTabKey) => `${instanceId}-panel-${tab}`;
   const isFolder =
     projectKind === 'folder' ||
     project?.kind === 'folder' ||
     data?.projectKind === 'folder';
-  const [activeTab, setActiveTab] = useState<TabKey>('commits');
+  const [activeTab, setActiveTab] = useState<GitHubTabKey>('commits');
   const [graphRefresh, setGraphRefresh] = useState(0);
   const graph = useCommitGraph(projectId, query.scope === 'worktree' ? query.nodeId : undefined, worktreeBranch, graphRefresh, commitGraphEnabled && !isFolder, project?.repoIds.join('|'));
   const graphUnread = graph.unread.size;
   const [prFilter, setPrFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
   const history = useRef(new Map<string, UnreadHistory>());
-  const [observedUnread, setUnread] = useState<Record<TabKey, Set<string>>>({ commits: new Set(), prs: new Set(), issues: new Set() });
+  const [observedUnread, setUnread] = useState<Record<GitHubTabKey, Set<string>>>({ commits: new Set(), prs: new Set(), issues: new Set() });
   const unread = { ...observedUnread, commits: new Set([...observedUnread.commits].filter(sha => !graph.readIds.has(sha))) };
   const repositoryKey = `${projectId}::${data?.repository?.url ?? ''}`;
   const scopeKey = `${data?.scope.kind}::${data?.scope.nodeId}::${data?.scope.branch}`;
   const keys = { commits: `${repositoryKey}::commits::${scopeKey}`, prs: `${repositoryKey}::prs::${scopeKey}`, issues: `${repositoryKey}::issues` };
-
-  const handleDragStart = (
-    e: React.DragEvent,
-    item: {
-      type: 'pr' | 'issue';
-      number: number;
-      title: string;
-      url?: string;
-      headRef?: string | null;
-      baseRef?: string | null;
-      author?: string | null;
-      draft?: boolean;
-      labels?: string[];
-    }
-  ) => {
-    const payload = JSON.stringify(item);
-    e.dataTransfer.setData('application/json', payload);
-    e.dataTransfer.setData('text/plain', item.title);
-    e.dataTransfer.effectAllowed = 'copy';
-    window.dispatchEvent(new CustomEvent('orca:drag-github-item-start', { detail: item }));
-  };
-
-  const handleDragEnd = () => {
-    window.dispatchEvent(new CustomEvent('orca:drag-github-item-end'));
-  };
 
   useEffect(() => {
     const next = { commits: new Set<string>(), prs: new Set<string>(), issues: new Set<string>() };
@@ -116,7 +91,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     setUnread(next);
   }, [data, projectId]);
 
-  const acknowledge = (tab: TabKey, id: string) => {
+  const acknowledge = (tab: GitHubTabKey, id: string) => {
     if (tab === 'commits') graph.acknowledge(id);
     const stored = history.current.get(keys[tab]);
     if (!stored) return;
@@ -125,70 +100,10 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     saveUnreadHistory(keys[tab], acknowledged);
     setUnread((prev) => ({ ...prev, [tab]: acknowledged.unread }));
   };
-  const selectTab = (tab: TabKey) => setActiveTab(tab);
-  const notification = (tab: TabKey) => unread[tab].size > 0 ? (
-    <span className="github-new-indicator" title={`${unread[tab].size} new items`}>
-      <Icon name="bell" size={12} />
-      <span className="sr-only">{unread[tab].size} new items</span>
-    </span>
-  ) : null;
+  const selectTab = (tab: GitHubTabKey) => setActiveTab(tab);
 
   const repo = data?.repository;
   const auth = data?.auth ?? 'unknown';
-
-  const isSafeGitHubUrl = (url: string | null | undefined): boolean => {
-    if (!url) return false;
-    try {
-      const parsed = new URL(url);
-      return parsed.protocol === 'https:' && parsed.hostname === 'github.com';
-    } catch {
-      return false;
-    }
-  };
-
-  const formatDateTime = (iso: string | null | undefined): string => {
-    if (!iso) return '—';
-    try {
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return iso;
-      return d.toLocaleString([], {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      });
-    } catch {
-      return iso;
-    }
-  };
-
-  const renderSectionMeta = (section: Section<any> | undefined, label: string) => {
-    if (!section) return null;
-    const { meta } = section;
-    if (!meta.issue && !meta.stale && !meta.partial && meta.availability === 'ready') {
-      return null;
-    }
-
-    return (
-      <div className="section-meta-alert">
-        {meta.issue && (
-          <div className="meta-alert-item alert-error">
-            <span className="font-semibold">[{meta.issue.code}]:</span> {meta.issue.message}
-          </div>
-        )}
-        {meta.stale && (
-          <div className="meta-alert-item alert-stale">
-            Data is stale. Last observed: {formatDateTime(meta.observedAt)}
-          </div>
-        )}
-        {meta.availability === 'empty' && !meta.issue && (
-          <div className="meta-alert-item alert-info">
-            Repository reported empty {label.toLowerCase()}.
-          </div>
-        )}
-      </div>
-    );
-  };
 
   const pagination = useGitHubPagination(projectId, data, query, (tab, ids) => {
     const stored = history.current.get(keys[tab]) ?? readUnreadHistory(keys[tab]);
@@ -211,22 +126,6 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [activeTab, more, loading, loadingMore, pageError, error, data]);
-
-  const openPrCount = prs.filter((p) => p.state === 'open').length;
-  const closedPrCount = prs.filter((p) => p.state === 'closed' || p.state === 'merged').length;
-  const filteredPrs = prs.filter((p) => {
-    if (prFilter === 'open') return p.state === 'open';
-    if (prFilter === 'closed') return p.state === 'closed' || p.state === 'merged';
-    return true;
-  });
-
-  const openIssueCount = issues.filter((i) => i.state === 'open').length;
-  const closedIssueCount = issues.filter((i) => i.state === 'closed').length;
-  const filteredIssues = issues.filter((i) => {
-    if (issueFilter === 'open') return i.state === 'open';
-    if (issueFilter === 'closed') return i.state === 'closed';
-    return true;
-  });
 
   const tabsRef = useRef<HTMLDivElement>(null);
   const [tabLine, setTabLine] = useState({ left: 0, width: 0 });
@@ -360,390 +259,126 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             </div>
           )}
 
-      {/* Tabs: Commits, Pull Requests, Issues */}
-      <div ref={tabsRef} className="github-tabs-nav" role="tablist" aria-label={embedded ? 'Worktree history views' : 'GitHub activity views'}>
-        <span className="github-tab-indicator" aria-hidden="true" style={{
-          transform: `translateX(${tabLine.left}px) scaleX(${tabLine.width})`, opacity: tabLine.width ? 1 : 0,
-        }} />
-        <button
-          type="button"
-          role="tab"
-          id={tabId('commits')}
-          aria-selected={activeTab === 'commits'}
-          aria-controls={panelId('commits')}
-          className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${(commitGraphEnabled ? graphUnread : unread.commits.size) ? 'github-has-new' : ''}`}
-          onClick={() => selectTab('commits')}
-        >
-          Commits
-          {!commitGraphEnabled && unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
-          {commitGraphEnabled && graphUnread > 0 && <span className="sr-only">{graphUnread} new items</span>}
-          {!commitGraphEnabled && <span className="tab-count font-mono" title={`${commits.length} loaded`}>{commits.length}{pagination.nextPage('commits') ? '+' : ''}</span>}
-          {commitGraphEnabled && graph.section?.data && <span className="tab-count font-mono" title={`${graph.section.data.commits.length} local commits loaded`}>{graph.section.data.commits.length}{graph.section.data.truncated ? '+' : ''}</span>}
-        </button>
-
-        <button
-          type="button"
-          role="tab"
-          id={tabId('prs')}
-          aria-selected={activeTab === 'prs'}
-          aria-controls={panelId('prs')}
-          className={`tab-btn ${activeTab === 'prs' ? 'active' : ''} ${unread.prs.size ? 'github-has-new' : ''}`}
-          onClick={() => selectTab('prs')}
-        >
-          PR History
-          {unread.prs.size > 0 && <span className="sr-only">{unread.prs.size} new items</span>}
-          <span className="tab-count font-mono" title={`${prs.length} loaded`}>{prs.length}{pagination.nextPage('prs') ? '+' : ''}</span>
-        </button>
-
-        {!embedded && <>
-        <button
-          type="button"
-          role="tab"
-          id={tabId('issues')}
-          aria-selected={activeTab === 'issues'}
-          aria-controls={panelId('issues')}
-          className={`tab-btn ${activeTab === 'issues' ? 'active' : ''} ${unread.issues.size ? 'github-has-new' : ''}`}
-          onClick={() => selectTab('issues')}
-        >
-          Issues
-          {unread.issues.size > 0 && <span className="sr-only">{unread.issues.size} new items</span>}
-          <span className="tab-count font-mono" title={`${issues.length} loaded`}>{issues.length}{pagination.nextPage('issues') ? '+' : ''}</span>
-        </button>
-        </>}
-      </div>
-
-      {/* Tab Panels */}
-      <div className="panel-content github-tab-content" ref={scrollRef}>
-        {/* Commits Tab */}
-        {activeTab === 'commits' && (
-          <div
-            id={panelId('commits')}
-            role="tabpanel"
-            aria-labelledby={tabId('commits')}
-            className="tab-pane"
-          >
-            {commitGraphEnabled && projectId ? <CommitHistoryGraph key={graph.key} observation={graph} /> : <>
-            {renderSectionMeta(data?.commits, 'Commits')}
-            {commits.length === 0 ? (
-              <div className="empty-hint">
-                {data?.commits?.meta?.availability === 'empty'
-                  ? 'Git repository is empty (no commits pushed yet).'
-                  : data?.commits?.meta?.availability === 'unavailable'
-                  ? 'Commits unavailable for the selected scope.'
-                  : 'No commits available for this branch scope.'}
-              </div>
-            ) : (
-              <ul className="github-item-list" role="list">
-                {commits.map((c: Commit) => (
-                  <li key={c.sha} className={`github-item ${unread.commits.has(c.sha) ? 'github-has-new' : ''}`} onClick={() => acknowledge('commits', c.sha)}>
-                    {unread.commits.has(c.sha) && notification('commits')}
-                    <div className="item-row-header">
-                      <span className="font-mono commit-sha">
-                        {c.sha.slice(0, 7)}
-                      </span>
-                      <time className="item-time font-mono" dateTime={c.committedAt ?? ''}>
-                        {formatDateTime(c.committedAt)}
-                      </time>
-                    </div>
-
-                    <div className="item-title commit-message">
-                      {isSafeGitHubUrl(c.url) ? (
-                        <a
-                          href={c.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="external-link"
-                        >
-                          {c.message.split('\n')[0]}
-                          <span className="external-arrow" aria-hidden="true">↗</span>
-                        </a>
-                      ) : (
-                        <span>{c.message.split('\n')[0]}</span>
-                      )}
-                    </div>
-
-                    {c.author && (
-                      <div className="item-author text-muted">
-                        Author: <span className="font-mono">{c.author}</span>
-                      </div>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-            </>}
-          </div>
-        )}
-
-        {/* Pull Requests Tab */}
-        {activeTab === 'prs' && (
-          <div
-            id={panelId('prs')}
-            role="tabpanel"
-            aria-labelledby={tabId('prs')}
-            className="tab-pane"
-          >
-            {/* PR Status Filter: All, Open, Closed */}
-            <div className="github-filter-pills" role="radiogroup" aria-label="Filter pull requests by status">
-              <button
-                type="button"
-                className={`filter-pill-btn ${prFilter === 'all' ? 'active' : ''}`}
-                onClick={() => setPrFilter('all')}
-                aria-pressed={prFilter === 'all'}
-              >
-                All <span className="pill-count font-mono">{prs.length}</span>
-              </button>
-              <button
-                type="button"
-                className={`filter-pill-btn ${prFilter === 'open' ? 'active' : ''}`}
-                onClick={() => setPrFilter('open')}
-                aria-pressed={prFilter === 'open'}
-              >
-                Open <span className="pill-count font-mono">{openPrCount}</span>
-              </button>
-              <button
-                type="button"
-                className={`filter-pill-btn ${prFilter === 'closed' ? 'active' : ''}`}
-                onClick={() => setPrFilter('closed')}
-                aria-pressed={prFilter === 'closed'}
-              >
-                Closed <span className="pill-count font-mono">{closedPrCount}</span>
-              </button>
-            </div>
-
-            {renderSectionMeta(data?.pullRequests, 'Pull Requests')}
-
-            {filteredPrs.length === 0 ? (
-              <div className="empty-hint">
-                {prs.length === 0
-                  ? 'No pull requests found for this repository and branch filter.'
-                  : `No ${prFilter} pull requests found.`}
-              </div>
-            ) : (
-              <ul className="github-item-list" role="list">
-                {filteredPrs.map((pr: PullRequest) => {
-                  const isOpen = pr.state === 'open';
-                  return (
-                    <li
-                      key={pr.number}
-                      draggable={isOpen}
-                      onDragStart={(e) => {
-                        if (isOpen) {
-                          handleDragStart(e, {
-                            type: 'pr',
-                            number: pr.number,
-                            title: pr.title,
-                            url: pr.url,
-                            headRef: pr.headRef,
-                            baseRef: pr.baseRef,
-                            author: pr.author,
-                            draft: pr.draft,
-                          });
-                        }
-                      }}
-                      onDragEnd={handleDragEnd}
-                      className={`github-item ${isOpen ? 'draggable-item' : ''} ${unread.prs.has(String(pr.number)) ? 'github-has-new' : ''}`}
-                      onClick={() => acknowledge('prs', String(pr.number))}
-                      title={isOpen ? 'Drag this PR onto an agent node in the workflow graph to review/merge' : undefined}
-                    >
-                      {unread.prs.has(String(pr.number)) && notification('prs')}
-                      <div className="item-row-header">
-                        <div className="item-badges">
-                          <span className={`badge badge-pr-${pr.state}`}>
-                            {pr.state}
-                          </span>
-                          {pr.draft && (
-                            <span className="badge badge-neutral">Draft</span>
-                          )}
-                          <span className="font-mono pr-number">#{pr.number}</span>
-                          {isOpen && (
-                            <span className="drag-indicator-tag" title="Draggable to agent">⋮⋮</span>
-                          )}
-                        </div>
-                        <time className="item-time font-mono" dateTime={pr.updatedAt ?? ''}>
-                          {formatDateTime(pr.updatedAt)}
-                        </time>
-                      </div>
-
-                      <div className="item-title">
-                        {isSafeGitHubUrl(pr.url) ? (
-                          <a
-                            href={pr.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="external-link"
-                          >
-                            {pr.title}
-                            <span className="external-arrow" aria-hidden="true">↗</span>
-                          </a>
-                        ) : (
-                          <span>{pr.title}</span>
-                        )}
-                      </div>
-
-                      <div className="item-extra-info text-xs text-muted">
-                        {pr.author && (
-                          <span>Author: <strong className="font-mono">{pr.author}</strong></span>
-                        )}
-                        {pr.headRef && pr.baseRef && (
-                          <span className="pr-refs font-mono ml-2">
-                            {pr.headRef} → {pr.baseRef}
-                          </span>
-                        )}
-                        {pr.mergedAt && (
-                          <span className="pr-merged-at ml-2 text-success">
-                            Merged: {formatDateTime(pr.mergedAt)}
-                          </span>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        )}
-
-        {/* Issues Tab */}
-        {activeTab === 'issues' && (
-          <div
-            id={panelId('issues')}
-            role="tabpanel"
-            aria-labelledby={tabId('issues')}
-            className="tab-pane"
-          >
-            {/* Issue Status Filter: All, Open, Closed */}
-            <div className="github-filter-pills" role="radiogroup" aria-label="Filter issues by status">
-              <button
-                type="button"
-                className={`filter-pill-btn ${issueFilter === 'all' ? 'active' : ''}`}
-                onClick={() => setIssueFilter('all')}
-                aria-pressed={issueFilter === 'all'}
-              >
-                All <span className="pill-count font-mono">{issues.length}</span>
-              </button>
-              <button
-                type="button"
-                className={`filter-pill-btn ${issueFilter === 'open' ? 'active' : ''}`}
-                onClick={() => setIssueFilter('open')}
-                aria-pressed={issueFilter === 'open'}
-              >
-                Open <span className="pill-count font-mono">{openIssueCount}</span>
-              </button>
-              <button
-                type="button"
-                className={`filter-pill-btn ${issueFilter === 'closed' ? 'active' : ''}`}
-                onClick={() => setIssueFilter('closed')}
-                aria-pressed={issueFilter === 'closed'}
-              >
-                Closed <span className="pill-count font-mono">{closedIssueCount}</span>
-              </button>
-            </div>
-
-            {renderSectionMeta(data?.issues, 'Issues')}
-
-            {filteredIssues.length === 0 ? (
-              <div className="empty-hint">
-                {issues.length === 0
-                  ? 'No repository issues found.'
-                  : `No ${issueFilter} issues found.`}
-              </div>
-            ) : (
-              <ul className="github-item-list" role="list">
-                {filteredIssues.map((issue: GitHubIssue) => {
-                  const isOpen = issue.state === 'open';
-                  return (
-                    <li
-                      key={issue.number}
-                      draggable={isOpen}
-                      onDragStart={(e) => {
-                        if (isOpen) {
-                          handleDragStart(e, {
-                            type: 'issue',
-                            number: issue.number,
-                            title: issue.title,
-                            url: issue.url,
-                            author: issue.author,
-                            labels: issue.labels,
-                          });
-                        }
-                      }}
-                      onDragEnd={handleDragEnd}
-                      className={`github-item ${isOpen ? 'draggable-item' : ''} ${unread.issues.has(String(issue.number)) ? 'github-has-new' : ''}`}
-                      onClick={() => acknowledge('issues', String(issue.number))}
-                      title={isOpen ? 'Drag this issue onto an agent node in the workflow graph to fix' : undefined}
-                    >
-                      {unread.issues.has(String(issue.number)) && notification('issues')}
-                      <div className="item-row-header">
-                        <div className="item-badges">
-                          <span className={`badge badge-issue-${issue.state}`}>
-                            {issue.state}
-                          </span>
-                          <span className="font-mono pr-number">#{issue.number}</span>
-                          {isOpen && (
-                            <span className="drag-indicator-tag" title="Draggable to agent">⋮⋮</span>
-                          )}
-                        </div>
-                        <time className="item-time font-mono" dateTime={issue.updatedAt ?? ''}>
-                          {formatDateTime(issue.updatedAt)}
-                        </time>
-                      </div>
-
-                      <div className="item-title">
-                        {isSafeGitHubUrl(issue.url) ? (
-                          <a
-                            href={issue.url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="external-link"
-                          >
-                            {issue.title}
-                            <span className="external-arrow" aria-hidden="true">↗</span>
-                          </a>
-                        ) : (
-                          <span>{issue.title}</span>
-                        )}
-                      </div>
-
-                      <div className="item-extra-info text-xs text-muted">
-                        {issue.author && (
-                          <span>Author: <strong className="font-mono">{issue.author}</strong></span>
-                        )}
-                        {issue.labels && issue.labels.length > 0 && (
-                          <div className="issue-labels-row">
-                            {issue.labels.map((lbl, idx) => (
-                              <span key={idx} className="badge badge-neutral text-xs">
-                                {lbl}
-                              </span>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        )}
-        {!(commitGraphEnabled && activeTab === 'commits') && <div ref={sentinelRef} className="github-pagination" aria-live="polite" aria-busy={loadingMore}>
-          {pageError && <span role="alert">{pageError}</span>}
-          {loadingMore ? <div className="github-skeleton-list" role="status" aria-label="Loading more activity">
-            <span className="sr-only">Loading more activity</span>
-            {[0, 1, 2].map((row) => <div className="github-skeleton-row" key={row} aria-hidden="true">
-              <div className="github-skeleton-line short" />
-              <div className="github-skeleton-line" />
-              <div className="github-skeleton-line medium" />
-            </div>)}
-          </div> : more && (
-            <button className="btn btn-sm" disabled={loading} onClick={() => void pagination.loadMore(activeTab)}>
-              {pageError ? 'Retry loading' : 'Load 20 more'}
+          {/* Tabs: Commits, Pull Requests, Issues */}
+          <div ref={tabsRef} className="github-tabs-nav" role="tablist" aria-label={embedded ? 'Worktree history views' : 'GitHub activity views'}>
+            <span className="github-tab-indicator" aria-hidden="true" style={{
+              transform: `translateX(${tabLine.left}px) scaleX(${tabLine.width})`, opacity: tabLine.width ? 1 : 0,
+            }} />
+            <button
+              type="button"
+              role="tab"
+              id={tabId('commits')}
+              aria-selected={activeTab === 'commits'}
+              aria-controls={panelId('commits')}
+              className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${(commitGraphEnabled ? graphUnread : unread.commits.size) ? 'github-has-new' : ''}`}
+              onClick={() => selectTab('commits')}
+            >
+              Commits
+              {!commitGraphEnabled && unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
+              {commitGraphEnabled && graphUnread > 0 && <span className="sr-only">{graphUnread} new items</span>}
+              {!commitGraphEnabled && <span className="tab-count font-mono" title={`${commits.length} loaded`}>{commits.length}{pagination.nextPage('commits') ? '+' : ''}</span>}
+              {commitGraphEnabled && graph.section?.data && <span className="tab-count font-mono" title={`${graph.section.data.commits.length} local commits loaded`}>{graph.section.data.commits.length}{graph.section.data.truncated ? '+' : ''}</span>}
             </button>
-          )}
-        </div>}
-      </div>
-    </>
-  )}
-</section>
-);
+
+            <button
+              type="button"
+              role="tab"
+              id={tabId('prs')}
+              aria-selected={activeTab === 'prs'}
+              aria-controls={panelId('prs')}
+              className={`tab-btn ${activeTab === 'prs' ? 'active' : ''} ${unread.prs.size ? 'github-has-new' : ''}`}
+              onClick={() => selectTab('prs')}
+            >
+              PR History
+              {unread.prs.size > 0 && <span className="sr-only">{unread.prs.size} new items</span>}
+              <span className="tab-count font-mono" title={`${prs.length} loaded`}>{prs.length}{pagination.nextPage('prs') ? '+' : ''}</span>
+            </button>
+
+            {!embedded && (
+              <button
+                type="button"
+                role="tab"
+                id={tabId('issues')}
+                aria-selected={activeTab === 'issues'}
+                aria-controls={panelId('issues')}
+                className={`tab-btn ${activeTab === 'issues' ? 'active' : ''} ${unread.issues.size ? 'github-has-new' : ''}`}
+                onClick={() => selectTab('issues')}
+              >
+                Issues
+                {unread.issues.size > 0 && <span className="sr-only">{unread.issues.size} new items</span>}
+                <span className="tab-count font-mono" title={`${issues.length} loaded`}>{issues.length}{pagination.nextPage('issues') ? '+' : ''}</span>
+              </button>
+            )}
+          </div>
+
+          {/* Tab Panels */}
+          <div className="panel-content github-tab-content" ref={scrollRef}>
+            {activeTab === 'commits' && (
+              <CommitsTabPane
+                panelId={panelId('commits')}
+                tabId={tabId('commits')}
+                commitGraphEnabled={commitGraphEnabled}
+                projectId={projectId}
+                graph={graph}
+                data={data}
+                commits={commits}
+                unreadCommits={unread.commits}
+                onAcknowledge={(sha) => acknowledge('commits', sha)}
+              />
+            )}
+
+            {activeTab === 'prs' && (
+              <PullRequestsTabPane
+                panelId={panelId('prs')}
+                tabId={tabId('prs')}
+                data={data}
+                prs={prs}
+                prFilter={prFilter}
+                onChangeFilter={setPrFilter}
+                unreadPrs={unread.prs}
+                onAcknowledge={(id) => acknowledge('prs', id)}
+              />
+            )}
+
+            {activeTab === 'issues' && (
+              <IssuesTabPane
+                panelId={panelId('issues')}
+                tabId={tabId('issues')}
+                data={data}
+                issues={issues}
+                issueFilter={issueFilter}
+                onChangeFilter={setIssueFilter}
+                unreadIssues={unread.issues}
+                onAcknowledge={(id) => acknowledge('issues', id)}
+              />
+            )}
+
+            {!(commitGraphEnabled && activeTab === 'commits') && (
+              <div ref={sentinelRef} className="github-pagination" aria-live="polite" aria-busy={loadingMore}>
+                {pageError && <span role="alert">{pageError}</span>}
+                {loadingMore ? (
+                  <div className="github-skeleton-list" role="status" aria-label="Loading more activity">
+                    <span className="sr-only">Loading more activity</span>
+                    {[0, 1, 2].map((row) => (
+                      <div className="github-skeleton-row" key={row} aria-hidden="true">
+                        <div className="github-skeleton-line short" />
+                        <div className="github-skeleton-line" />
+                        <div className="github-skeleton-line medium" />
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  more && (
+                    <button className="btn btn-sm" disabled={loading} onClick={() => void pagination.loadMore(activeTab)}>
+                      {pageError ? 'Retry loading' : 'Load 20 more'}
+                    </button>
+                  )
+                )}
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </section>
+  );
 };

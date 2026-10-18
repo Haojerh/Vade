@@ -1,6 +1,4 @@
 import {
-  Id,
-  ISO,
   GitHubData,
   GitHubQuery,
   GitHubScope,
@@ -16,7 +14,8 @@ import {
 } from '../../shared/contracts.js';
 import { runGit, CommandRunner, defaultCommandRunner, CliError } from './cli.js';
 import { createGitHubAccountReader } from './githubAccounts.js';
-import { toIsoOrNull, collectGraph } from './orca.js';
+import { toIsoOrNull } from './orca/utils.js';
+import { collectGraph } from './orca/graph.js';
 
 export interface ParsedRepo {
   owner: string;
@@ -27,9 +26,6 @@ export interface ParsedRepo {
 
 export function parseGitHubUrl(rawUrl: string, remoteName: string | null = null): ParsedRepo {
   const trimmed = rawUrl.trim();
-  // Match HTTPS: https://github.com/owner/repo(.git)?
-  // or SSH: git@github.com:owner/repo(.git)?
-  // or ssh://git@github.com/owner/repo(.git)?
   const httpsMatch = trimmed.match(/^https?:\/\/github\.com\/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+?)(?:\.git)?$/i);
   if (httpsMatch) {
     return {
@@ -62,7 +58,6 @@ export function parseGitRemoteOutput(output: string): ParsedRepo {
   const candidates: { remoteName: string; parsed: ParsedRepo }[] = [];
 
   for (const line of lines) {
-    // origin  https://github.com/owner/repo.git (fetch)
     const parts = line.split(/\s+/);
     if (parts.length >= 2) {
       const remoteName = parts[0];
@@ -87,7 +82,6 @@ export function parseGitRemoteOutput(output: string): ParsedRepo {
     throw new CliError('REMOTE_MISSING', 'No usable GitHub remotes found in git remote output');
   }
 
-  // Prefer origin
   const originCandidate = candidates.find((c) => c.remoteName === 'origin');
   if (originCandidate) {
     return originCandidate.parsed;
@@ -97,7 +91,6 @@ export function parseGitRemoteOutput(output: string): ParsedRepo {
     return candidates[0].parsed;
   }
 
-  // Multiple candidates without a clear origin
   throw new CliError('REMOTE_AMBIGUOUS', 'Multiple conflicting GitHub remotes found without a clear origin');
 }
 
@@ -109,7 +102,6 @@ export async function resolveProjectRepo(
     throw new CliError('REMOTE_MISSING', 'Project has no registered Git repository or local path');
   }
 
-  // If path exists, check git remote -v
   const localPath = project.paths[0];
   if (localPath) {
     try {
@@ -119,11 +111,9 @@ export async function resolveProjectRepo(
       if (err.issue?.code === 'REMOTE_UNSUPPORTED' || err.issue?.code === 'REMOTE_AMBIGUOUS') {
         throw err;
       }
-      // If git remote -v fails, try fallback below
     }
   }
 
-  // If project has sourceProjectId like github:owner/repo
   if (project.sourceProjectId?.startsWith('github:')) {
     const raw = project.sourceProjectId.replace('github:', '');
     const parts = raw.split('/');
@@ -149,6 +139,226 @@ export async function resolveWorktreeRepo(
   return parseGitRemoteOutput(remoteStdout);
 }
 
+function unavailableSection<T>(attemptedAt: string, issue: Issue): Section<T> {
+  return {
+    data: null,
+    meta: {
+      availability: 'unavailable',
+      observedAt: null,
+      attemptedAt,
+      stale: false,
+      partial: false,
+      issue,
+    },
+  };
+}
+
+function readyOrEmptySection<T>(data: T[], attemptedAt: string, partial: boolean): Section<T[]> {
+  return {
+    data,
+    meta: {
+      availability: data.length > 0 ? 'ready' : 'empty',
+      observedAt: attemptedAt,
+      attemptedAt,
+      stale: false,
+      partial,
+      issue: null,
+    },
+  };
+}
+
+function buildPullRequestsSection(
+  res: PromiseSettledResult<any>,
+  owner: string,
+  name: string,
+  attemptedAt: string
+): { section: Section<PullRequest[]>; auth: 'available' | 'required' | null; valid: boolean } {
+  if (res.status === 'fulfilled') {
+    if (!Array.isArray(res.value)) {
+      return {
+        section: unavailableSection(attemptedAt, {
+          code: 'INVALID_UPSTREAM',
+          message: 'Malformed pull requests payload from upstream: expected array',
+          retryable: false,
+        }),
+        auth: 'available',
+        valid: false,
+      };
+    }
+    const rawPulls = res.value;
+    if (rawPulls.some((p) => !p || typeof p !== 'object' || typeof p.number !== 'number')) {
+      return {
+        section: unavailableSection(attemptedAt, {
+          code: 'INVALID_UPSTREAM',
+          message: 'Malformed pull request item in upstream response',
+          retryable: false,
+        }),
+        auth: 'available',
+        valid: false,
+      };
+    }
+    const prs: PullRequest[] = rawPulls.map((p) => {
+      const mergedAt = toIsoOrNull(p.merged_at);
+      const state: 'open' | 'closed' | 'merged' = mergedAt ? 'merged' : p.state === 'closed' ? 'closed' : 'open';
+      return {
+        number: p.number,
+        title: p.title || '',
+        url: p.html_url || `https://github.com/${owner}/${name}/pull/${p.number}`,
+        state,
+        draft: Boolean(p.draft),
+        author: p.user?.login || null,
+        updatedAt: toIsoOrNull(p.updated_at),
+        mergedAt,
+        headRef: p.head?.ref || null,
+        baseRef: p.base?.ref || null,
+      };
+    });
+    return {
+      section: readyOrEmptySection(prs, attemptedAt, rawPulls.length === 20),
+      auth: 'available',
+      valid: true,
+    };
+  }
+
+  const err = res.reason;
+  return {
+    section: unavailableSection(
+      attemptedAt,
+      err.issue || { code: 'CLI_FAILED', message: err.message, retryable: true }
+    ),
+    auth: err.issue?.code === 'AUTH_REQUIRED' ? 'required' : null,
+    valid: false,
+  };
+}
+
+function buildCommitsSection(
+  res: PromiseSettledResult<any>,
+  owner: string,
+  name: string,
+  scopeKind: 'general' | 'worktree',
+  attemptedAt: string
+): { section: Section<Commit[]>; auth: 'available' | 'required' | null; valid: boolean } {
+  if (res.status === 'fulfilled') {
+    if (!Array.isArray(res.value)) {
+      return {
+        section: unavailableSection(attemptedAt, {
+          code: 'INVALID_UPSTREAM',
+          message: 'Malformed commits payload from upstream: expected array',
+          retryable: false,
+        }),
+        auth: 'available',
+        valid: false,
+      };
+    }
+    const rawCommits = res.value;
+    if (rawCommits.some((c) => !c || typeof c !== 'object' || typeof c.sha !== 'string' || !c.sha.trim())) {
+      return {
+        section: unavailableSection(attemptedAt, {
+          code: 'INVALID_UPSTREAM',
+          message: 'Malformed commit item in upstream response',
+          retryable: false,
+        }),
+        auth: 'available',
+        valid: false,
+      };
+    }
+    const commits: Commit[] = rawCommits.map((c) => ({
+      sha: c.sha,
+      message: (c.commit?.message || '').split('\n')[0].slice(0, 200),
+      url: c.html_url || `https://github.com/${owner}/${name}/commit/${c.sha}`,
+      author: c.commit?.author?.name || c.author?.login || null,
+      committedAt: toIsoOrNull(c.commit?.author?.date || c.commit?.committer?.date),
+    }));
+    return {
+      section: readyOrEmptySection(commits, attemptedAt, rawCommits.length === 20),
+      auth: 'available',
+      valid: true,
+    };
+  }
+
+  const err = res.reason;
+  if (err.exitCode === 409 || err.httpStatus === 409 || err.issue?.message?.includes('empty')) {
+    return {
+      section: readyOrEmptySection<Commit>([], attemptedAt, false),
+      auth: null,
+      valid: true,
+    };
+  }
+
+  let issueCode = err.issue?.code || 'CLI_FAILED';
+  if (
+    scopeKind === 'worktree' &&
+    (err.issue?.code === 'GITHUB_NOT_FOUND' || err.exitCode === 404 || err.exitCode === 422)
+  ) {
+    issueCode = 'REMOTE_MISSING';
+  }
+  return {
+    section: unavailableSection(attemptedAt, {
+      code: issueCode,
+      message: err.issue?.message || err.message,
+      retryable: err.issue?.retryable ?? false,
+    }),
+    auth: err.issue?.code === 'AUTH_REQUIRED' ? 'required' : null,
+    valid: false,
+  };
+}
+
+function buildIssuesSection(
+  res: PromiseSettledResult<any>,
+  owner: string,
+  name: string,
+  attemptedAt: string
+): { section: Section<GitHubIssue[]>; auth: 'available' | 'required' | null } {
+  if (res.status === 'fulfilled') {
+    if (!Array.isArray(res.value)) {
+      return {
+        section: unavailableSection(attemptedAt, {
+          code: 'INVALID_UPSTREAM',
+          message: 'Malformed issues payload from upstream: expected array',
+          retryable: false,
+        }),
+        auth: 'available',
+      };
+    }
+    const rawItems = res.value;
+    if (rawItems.some((it) => !it || typeof it !== 'object' || typeof it.number !== 'number')) {
+      return {
+        section: unavailableSection(attemptedAt, {
+          code: 'INVALID_UPSTREAM',
+          message: 'Malformed issue item in upstream response',
+          retryable: false,
+        }),
+        auth: 'available',
+      };
+    }
+    const rawIssuesOnly = rawItems.filter((it) => !it.pull_request);
+    const issues: GitHubIssue[] = rawIssuesOnly.map((it) => ({
+      number: it.number,
+      title: it.title || '',
+      url: it.html_url || `https://github.com/${owner}/${name}/issues/${it.number}`,
+      state: it.state === 'closed' ? 'closed' : 'open',
+      author: it.user?.login || null,
+      updatedAt: toIsoOrNull(it.updated_at),
+      labels: Array.isArray(it.labels)
+        ? it.labels.map((l: any) => (typeof l === 'string' ? l : l.name)).filter(Boolean)
+        : [],
+    }));
+    return {
+      section: readyOrEmptySection(issues, attemptedAt, rawItems.length === 20),
+      auth: 'available',
+    };
+  }
+
+  const err = res.reason;
+  return {
+    section: unavailableSection(
+      attemptedAt,
+      err.issue || { code: 'CLI_FAILED', message: err.message, retryable: true }
+    ),
+    auth: err.issue?.code === 'AUTH_REQUIRED' ? 'required' : null,
+  };
+}
+
 export async function collectGitHubData(
   project: Project,
   query: GitHubQuery = { scope: 'general' },
@@ -158,14 +368,20 @@ export async function collectGitHubData(
   const attemptedAt = new Date().toISOString();
   const readAccount = createGitHubAccountReader(runner);
   const pagination: NonNullable<GitHubData['pagination']> = {
-    commits: { nextPage: null }, prs: { nextPage: null }, issues: { nextPage: null },
+    commits: { nextPage: null },
+    prs: { nextPage: null },
+    issues: { nextPage: null },
   };
   const page = query.page ?? 1;
   if (!Number.isInteger(page) || page < 1 || page > 10000 || (query.page !== undefined && !query.activity)) {
     throw new CliError('INVALID_ARGUMENT', 'Invalid GitHub page');
   }
   const readGitHub = async (endpoint: string) => {
-    const activity = endpoint.includes('/commits?') ? 'commits' : endpoint.includes('/pulls?') ? 'prs' : 'issues';
+    const activity = endpoint.includes('/commits?')
+      ? 'commits'
+      : endpoint.includes('/pulls?')
+        ? 'prs'
+        : 'issues';
     if (query.activity && activity !== query.activity) return [];
     const result = await readAccount(endpoint + (page > 1 ? `&page=${page}` : ''));
     if (Array.isArray(result) && result.length === 20 && page < 10000) pagination[activity].nextPage = page + 1;
@@ -218,19 +434,11 @@ export async function collectGitHubData(
       repo = await resolveProjectRepo(project, runner);
     }
   } catch (err: any) {
-    const issue: Issue = {
+    const emptySection = unavailableSection<any>(attemptedAt, {
       code: err.issue?.code || 'REMOTE_MISSING',
       message: err.message || 'Remote configuration missing or unsupported',
       retryable: false,
-    };
-    const emptyMeta: SourceMeta = {
-      availability: 'unavailable',
-      observedAt: null,
-      attemptedAt,
-      stale: false,
-      partial: false,
-      issue,
-    };
+    });
     initialScope.commits = 'unavailable';
     initialScope.pullRequests = 'unavailable';
     return {
@@ -238,118 +446,31 @@ export async function collectGitHubData(
       repository: null,
       auth: 'unknown',
       scope: initialScope,
-      pullRequests: { data: null, meta: emptyMeta },
-      commits: { data: null, meta: emptyMeta },
-      issues: { data: null, meta: emptyMeta },
+      pullRequests: emptySection,
+      commits: emptySection,
+      issues: emptySection,
     };
   }
 
   const { owner, name } = repo;
+  const issuesEndpoint = `repos/${owner}/${name}/issues?state=all&sort=updated&direction=desc&per_page=20`;
 
-  // Check if worktree scope has no branch
+  // Worktree scope without a usable git branch
   if (query.scope === 'worktree' && !targetWorktreeNode?.branch) {
-    const unavailableMeta: SourceMeta = {
-      availability: 'unavailable',
-      observedAt: null,
-      attemptedAt,
-      stale: false,
-      partial: false,
-      issue: {
-        code: 'SCOPE_UNAVAILABLE',
-        message: 'Worktree has no usable git branch',
-        retryable: false,
-      },
-    };
-
-    // Fetch repository issues
-    let issuesSection: Section<GitHubIssue[]>;
-    let authStatus: 'available' | 'required' | 'unknown' = 'unknown';
-
-    try {
-      const issuesEndpoint = `repos/${owner}/${name}/issues?state=all&sort=updated&direction=desc&per_page=20`;
-      const issuesRes = await readGitHub(issuesEndpoint);
-      authStatus = 'available';
-      if (!Array.isArray(issuesRes)) {
-        issuesSection = {
-          data: null,
-          meta: {
-            availability: 'unavailable',
-            observedAt: null,
-            attemptedAt,
-            stale: false,
-            partial: false,
-            issue: {
-              code: 'INVALID_UPSTREAM',
-              message: 'Malformed issues payload from upstream: expected array',
-              retryable: false,
-            },
-          },
-        };
-      } else {
-        const isMalformed = issuesRes.some((it) => !it || typeof it !== 'object' || typeof it.number !== 'number');
-        if (isMalformed) {
-          issuesSection = {
-            data: null,
-            meta: {
-              availability: 'unavailable',
-              observedAt: null,
-              attemptedAt,
-              stale: false,
-              partial: false,
-              issue: {
-                code: 'INVALID_UPSTREAM',
-                message: 'Malformed issue item in upstream response',
-                retryable: false,
-              },
-            },
-          };
-        } else {
-          const rawIssuesOnly = issuesRes.filter((it) => !it.pull_request);
-          const issues: GitHubIssue[] = rawIssuesOnly.map((it) => ({
-            number: it.number,
-            title: it.title || '',
-            url: it.html_url || `https://github.com/${owner}/${name}/issues/${it.number}`,
-            state: it.state === 'closed' ? 'closed' : 'open',
-            author: it.user?.login || null,
-            updatedAt: toIsoOrNull(it.updated_at),
-            labels: Array.isArray(it.labels)
-              ? it.labels.map((l: any) => (typeof l === 'string' ? l : l.name)).filter(Boolean)
-              : [],
-          }));
-          issuesSection = {
-            data: issues,
-            meta: {
-              availability: issues.length > 0 ? 'ready' : 'empty',
-              observedAt: attemptedAt,
-              attemptedAt,
-              stale: false,
-              partial: issuesRes.length === 20,
-              issue: null,
-            },
-          };
-        }
-      }
-    } catch (err: any) {
-      if (err.issue?.code === 'AUTH_REQUIRED') authStatus = 'required';
-      issuesSection = {
-        data: null,
-        meta: {
-          availability: 'unavailable',
-          observedAt: null,
-          attemptedAt,
-          stale: false,
-          partial: false,
-          issue: err.issue || { code: 'CLI_FAILED', message: err.message, retryable: true },
-        },
-      };
-    }
+    const unavailableBranchSection = unavailableSection<any>(attemptedAt, {
+      code: 'SCOPE_UNAVAILABLE',
+      message: 'Worktree has no usable git branch',
+      retryable: false,
+    });
+    const [issuesRes] = await Promise.allSettled([readGitHub(issuesEndpoint)]);
+    const { section: issuesSection, auth: issuesAuth } = buildIssuesSection(issuesRes, owner, name, attemptedAt);
 
     return {
       repository: repo,
-      auth: authStatus,
+      auth: issuesAuth ?? 'unknown',
       scope: initialScope,
-      pullRequests: { data: null, meta: unavailableMeta },
-      commits: { data: null, meta: unavailableMeta },
+      pullRequests: unavailableBranchSection,
+      commits: unavailableBranchSection,
       issues: issuesSection,
       pagination,
     };
@@ -357,7 +478,6 @@ export async function collectGitHubData(
 
   let pullsEndpoint: string;
   let commitsEndpoint: string;
-  const issuesEndpoint = `repos/${owner}/${name}/issues?state=all&sort=updated&direction=desc&per_page=20`;
 
   if (query.scope === 'worktree' && targetWorktreeNode?.branch) {
     const branch = targetWorktreeNode.branch;
@@ -378,287 +498,25 @@ export async function collectGitHubData(
 
   let authStatus: 'available' | 'required' | 'unknown' = 'unknown';
 
-  // 1. Process Pull Requests
-  let prSection: Section<PullRequest[]>;
-  if (pullsRes.status === 'fulfilled') {
-    authStatus = 'available';
-    if (!Array.isArray(pullsRes.value)) {
-      prSection = {
-        data: null,
-        meta: {
-          availability: 'unavailable',
-          observedAt: null,
-          attemptedAt,
-          stale: false,
-          partial: false,
-          issue: {
-            code: 'INVALID_UPSTREAM',
-            message: 'Malformed pull requests payload from upstream: expected array',
-            retryable: false,
-          },
-        },
-      };
-      initialScope.pullRequests = 'unavailable';
-    } else {
-      const rawPulls = pullsRes.value;
-      const isMalformed = rawPulls.some((p) => !p || typeof p !== 'object' || typeof p.number !== 'number');
-      if (isMalformed) {
-        prSection = {
-          data: null,
-          meta: {
-            availability: 'unavailable',
-            observedAt: null,
-            attemptedAt,
-            stale: false,
-            partial: false,
-            issue: {
-              code: 'INVALID_UPSTREAM',
-              message: 'Malformed pull request item in upstream response',
-              retryable: false,
-            },
-          },
-        };
-        initialScope.pullRequests = 'unavailable';
-      } else {
-        const prs: PullRequest[] = rawPulls.map((p) => {
-          const mergedAt = toIsoOrNull(p.merged_at);
-          const state: 'open' | 'closed' | 'merged' = mergedAt ? 'merged' : p.state === 'closed' ? 'closed' : 'open';
-          return {
-            number: p.number,
-            title: p.title || '',
-            url: p.html_url || `https://github.com/${owner}/${name}/pull/${p.number}`,
-            state,
-            draft: Boolean(p.draft),
-            author: p.user?.login || null,
-            updatedAt: toIsoOrNull(p.updated_at),
-            mergedAt,
-            headRef: p.head?.ref || null,
-            baseRef: p.base?.ref || null,
-          };
-        });
-        prSection = {
-          data: prs,
-          meta: {
-            availability: prs.length > 0 ? 'ready' : 'empty',
-            observedAt: attemptedAt,
-            attemptedAt,
-            stale: false,
-            partial: rawPulls.length === 20,
-            issue: null,
-          },
-        };
-      }
-    }
-  } else {
-    const err = pullsRes.reason;
-    if (err.issue?.code === 'AUTH_REQUIRED') authStatus = 'required';
-    prSection = {
-      data: null,
-      meta: {
-        availability: 'unavailable',
-        observedAt: null,
-        attemptedAt,
-        stale: false,
-        partial: false,
-        issue: err.issue || { code: 'CLI_FAILED', message: err.message, retryable: true },
-      },
-    };
-    initialScope.pullRequests = 'unavailable';
-  }
+  const prBuilt = buildPullRequestsSection(pullsRes, owner, name, attemptedAt);
+  if (prBuilt.auth) authStatus = prBuilt.auth;
+  if (!prBuilt.valid) initialScope.pullRequests = 'unavailable';
 
-  // 2. Process Commits
-  let commitSection: Section<Commit[]>;
-  if (commitsRes.status === 'fulfilled') {
-    authStatus = 'available';
-    if (!Array.isArray(commitsRes.value)) {
-      commitSection = {
-        data: null,
-        meta: {
-          availability: 'unavailable',
-          observedAt: null,
-          attemptedAt,
-          stale: false,
-          partial: false,
-          issue: {
-            code: 'INVALID_UPSTREAM',
-            message: 'Malformed commits payload from upstream: expected array',
-            retryable: false,
-          },
-        },
-      };
-      initialScope.commits = 'unavailable';
-    } else {
-      const rawCommits = commitsRes.value;
-      const isMalformed = rawCommits.some((c) => !c || typeof c !== 'object' || typeof c.sha !== 'string' || !c.sha.trim());
-      if (isMalformed) {
-        commitSection = {
-          data: null,
-          meta: {
-            availability: 'unavailable',
-            observedAt: null,
-            attemptedAt,
-            stale: false,
-            partial: false,
-            issue: {
-              code: 'INVALID_UPSTREAM',
-              message: 'Malformed commit item in upstream response',
-              retryable: false,
-            },
-          },
-        };
-        initialScope.commits = 'unavailable';
-      } else {
-        const commits: Commit[] = rawCommits.map((c) => ({
-          sha: c.sha,
-          message: (c.commit?.message || '').split('\n')[0].slice(0, 200),
-          url: c.html_url || `https://github.com/${owner}/${name}/commit/${c.sha}`,
-          author: c.commit?.author?.name || c.author?.login || null,
-          committedAt: toIsoOrNull(c.commit?.author?.date || c.commit?.committer?.date),
-        }));
-        commitSection = {
-          data: commits,
-          meta: {
-            availability: commits.length > 0 ? 'ready' : 'empty',
-            observedAt: attemptedAt,
-            attemptedAt,
-            stale: false,
-            partial: rawCommits.length === 20,
-            issue: null,
-          },
-        };
-      }
-    }
-  } else {
-    const err = commitsRes.reason;
-    if (err.exitCode === 409 || err.httpStatus === 409 || err.issue?.message?.includes('empty')) {
-      commitSection = {
-        data: [],
-        meta: {
-          availability: 'empty',
-          observedAt: attemptedAt,
-          attemptedAt,
-          stale: false,
-          partial: false,
-          issue: null,
-        },
-      };
-    } else {
-      if (err.issue?.code === 'AUTH_REQUIRED') authStatus = 'required';
-      let issueCode = err.issue?.code || 'CLI_FAILED';
-      if (
-        query.scope === 'worktree' &&
-        (err.issue?.code === 'GITHUB_NOT_FOUND' || err.exitCode === 404 || err.exitCode === 422)
-      ) {
-        issueCode = 'REMOTE_MISSING';
-      }
-      commitSection = {
-        data: null,
-        meta: {
-          availability: 'unavailable',
-          observedAt: null,
-          attemptedAt,
-          stale: false,
-          partial: false,
-          issue: {
-            code: issueCode,
-            message: err.issue?.message || err.message,
-            retryable: err.issue?.retryable ?? false,
-          },
-        },
-      };
-      initialScope.commits = 'unavailable';
-    }
-  }
+  const commitBuilt = buildCommitsSection(commitsRes, owner, name, query.scope, attemptedAt);
+  if (commitBuilt.auth) authStatus = commitBuilt.auth;
+  if (!commitBuilt.valid) initialScope.commits = 'unavailable';
 
-  // 3. Process Issues
-  let issuesSection: Section<GitHubIssue[]>;
-  if (issuesRes.status === 'fulfilled') {
-    authStatus = 'available';
-    if (!Array.isArray(issuesRes.value)) {
-      issuesSection = {
-        data: null,
-        meta: {
-          availability: 'unavailable',
-          observedAt: null,
-          attemptedAt,
-          stale: false,
-          partial: false,
-          issue: {
-            code: 'INVALID_UPSTREAM',
-            message: 'Malformed issues payload from upstream: expected array',
-            retryable: false,
-          },
-        },
-      };
-    } else {
-      const rawItems = issuesRes.value;
-      const isMalformed = rawItems.some((it) => !it || typeof it !== 'object' || typeof it.number !== 'number');
-      if (isMalformed) {
-        issuesSection = {
-          data: null,
-          meta: {
-            availability: 'unavailable',
-            observedAt: null,
-            attemptedAt,
-            stale: false,
-            partial: false,
-            issue: {
-              code: 'INVALID_UPSTREAM',
-              message: 'Malformed issue item in upstream response',
-              retryable: false,
-            },
-          },
-        };
-      } else {
-        const rawIssuesOnly = rawItems.filter((it) => !it.pull_request);
-        const issues: GitHubIssue[] = rawIssuesOnly.map((it) => ({
-          number: it.number,
-          title: it.title || '',
-          url: it.html_url || `https://github.com/${owner}/${name}/issues/${it.number}`,
-          state: it.state === 'closed' ? 'closed' : 'open',
-          author: it.user?.login || null,
-          updatedAt: toIsoOrNull(it.updated_at),
-          labels: Array.isArray(it.labels)
-            ? it.labels.map((l: any) => (typeof l === 'string' ? l : l.name)).filter(Boolean)
-            : [],
-        }));
-        issuesSection = {
-          data: issues,
-          meta: {
-            availability: issues.length > 0 ? 'ready' : 'empty',
-            observedAt: attemptedAt,
-            attemptedAt,
-            stale: false,
-            partial: rawItems.length === 20,
-            issue: null,
-          },
-        };
-      }
-    }
-  } else {
-    const err = issuesRes.reason;
-    if (err.issue?.code === 'AUTH_REQUIRED') authStatus = 'required';
-    issuesSection = {
-      data: null,
-      meta: {
-        availability: 'unavailable',
-        observedAt: null,
-        attemptedAt,
-        stale: false,
-        partial: false,
-        issue: err.issue || { code: 'CLI_FAILED', message: err.message, retryable: true },
-      },
-    };
-  }
+  const issueBuilt = buildIssuesSection(issuesRes, owner, name, attemptedAt);
+  if (issueBuilt.auth) authStatus = issueBuilt.auth;
 
   return {
     projectKind: project.kind,
     repository: repo,
     auth: authStatus,
     scope: initialScope,
-    pullRequests: prSection,
-    commits: commitSection,
-    issues: issuesSection,
+    pullRequests: prBuilt.section,
+    commits: commitBuilt.section,
+    issues: issueBuilt.section,
     pagination,
   };
 }

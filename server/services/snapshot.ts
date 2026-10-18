@@ -9,7 +9,8 @@ import {
   NodeDetails,
 } from '../../shared/contracts.js';
 import { CommandRunner, defaultCommandRunner, CliError } from '../integrations/cli.js';
-import { collectGraph, collectNodeDetails } from '../integrations/orca.js';
+import { collectGraph } from '../integrations/orca/graph.js';
+import { collectNodeDetails } from '../integrations/orca/nodeDetails.js';
 
 interface ProjectCache {
   projectId: Id;

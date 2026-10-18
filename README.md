@@ -154,7 +154,8 @@ shared/contracts.ts          # Normative API types
 server/
   index.ts                   # Backend process entry
   http/                      # Read-only routing and request validation
-  integrations/              # Orca/CLI, GitHub, and usage adapters
+  integrations/              # CLI, GitHub, agents, worktrees, and usage adapters
+    orca/                    # Inventory, graph, node details, actions, and prerequisites
   providers/                 # Exact-session transcripts and model metadata
   services/                  # Snapshot caching and subscriptions
 src/
@@ -165,9 +166,9 @@ src/
   components/ui/             # Modal, Popover, ContextMenu, Select, AgentPicker, Disclosure and shared controls
   components/providers/      # Shared Orca provider icons
   hooks/                     # Shared interaction hooks
-  styles/                    # Global and message/activity styles
+  styles/                    # Domain stylesheets (tokens, base, layout, workflow, panels, modals, markdown)
   assets/                    # Attributed provider assets
-  tests/                     # Frontend behavior/render tests
+  tests/                     # Frontend behavior/render tests (github, notifications, workflow, dialogsAndUi, commitGraph)
 scripts/dev.mjs              # Local development launcher
 ```
 

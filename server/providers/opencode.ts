@@ -2,10 +2,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { BoundedTranscriptReadResult } from '../integrations/orca.js';
+import type { BoundedTranscriptReadResult } from '../integrations/orca/utils.js';
 import { stripAnsiCodes } from './shared.js';
 
-export function openCodeDatabase(provider: string, sessionId: string, allowed: (file: string) => boolean): string | null {
+function openCodeDatabaseCandidates(provider: string): { selected: string | undefined; candidates: string[] } {
   const directory = path.join(
     process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
     provider === 'opencode' ? 'opencode' : 'kilo'
@@ -21,6 +21,11 @@ export function openCodeDatabase(provider: string, sessionId: string, allowed: (
       if (fs.existsSync(altKilo)) candidates.push(altKilo);
     }
   }
+  return { selected, candidates };
+}
+
+export function openCodeDatabase(provider: string, sessionId: string, allowed: (file: string) => boolean): string | null {
+  const { candidates } = openCodeDatabaseCandidates(provider);
   for (const file of candidates) {
     if (!allowed(file) || !fs.existsSync(file)) continue;
     const db = new DatabaseSync(file, { readOnly: true });
@@ -51,6 +56,35 @@ export function readOpenCodePage(
     const BATCH_SIZE = Math.max(limit * 2, 50);
     const MAX_SCAN = 10000;
 
+    // Both scan directions share filtering, part limits and the page byte budget.
+    const decodeMessage = (row: any): string | null => {
+      if (!row.data) return null;
+      bytes += Buffer.byteLength(row.data);
+      if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
+
+      const message = JSON.parse(row.data);
+      if (!['user', 'assistant'].includes(message.role)) return null;
+
+      const parts = db.prepare(`SELECT CASE WHEN length(CAST(data AS BLOB)) <= 2097152 THEN data END AS data
+        FROM part WHERE session_id = ? AND message_id = ? ORDER BY rowid LIMIT 1001`).all(sessionId, row.id) as any[];
+      if (parts.length > 1000) throw new Error('Provider message exceeds part limit');
+
+      const content = parts.flatMap((part) => {
+        if (!part.data) return [];
+        bytes += Buffer.byteLength(part.data);
+        if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
+        const value = JSON.parse(part.data);
+        return value.type === 'text' && !value.synthetic && typeof value.text === 'string' && value.text.trim()
+          ? [{ type: 'text', text: value.text }] : [];
+      });
+      if (!content.length) return null;
+      return JSON.stringify({
+        type: 'response_item',
+        timestamp: new Date(row.time_created).toISOString(),
+        payload: { type: 'message', role: message.role, id: row.id, content },
+      });
+    };
+
     if (offset === null) {
       let cursorRowId: number | null = null;
       let oldestIncludedRowId: number | null = null;
@@ -71,32 +105,10 @@ export function readOpenCodePage(
 
         for (const row of batch) {
           if (row.rowid > maxScannedRowId) maxScannedRowId = row.rowid;
-          if (!row.data) continue;
-          bytes += Buffer.byteLength(row.data);
-          if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
-
-          const message = JSON.parse(row.data);
-          if (!['user', 'assistant'].includes(message.role)) continue;
-
-          const parts = db.prepare(`SELECT CASE WHEN length(CAST(data AS BLOB)) <= 2097152 THEN data END AS data
-            FROM part WHERE session_id = ? AND message_id = ? ORDER BY rowid LIMIT 1001`).all(sessionId, row.id) as any[];
-          if (parts.length > 1000) throw new Error('Provider message exceeds part limit');
-
-          const content = parts.flatMap((part) => {
-            if (!part.data) return [];
-            bytes += Buffer.byteLength(part.data);
-            if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
-            const value = JSON.parse(part.data);
-            return value.type === 'text' && !value.synthetic && typeof value.text === 'string' && value.text.trim() ? [{ type: 'text', text: value.text }] : [];
-          });
-
-          if (content.length) {
+          const line = decodeMessage(row);
+          if (line !== null) {
             oldestIncludedRowId = row.rowid;
-            lines.push(JSON.stringify({
-              type: 'response_item',
-              timestamp: new Date(row.time_created).toISOString(),
-              payload: { type: 'message', role: message.role, id: row.id, content },
-            }));
+            lines.push(line);
             if (lines.length >= limit) break;
           }
         }
@@ -129,31 +141,9 @@ export function readOpenCodePage(
         maxScannedRowId = cursorRowId;
 
         for (const row of batch) {
-          if (!row.data) continue;
-          bytes += Buffer.byteLength(row.data);
-          if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
-
-          const message = JSON.parse(row.data);
-          if (!['user', 'assistant'].includes(message.role)) continue;
-
-          const parts = db.prepare(`SELECT CASE WHEN length(CAST(data AS BLOB)) <= 2097152 THEN data END AS data
-            FROM part WHERE session_id = ? AND message_id = ? ORDER BY rowid LIMIT 1001`).all(sessionId, row.id) as any[];
-          if (parts.length > 1000) throw new Error('Provider message exceeds part limit');
-
-          const content = parts.flatMap((part) => {
-            if (!part.data) return [];
-            bytes += Buffer.byteLength(part.data);
-            if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
-            const value = JSON.parse(part.data);
-            return value.type === 'text' && !value.synthetic && typeof value.text === 'string' && value.text.trim() ? [{ type: 'text', text: value.text }] : [];
-          });
-
-          if (content.length) {
-            lines.push(JSON.stringify({
-              type: 'response_item',
-              timestamp: new Date(row.time_created).toISOString(),
-              payload: { type: 'message', role: message.role, id: row.id, content },
-            }));
+          const line = decodeMessage(row);
+          if (line !== null) {
+            lines.push(line);
             if (lines.length >= limit) break;
           }
         }
@@ -244,21 +234,7 @@ export function findOpenCodeSession(
   allowed?: ((file: string) => boolean) | null,
   options?: { worktreePath?: string | null; ptyId?: string | null }
 ): { dbPath: string; sessionId: string } | null {
-  const directory = path.join(
-    process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'),
-    provider === 'opencode' ? 'opencode' : 'kilo'
-  );
-  const selected = provider === 'opencode' ? process.env.OPENCODE_DB : process.env.KILO_DB;
-  const candidates: string[] = [];
-  if (selected && path.isAbsolute(selected)) {
-    candidates.push(selected);
-  } else {
-    candidates.push(path.join(directory, provider === 'opencode' ? 'opencode.db' : 'kilo.db'));
-    if (provider === 'kilo' || provider === 'kilocode') {
-      const altKilo = path.join(os.homedir(), '.kilocode', 'kilo.db');
-      if (fs.existsSync(altKilo)) candidates.push(altKilo);
-    }
-  }
+  const { selected, candidates } = openCodeDatabaseCandidates(provider);
 
   const clean = labelOrId
     .replace(/^✳\s*/, '')

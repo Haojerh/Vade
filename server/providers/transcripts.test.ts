@@ -4,8 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { publicTranscriptRecord, transcriptSettings, readOpenCodePage, readOpenCodeModel, findOpenCodeSession, findClaudeTranscript } from './transcripts.js';
-import { resolveCoordinatorConversation, resolveAntigravityConversation, globalSourceMaps } from '../integrations/orca.js';
+import { publicTranscriptRecord, transcriptSettings } from './shared.js';
+import { readOpenCodePage, readOpenCodeModel, findOpenCodeSession } from './opencode.js';
+import { findClaudeTranscript } from './claude.js';
+import { findCodexTranscript } from './codex.js';
+import { resolveAntigravityConversation } from './antigravity.js';
+import { resolveCoordinatorConversation } from '../integrations/orca/nodeDetails.js';
+import { globalSourceMaps } from '../integrations/orca/state.js';
 
 test('Claude, Pi and OMP expose public text and omit tools, thinking and injected turns', () => {
   for (const provider of ['claude', 'pi', 'omp']) {
@@ -86,6 +91,54 @@ test('OpenCode reads exact session model, effort and public parts; cursors check
     assert.deepEqual(JSON.parse(next.lines[0]).payload.content, [{ type: 'text', text: 'new arrival' }]);
     assert.equal(readOpenCodePage(file, 'missing', null, 20).lines.length, 0);
   } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('OpenCode scan directions skip private parts and enforce the same part limit', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-opencode-scan-'));
+  const file = path.join(dir, 'opencode.db');
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('CREATE TABLE message(id TEXT,session_id TEXT,time_created INTEGER,data TEXT); CREATE TABLE part(message_id TEXT,session_id TEXT,data TEXT);');
+    const message = db.prepare('INSERT INTO message VALUES(?,?,?,?)');
+    const part = db.prepare('INSERT INTO part VALUES(?,?,?)');
+    for (let i = 1; i <= 60; i++) {
+      message.run(String(i), 'exact', i, JSON.stringify({ role: 'assistant' }));
+      part.run(String(i), 'exact', JSON.stringify({ type: i === 30 ? 'text' : 'reasoning', text: String(i) }));
+    }
+    for (const offset of [null, 0]) {
+      const page = readOpenCodePage(file, 'exact', offset, 2);
+      assert.deepEqual(page.lines.map((line) => JSON.parse(line).payload.content), [[{ type: 'text', text: '30' }]]);
+      assert.equal(page.nextByteOffset, 60);
+      assert.equal(page.totalScanned, 60);
+    }
+    for (let i = 0; i < 1000; i++) part.run('30', 'exact', JSON.stringify({ type: 'text', text: 'extra' }));
+    for (const offset of [null, 0]) {
+      assert.throws(() => readOpenCodePage(file, 'exact', offset, 2), /exceeds part limit/);
+    }
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('Codex rollout traversal preserves dated directory priority and ignores unrelated years', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-codex-order-'));
+  const previous = process.env.CODEX_HOME;
+  const id = '11111111-2222-3333-4444-555555555555';
+  try {
+    process.env.CODEX_HOME = dir;
+    for (const date of ['2025/12/31', '2026/01/01', '2026/10/17', '2026/10/18', 'archive/12/31']) {
+      const folder = path.join(dir, 'sessions', date);
+      fs.mkdirSync(folder, { recursive: true });
+      fs.writeFileSync(path.join(folder, `rollout-${id}.jsonl`), '');
+    }
+    const newest = path.join(dir, 'sessions', '2026', '10', '18', `rollout-${id}.jsonl`);
+    assert.equal(findCodexTranscript(id), newest);
+    fs.writeFileSync(path.join(dir, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Exact thread' }));
+    assert.equal(findCodexTranscript('Exact thread'), newest);
+    assert.equal(findCodexTranscript('missing thread'), null);
+  } finally {
+    if (previous === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('findOpenCodeSession locates resumed sessions by title and rejects generic label', () => {

@@ -1,0 +1,152 @@
+/* ==========================================================================
+   Orca Live Dashboard — Atlas Grammar & Craft Polish Styles
+   Emil Kowalski Design Engineering Principles Applied
+   ========================================================================== */
+
+/* 1. Theme Variables */
+:root,
+:root[data-theme="dark"] {
+  --canvas-bg: #181818;
+  --surface-1: #202020;
+  --surface-2: #262626;
+  --surface-hover: #2e2e2e;
+  --surface-active: #343434;
+  --border-subtle: #2b2b2b;
+  --border-main: #363636;
+  --border-strong: #4a4a4a;
+
+  --text-main: #ededed;
+  --text-secondary: #a3a3a3;
+  --text-muted: #808080;
+  --text-dim: #5c5c5c;
+
+  --accent: #ededed;
+  --accent-surface: #2b2b2b;
+  --focus-ring: #38bdf8;
+
+  --edge-idle: #3a3a3a;
+  --edge-active: #3b82f6;
+
+  --state-working-bg: rgba(59, 130, 246, 0.12);
+  --state-working-text: #60a5fa;
+  --state-working-border: rgba(59, 130, 246, 0.3);
+
+  --state-waiting-bg: rgba(245, 158, 11, 0.12);
+  --state-waiting-text: #fbbf24;
+  --state-waiting-border: rgba(245, 158, 11, 0.3);
+
+  --state-blocked-bg: rgba(239, 68, 68, 0.12);
+  --state-blocked-text: #f87171;
+  --state-blocked-border: rgba(239, 68, 68, 0.3);
+
+  --state-completed-bg: rgba(16, 185, 129, 0.12);
+  --state-completed-text: #34d399;
+  --state-completed-border: rgba(16, 185, 129, 0.3);
+
+  --state-failed-bg: rgba(239, 68, 68, 0.12);
+  --state-failed-text: #f87171;
+  --state-failed-border: rgba(239, 68, 68, 0.3);
+
+  --state-idle-bg: rgba(160, 160, 160, 0.08);
+  --state-idle-text: #a8a8a8;
+  --state-idle-border: rgba(160, 160, 160, 0.2);
+
+  --state-unknown-bg: rgba(160, 160, 160, 0.08);
+  --state-unknown-text: #a8a8a8;
+  --state-unknown-border: rgba(160, 160, 160, 0.2);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.6);
+
+  --scrollbar-thumb: #383838;
+  --scrollbar-thumb-hover: #4e4e4e;
+
+  /* Custom Easings (Emil Kowalski / Design Engineering Principles) */
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+
+  /* Optional Card State Coloring Variables (Dark Theme) */
+  --card-working-bg: rgba(59, 130, 246, 0.12);
+  --card-working-text: #60a5fa;
+  --card-working-border: rgba(59, 130, 246, 0.35);
+  --card-completed-bg: rgba(16, 185, 129, 0.12);
+  --card-completed-text: #34d399;
+  --card-completed-border: rgba(16, 185, 129, 0.35);
+  --card-idle-bg: #262626;
+  --card-idle-text: #ededed;
+  --card-idle-border: #363636;
+
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+}
+
+:root[data-theme="light"] {
+  --canvas-bg: #f7f7f7;
+  --surface-1: #ffffff;
+  --surface-2: #f0f0f0;
+  --surface-hover: #e8e8e8;
+  --surface-active: #dfdfdf;
+  --border-subtle: #eaeaea;
+  --border-main: #dadada;
+  --border-strong: #bfbfbf;
+
+  --text-main: #171717;
+  --text-secondary: #555555;
+  --text-muted: #737373;
+  --text-dim: #999999;
+
+  --accent: #171717;
+  --accent-surface: #e5e5e5;
+  --focus-ring: #0284c7;
+
+  --edge-idle: #d1d5db;
+  --edge-active: #2563eb;
+
+  --state-working-bg: #eff6ff;
+  --state-working-text: #1d4ed8;
+  --state-working-border: #93c5fd;
+
+  --state-waiting-bg: #fffbeb;
+  --state-waiting-text: #b45309;
+  --state-waiting-border: #fde68a;
+
+  --state-blocked-bg: #fef2f2;
+  --state-blocked-text: #b91c1c;
+  --state-blocked-border: #fecaca;
+
+  --state-completed-bg: #ecfdf5;
+  --state-completed-text: #047857;
+  --state-completed-border: #a7f3d0;
+
+  --state-failed-bg: #fef2f2;
+  --state-failed-text: #b91c1c;
+  --state-failed-border: #fecaca;
+
+  --state-idle-bg: #f3f4f6;
+  --state-idle-text: #4b5563;
+  --state-idle-border: #e5e7eb;
+
+  --state-unknown-bg: #f3f4f6;
+  --state-unknown-text: #6b7280;
+  --state-unknown-border: #e5e7eb;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 10px 20px -3px rgba(0, 0, 0, 0.1);
+
+  --scrollbar-thumb: #d1d5db;
+  --scrollbar-thumb-hover: #9ca3af;
+
+  /* Optional Card State Coloring Variables (Light Theme) */
+  --card-working-bg: #eff6ff;
+  --card-working-text: #1d4ed8;
+  --card-working-border: #93c5fd;
+  --card-completed-bg: #ecfdf5;
+  --card-completed-text: #047857;
+  --card-completed-border: #a7f3d0;
+  --card-idle-bg: #f0f0f0;
+  --card-idle-text: #171717;
+  --card-idle-border: #dadada;
+}
