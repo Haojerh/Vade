@@ -63,7 +63,8 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const [prFilter, setPrFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
   const history = useRef(new Map<string, UnreadHistory>());
-  const [unread, setUnread] = useState<Record<TabKey, Set<string>>>({ commits: new Set(), prs: new Set(), issues: new Set() });
+  const [observedUnread, setUnread] = useState<Record<TabKey, Set<string>>>({ commits: new Set(), prs: new Set(), issues: new Set() });
+  const unread = { ...observedUnread, commits: new Set([...observedUnread.commits].filter(sha => !graph.readIds.has(sha))) };
   const repositoryKey = `${projectId}::${data?.repository?.url ?? ''}`;
   const scopeKey = `${data?.scope.kind}::${data?.scope.nodeId}::${data?.scope.branch}`;
   const keys = { commits: `${repositoryKey}::commits::${scopeKey}`, prs: `${repositoryKey}::prs::${scopeKey}`, issues: `${repositoryKey}::issues` };
@@ -116,6 +117,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   }, [data, projectId]);
 
   const acknowledge = (tab: TabKey, id: string) => {
+    if (tab === 'commits') graph.acknowledge(id);
     const stored = history.current.get(keys[tab]);
     if (!stored) return;
     const acknowledged = acknowledgeGitHubItem(stored, id);

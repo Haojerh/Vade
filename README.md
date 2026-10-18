@@ -12,7 +12,7 @@ The GitHub sidebar always shows repository activity. For checkout-specific commi
 
 **Settings → Commit Graph History** shows colored branch and merge lanes in the Commits tab and is enabled by default. Saved preferences persist locally. History reads up to 200 local Git commits, including unpushed commits, without requiring GitHub authentication; repository scope includes all local refs and worktree scope follows that checkout's HEAD. Expand a commit for its hash, author and date. Refresh and retry are explicit; no Git fetch is performed.
 
-New local commits turn the Commits count orange and show a bell on unread rows. Tracking persists per project/repository/worktree/branch; the first successful load establishes a baseline. Clicking a commit clears only that commit. The graph refreshes every minute even while another activity tab is selected, and the GitHub Activity refresh button reloads it immediately.
+New local commits turn the Commits count orange and show a bell on unread rows. Tracking persists per project/repository/worktree/branch; the first successful load establishes a baseline. Clicking a commit clears only that commit in both graph and list views, including after refresh or reload. The graph refreshes every minute even while another activity tab is selected, and the GitHub Activity refresh button reloads it immediately.
 
 Worktree actions use `POST /api/projects/:projectId/worktrees` and `POST /api/projects/:projectId/nodes/:nodeId/rename-worktree`; local commit history uses `GET /api/projects/:projectId/commit-graph` with an optional discovered worktree `nodeId`. Repository and checkout selectors come from project discovery, with fixed allowlisted command arguments.
 

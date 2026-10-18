@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CommitGraphData, Section } from '../../../shared/contracts';
 import { fetchCommitGraph } from '../../api/client';
 import { acknowledgeGitHubItem, observeGitHubItems, readUnreadHistory, saveUnreadHistory, type UnreadHistory } from './githubUnread';
+import { useCommitReads } from './useCommitReads';
 
 export function commitGraphNotificationKey(projectId: string | null, nodeId?: string, branch?: string, repositoryId?: string) {
   return JSON.stringify(['local-commit-graph', projectId, repositoryId ?? null, nodeId ?? null, nodeId ? branch ?? null : null]);
@@ -11,6 +12,7 @@ interface GraphObservation { key: string; section: Section<CommitGraphData> | nu
 
 export function useCommitGraph(projectId: string | null, nodeId: string | undefined, branch: string | undefined, refresh: number, enabled: boolean, repositoryId?: string) {
   const key = commitGraphNotificationKey(projectId, nodeId, branch, repositoryId);
+  const reads = useCommitReads(key);
   const histories = useRef(new Map<string, UnreadHistory>());
   const [attempt, setAttempt] = useState(0);
   const [state, setState] = useState<GraphObservation>({ key, section: null, loading: true, error: '', unread: new Set() });
@@ -39,13 +41,14 @@ export function useCommitGraph(projectId: string | null, nodeId: string | undefi
     return () => { clearInterval(timer); request?.abort(); };
   }, [enabled, projectId, nodeId, key, refresh, attempt]);
   const acknowledge = useCallback((sha: string) => {
-    const history = histories.current.get(key);
+    reads.acknowledge(sha);
+    const history = histories.current.get(key) ?? readUnreadHistory(key);
     if (!history) return;
     const next = acknowledgeGitHubItem(history, sha);
     histories.current.set(key, next); saveUnreadHistory(key, next);
     setState(prev => prev.key === key ? { ...prev, unread: next.unread } : prev);
-  }, [key]);
+  }, [key, reads.acknowledge]);
   const retry = useCallback(() => setAttempt(value => value + 1), []);
   const current = state.key === key ? state : { key, section: null, error: '', loading: true, unread: new Set<string>() };
-  return { ...current, acknowledge, retry };
+  return { ...current, unread: new Set([...current.unread].filter(sha => !reads.ids.has(sha))), readIds: reads.ids, acknowledge, retry };
 }
