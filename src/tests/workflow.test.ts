@@ -33,12 +33,12 @@ test('working graph edges animate only explicit message packets, once and in the
     tools: [{ id: 'tool', nodeId: 'target', label: 'Read: index.html', at: null, expiresAt: Date.now() + 4500 }] }));
   assert.match(toolHtml, /Read: index.html/);
   assert.match(toolHtml, /repeatCount="1"/);
-  assert.match(toolHtml, /left:328px/);
+  assert.match(toolHtml, /left:364px/);
   const outside = renderToStaticMarkup(createElement(ToolActivityOverlay, {
     positions: new Map([['target', { x: 400, y: 80, width: 260, height: 100 }]]), canvasWidth: 700, reducedMotion: true,
     tools: [{ id: 'tool', nodeId: 'target', label: 'Read: index.html', at: null, expiresAt: Date.now() + 4500 }],
   }));
-  assert.match(outside, /left:122px/);
+  assert.match(outside, /left:86px/);
   assert.equal(outside.includes('animateMotion'), false);
 });
 

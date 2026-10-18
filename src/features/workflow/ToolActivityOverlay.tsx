@@ -12,9 +12,9 @@ export function ToolActivityOverlay({ tools, positions, reducedMotion, canvasWid
       if (!anchor?.width) return null;
       const index = slots.get(tool.nodeId) ?? 0;
       slots.set(tool.nodeId, index + 1);
-      const right = anchor.x + anchor.width + 28 + Math.floor(index / 4) * 260;
-      const onLeft = right + 250 > canvasWidth && anchor.x >= 278;
-      const x = onLeft ? Math.max(8, anchor.x - 278 - Math.floor(index / 4) * 260) : right;
+      const right = anchor.x + anchor.width + 64 + Math.floor(index / 4) * 314;
+      const onLeft = right + 250 > canvasWidth && anchor.x >= 314;
+      const x = onLeft ? Math.max(8, anchor.x - 314 - Math.floor(index / 4) * 314) : right;
       const y = anchor.y + (index % 4) * 42;
       const startX = onLeft ? anchor.x : anchor.x + anchor.width;
       const startY = anchor.y + anchor.height / 2;
@@ -22,8 +22,9 @@ export function ToolActivityOverlay({ tools, positions, reducedMotion, canvasWid
       const d = `M ${startX} ${startY} C ${endX} ${startY}, ${startX} ${y + 16}, ${endX} ${y + 16}`;
       return <div key={tool.id} className="tool-activity-event">
         <svg className="tool-activity-connection" aria-hidden="true">
-          <path d={d} fill="none" stroke="currentColor" strokeWidth="1.5" />
-          {!reducedMotion && <circle r="3" fill="currentColor"><animateMotion path={d} dur="0.7s" repeatCount="1" fill="freeze" /></circle>}
+          <path d={d} fill="none" stroke="currentColor" strokeWidth="2" />
+          <circle cx={startX} cy={startY} r="3" fill="currentColor" />
+          {!reducedMotion && <circle r="4" fill="currentColor"><animateMotion path={d} dur="0.7s" repeatCount="1" fill="freeze" /></circle>}
         </svg>
         <div className="tool-activity-node" style={{ left: x, top: y }} title={tool.label}>
           <span className="tool-activity-dot" />{tool.label}

@@ -9,18 +9,26 @@ function inputObject(input: unknown): Record<string, any> {
   return input && typeof input === 'object' ? input as Record<string, any> : {};
 }
 
+function stringLiteral(literal: string | undefined): string | null {
+  if (!literal) return null;
+  try {
+    if (literal.startsWith('"')) return JSON.parse(literal);
+    return literal.slice(1, -1).replace(/\\(['\\nrt])/g, (_, value: string) => ({ n: '\n', r: '\r', t: '\t' }[value] ?? value));
+  } catch { return null; }
+}
+
 export function toolLabel(name: string, rawInput: unknown): string {
   const input = inputObject(rawInput);
   // Code-mode wrappers carry literal tool arguments in `code`; inspect text only, never execute it.
-  const commandLiteral = typeof input.code === 'string' ? input.code.match(/"cmd"\s*:\s*("(?:\\.|[^"\\])*")/)?.[1] : null;
-  let wrappedCommand: string | null = null;
-  if (commandLiteral) {
-    try { wrappedCommand = JSON.parse(commandLiteral); } catch { /* Nonliteral code stays a generic tool label. */ }
-  }
-  const action = /edit|write|patch|replace/i.test(name) ? 'Edit'
+  const code = typeof input.code === 'string' ? input.code : typeof input.patch === 'string' && /exec/i.test(name) ? input.patch : '';
+  const commandLiteral = code.match(/\b(?:cmd|command)\s*["']?\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1];
+  const wrappedCommand = stringLiteral(commandLiteral);
+  const wrappedPatch = stringLiteral(code.match(/\bapply_patch\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1]);
+  const action = wrappedPatch || /edit|write|patch|replace/i.test(name) ? 'Edit'
     : /read|view|cat/i.test(name) ? 'Read'
     : /exec|bash|shell|command|terminal/i.test(name) ? 'Run' : name;
-  const patchPath = typeof input.patch === 'string' ? input.patch.match(/\*\*\* (?:Update|Add|Delete) File: ([^\r\n]+)/)?.[1] : null;
+  const patch = wrappedPatch ?? input.patch;
+  const patchPath = typeof patch === 'string' ? patch.match(/\*\*\* (?:Update|Add|Delete) File: ([^\r\n]+)/)?.[1] : null;
   const detail = action === 'Run' ? input.command ?? input.cmd ?? input.command_line ?? wrappedCommand
     : input.file_path ?? input.path ?? input.filePath ?? input.filename ?? patchPath ?? input.title;
   const safe = typeof detail === 'string' ? detail.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 160) : '';

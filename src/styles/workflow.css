@@ -843,6 +843,8 @@
   color: #49ce89;
 }
 .tool-activity-event {
+  position: absolute;
+  inset: 0;
   animation: tool-event-enter 180ms var(--ease-out) both, tool-event-exit 180ms var(--ease-out) 4.3s forwards;
 }
 .tool-activity-connection { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }

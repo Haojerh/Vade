@@ -30,6 +30,10 @@ test('tool metadata adapters cover Claude, Codex, Pi, OMP and omit output and th
   assert.equal(transcriptToolActivity('codex', 's', JSON.stringify(call))[0].label, 'Run: npm test');
   assert.deepEqual(transcriptToolActivity('codex', 's', JSON.stringify({ ...call, payload: { ...call.payload, type: 'function_call_output' } })), []);
   assert.equal(toolLabel('apply_patch', '*** Begin Patch\n*** Update File: server.ts\nsecret diff'), 'Edit: server.ts');
+  assert.equal(toolLabel('exec', 'text(await tools.exec_command({cmd:"npm test",max_output_tokens:200}));'), 'Run: npm test');
+  assert.equal(toolLabel('exec', { code: 'text(await tools.exec_command({"cmd":"git status --short"}));' }), 'Run: git status --short');
+  assert.equal(toolLabel('exec', "text(await tools.exec_command({cmd:'npm run build'}));"), 'Run: npm run build');
+  assert.equal(toolLabel('exec', 'text(await tools.apply_patch("*** Begin Patch\\n*** Update File: server.ts\\nsecret diff"));'), 'Edit: server.ts');
   assert.equal(toolLabel('Edit', { file_path: 'server.ts', old_string: 'secret', new_string: 'private' }), 'Edit: server.ts');
 });
 
