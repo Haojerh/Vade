@@ -13,6 +13,25 @@ import type { Node, Edge, NodeDetails as NodeDetailsType } from '../../shared/co
 import { WorkflowEdgesSvg } from '../features/workflow/WorkflowEdgesSvg';
 import { ToolActivityOverlay } from '../features/workflow/ToolActivityOverlay';
 import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts } from '../features/workflow/toolActivityLayout';
+import { placeNewWorktree } from '../features/workflow/newWorktreePlacement';
+
+test('new worktrees use free space in the scrolled viewport without covering existing groups', () => {
+  const viewport = { x: 500, y: 800, width: 1000, height: 700 };
+  const occupied = [{ x: 520, y: 820, width: 450, height: 450 }];
+  const original = structuredClone(occupied);
+  const placement = placeNewWorktree({ width: 350, height: 180 }, viewport, occupied);
+  assert.equal(placement.inViewport, true);
+  assert.ok(placement.box.x >= viewport.x && placement.box.x + placement.box.width <= viewport.x + viewport.width);
+  assert.ok(placement.box.y >= viewport.y && placement.box.y + placement.box.height <= viewport.y + viewport.height);
+  assert.equal(boxesOverlap(placement.box, occupied[0], 16), false);
+  assert.deepEqual(occupied, original);
+  const full = placeNewWorktree({ width: 350, height: 180 }, viewport, [viewport]);
+  assert.equal(full.inViewport, false);
+  assert.equal(boxesOverlap(full.box, viewport, 16), false);
+  const large = placeNewWorktree({ width: 1400, height: 900 }, viewport, occupied);
+  assert.equal(large.inViewport, false);
+  assert.equal(boxesOverlap(large.box, occupied[0], 16), false);
+});
 
 test('working graph edges animate only explicit message packets, once and in the observed direction', () => {
   const source = { id: 'source', kind: 'orchestrator' } as Node;

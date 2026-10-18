@@ -228,6 +228,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     draggingMemberRef,
     closePreview,
     suppressPreviewRef,
+    ready: !loading && !isLocallyStale,
   });
 
   const {

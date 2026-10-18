@@ -12,6 +12,8 @@ Live tool cards use neutral colors, avoid other worktrees and keep stable placem
 
 Create worktrees with **Add Worktree** beside Reset Layout or by right-clicking empty topology space. The dialog supports a name, branch/PR/issue source, optional installed agent, setup policy, and Create more. It creates an independent worktree in the selected Git project using Orca's repository default base unless a base is supplied. Open Inspect Worktree and use its edit icon to rename the display name; the checkout path and Git branch stay unchanged.
 
+New worktree groups appear in a free area of the current topology viewport when they fit. Placement respects the current scroll position and existing groups, and persists like a manually dragged position. If the viewport is full or the new group is too large, it is placed in the nearest free area and the canvas scrolls to reveal it. Initial loading and reconnecting existing worktrees preserve their layout.
+
 Both agent dialogs share a searchable picker with provider icons. Its installed choices come from host detection in `server/integrations/agents.ts` through `/api/agents/catalog`; the frontend has no hardcoded installed-agent fallback. Detection failures expose retry controls.
 
 The GitHub sidebar always shows repository activity. For checkout-specific commits and pull requests, open **Inspect Worktree → Branch History**. That section loads on expansion and reuses the activity panel and pagination logic; issues remain in the repository sidebar. Branch history includes inherited ancestors, not just commits created after the checkout was made. Create Worktree initializes its optional agent from Orca's active-profile default, and preserves manual selections.

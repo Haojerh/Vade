@@ -2,6 +2,7 @@ import React, { useRef, useState, useLayoutEffect, useEffect, useMemo, useCallba
 import type { Edge, Node } from '../../../shared/contracts';
 import { separateWorkflowBoxes, type LayoutBox } from './workflowCollision';
 import type { AnchorBox } from './WorkflowEdgesSvg';
+import { placeNewWorktree } from './newWorktreePlacement';
 
 function arePositionsEqual(a: Map<string, AnchorBox>, b: Map<string, AnchorBox>): boolean {
   if (a.size !== b.size) return false;
@@ -55,6 +56,7 @@ export interface UseWorkflowCanvasOptions {
   draggingMemberRef: React.MutableRefObject<{ worktreeId: string; agentId: string } | null>;
   closePreview: () => void;
   suppressPreviewRef: React.MutableRefObject<boolean>;
+  ready?: boolean;
 }
 
 export function useWorkflowCanvas({
@@ -69,6 +71,7 @@ export function useWorkflowCanvas({
   draggingMemberRef,
   closePreview,
   suppressPreviewRef,
+  ready = true,
 }: UseWorkflowCanvasOptions) {
   const [nodeOffsets, setNodeOffsets] = useState<Record<string, { x: number; y: number }>>(() => {
     if (typeof window === 'undefined') return {};
@@ -85,6 +88,10 @@ export function useWorkflowCanvas({
   const layoutAnchorsRef = useRef(new Map<string, { x: number; y: number }>());
   const nodeOffsetsRef = useRef(nodeOffsets);
   nodeOffsetsRef.current = nodeOffsets;
+  const liveGraphRef = useRef({ projectId, nodes, ready });
+  liveGraphRef.current = { projectId, nodes, ready };
+  const discoveredWorktrees = useRef<{ projectId: string; seen: Set<string>; pending: Set<string> } | null>(null);
+  const revealWorktreeRef = useRef<string | null>(null);
 
   const effectiveOffsets = useMemo(() => {
     const result = { ...nodeOffsets };
@@ -148,6 +155,19 @@ export function useWorkflowCanvas({
     const containerRect = container.getBoundingClientRect();
     const scrollLeft = container.scrollLeft;
     const scrollTop = container.scrollTop;
+    const graph = liveGraphRef.current;
+    if (graph.projectId && graph.ready) {
+      const ids = graph.nodes.filter((node) => node.kind === 'worktree').map((node) => node.id);
+      if (discoveredWorktrees.current?.projectId !== graph.projectId) {
+        discoveredWorktrees.current = { projectId: graph.projectId, seen: new Set(ids), pending: new Set() };
+        revealWorktreeRef.current = null;
+      } else {
+        for (const id of ids) {
+          if (!discoveredWorktrees.current.seen.has(id)) discoveredWorktrees.current.pending.add(id);
+          discoveredWorktrees.current.seen.add(id);
+        }
+      }
+    }
 
     const boxes: LayoutBox[] = [];
     const flowPositions = new Map<string, { x: number; y: number }>();
@@ -172,6 +192,31 @@ export function useWorkflowCanvas({
     });
     for (const id of layoutAnchorsRef.current.keys()) {
       if (!flowPositions.has(id)) layoutAnchorsRef.current.delete(id);
+    }
+    const discovery = discoveredWorktrees.current;
+    if (graph.ready && container.clientWidth > 0 && container.clientHeight > 0 && discovery?.projectId === graph.projectId && discovery.pending.size) {
+      const updates: Record<string, { x: number; y: number }> = {};
+      for (const id of discovery.pending) {
+        const box = boxes.find((box) => box.id === id);
+        const anchor = layoutAnchorsRef.current.get(id);
+        if (!box?.width || !box.height || !anchor) continue;
+        const placement = placeNewWorktree(box, { x: scrollLeft, y: scrollTop, width: container.clientWidth, height: container.clientHeight },
+          boxes.filter((other) => other.id !== id).map((other) => {
+            const correction = collisionOffsetsRef.current[other.id];
+            return { ...other, x: other.x + (correction?.x ?? 0), y: other.y + (correction?.y ?? 0) };
+          }));
+        updates[id] = { x: placement.box.x - anchor.x, y: placement.box.y - anchor.y };
+        box.x = placement.box.x; box.y = placement.box.y;
+        if (!placement.inViewport) revealWorktreeRef.current = id;
+        discovery.pending.delete(id);
+      }
+      if (Object.keys(updates).length) {
+        const next = { ...nodeOffsetsRef.current, ...updates };
+        nodeOffsetsRef.current = next;
+        setNodeOffsets(next);
+        try { localStorage.setItem(`orca-workflow-node-offsets:${graph.projectId}`, JSON.stringify(next)); } catch { /* Storage unavailable. */ }
+        return; // Measure the resulting DOM before applying collision corrections.
+      }
     }
     if (!draggingMemberRef.current) {
       const corrections: Record<string, { x: number; y: number }> = {};
@@ -234,6 +279,13 @@ export function useWorkflowCanvas({
 
     setCanvasSize((prev) => (areSizesEqual(prev, newCanvasSize) ? prev : newCanvasSize));
     setPositions((prev) => (arePositionsEqual(prev, newPositions) ? prev : newPositions));
+    if (revealWorktreeRef.current) {
+      const box = newPositions.get(revealWorktreeRef.current);
+      if (box) {
+        container.scrollTo({ left: Math.max(0, box.x - 24), top: Math.max(0, box.y - 24), behavior: 'auto' });
+        revealWorktreeRef.current = null;
+      }
+    }
   }, [draggingMemberRef]);
 
   const scheduleUpdate = useCallback(() => {
@@ -436,6 +488,7 @@ export function useWorkflowCanvas({
     collisionOffsets,
     chatOpenNodeId,
     measurePositions,
+    ready,
   ]);
 
   const registerRef = useCallback(
