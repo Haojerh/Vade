@@ -19,6 +19,8 @@ import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import { RenameDialog } from '../components/ui/RenameDialog';
 import { AddAgentDialog } from '../components/ui/AddAgentDialog';
+import { AgentPicker } from '../components/ui/AgentPicker';
+import { Disclosure } from '../components/ui/Disclosure';
 import { Icon } from '../components/ui/Icon';
 import { useConfirmationState } from '../hooks/useConfirmationState';
 import type { GitHubData, Node, Edge, NodeDetails as NodeDetailsType, PrerequisitesStatus } from '../../shared/contracts';
@@ -205,14 +207,34 @@ test('GitHubPanel displays no github connected message for folder projects', () 
     loading: false,
     error: null,
     query: { scope: 'general' },
-    onScopeChange: () => {},
-    availableWorktrees: [],
     onRefresh: () => {},
   }));
   assert.ok(html.includes('No GitHub connected for project'));
   assert.ok(html.includes('github-folder-empty-state'));
   assert.ok(!html.includes('github-tabs-nav'));
   assert.ok(!html.includes('github-scope-selector'));
+});
+
+test('repository and embedded worktree history have distinct accessible IDs and no scope picker', () => {
+  const shared = { projectId: 'project', data: null, loading: false, error: null, onRefresh: () => {} };
+  const html = renderToStaticMarkup(createElement('div', null,
+    createElement(GitHubPanel, shared),
+    createElement(GitHubPanel, { ...shared, embedded: true, query: { scope: 'worktree', nodeId: 'worktree' } }),
+  ));
+  assert.ok(!html.includes('History Scope'));
+  assert.ok(html.includes('Branch Activity'));
+  const ids = [...html.matchAll(/\sid="([^"]+)"/g)].map(match => match[1]);
+  assert.equal(new Set(ids).size, ids.length);
+  assert.equal((html.match(/>Issues/g) ?? []).length, 1);
+});
+
+test('shared disclosures keep collapsed controls inert and defer lazy history loading', () => {
+  const collapsed = renderToStaticMarkup(createElement(Disclosure, { title: 'Advanced', children: createElement('input', { name: 'field' }), compact: true }));
+  assert.ok(collapsed.includes('aria-expanded="false"'));
+  assert.ok(collapsed.includes('inert=""'));
+  assert.ok(collapsed.includes('disclosure-chevron'));
+  const lazy = renderToStaticMarkup(createElement(Disclosure, { title: 'History', lazy: true, children: 'EXPENSIVE HISTORY' }));
+  assert.ok(!lazy.includes('EXPENSIVE HISTORY'));
 });
 
 test('DEFAULT_VISIBLE_SECTIONS has all sections visible by default', () => {
@@ -1083,7 +1105,7 @@ test('RenameDialog renders input field with initial title and action buttons', (
   assert.ok(html.includes('Save'));
 });
 
-test('AddAgentDialog renders preset buttons, command and title inputs', () => {
+test('AddAgentDialog waits for detected agents instead of fabricating installed choices', () => {
   const html = renderToStaticMarkup(
     createElement(AddAgentDialog, {
       isOpen: true,
@@ -1096,12 +1118,22 @@ test('AddAgentDialog renders preset buttons, command and title inputs', () => {
 
   assert.ok(html.includes('Add New Agent'));
   assert.ok(html.includes('feature-branch'));
-  assert.ok(html.includes('Codex'));
-  assert.ok(html.includes('Claude'));
-  assert.ok(html.includes('OpenCode'));
-  assert.ok(html.includes('Antigravity'));
-  assert.ok(html.includes('Gemini'));
+  assert.ok(html.includes('Detecting agents'));
+  assert.ok(!html.includes('Codex'));
+  assert.ok(!html.includes('Claude'));
+  assert.ok(html.includes('Agent command'));
   assert.ok(html.includes('Create Agent'));
+});
+
+test('AgentPicker renders observed catalog names with provider icons and optional blank terminal', () => {
+  const props = { agents: [{ id: 'observed-id', name: 'Detected custom agent', provider: 'codex', command: 'observed-command', detectCmd: 'observed-command', installed: true }], onChange: () => {}, onRetry: () => {} };
+  const selected = renderToStaticMarkup(createElement(AgentPicker, { ...props, value: 'observed-id' }));
+  assert.ok(selected.includes('Detected custom agent'));
+  assert.ok(selected.includes('Provider: codex'));
+  assert.ok(!selected.includes('Claude'));
+  assert.ok(selected.includes('aria-haspopup="dialog"'));
+  const blank = renderToStaticMarkup(createElement(AgentPicker, { ...props, value: '', optional: true }));
+  assert.ok(blank.includes('Blank Terminal'));
 });
 
 test('NodeDetails renders rename edit button for agent nodes and Add Agent button for worktrees', () => {

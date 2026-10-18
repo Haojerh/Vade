@@ -1,4 +1,6 @@
-import React, { useRef, useEffect } from 'react';
+import { Modal } from './Modal';
+import { DialogActions, DialogError } from './DialogActions';
+import React from 'react';
 
 export interface ConfirmationDialogProps {
   isOpen: boolean;
@@ -27,75 +29,20 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   onConfirm,
   onClose,
 }) => {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-
-    if (isOpen && !dialog.open) {
-      try {
-        dialog.showModal();
-      } catch {
-        // If already open or modal unsupported
-      }
-    } else if (!isOpen && dialog.open) {
-      try {
-        dialog.close();
-      } catch {
-        // ignore
-      }
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
   return (
-    <dialog
-      ref={dialogRef}
-      className={`node-modal-dialog confirmation-dialog ${isClosing ? 'is-closing' : ''}`}
+    <Modal isOpen={isOpen} isClosing={isClosing} busy={isConfirming} onClose={onClose}
+      className="confirmation-dialog"
       aria-labelledby="confirmation-dialog-title"
-      aria-describedby="confirmation-dialog-desc"
-      onCancel={(e) => {
-        e.preventDefault();
-        if (!isConfirming) {
-          onClose();
-        }
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !isConfirming) {
-          onClose();
-        }
-      }}
-    >
+      aria-describedby="confirmation-dialog-desc">
       <h2 id="confirmation-dialog-title">{title}</h2>
       <div id="confirmation-dialog-desc" className="confirmation-dialog-desc">
         {description}
       </div>
-      {error && (
-        <div className="panel-alert alert-error" style={{ marginTop: '12px' }} role="alert">
-          {error}
-        </div>
-      )}
-      <div className="confirmation-dialog-actions">
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={onClose}
-          disabled={isConfirming}
-          autoFocus
-        >
-          {cancelLabel}
-        </button>
-        <button
-          type="button"
-          className={`btn ${confirmVariant === 'danger' ? 'btn-danger' : 'btn-primary'}`}
-          onClick={onConfirm}
-          disabled={isConfirming}
-        >
-          {isConfirming ? 'Processing…' : confirmLabel}
-        </button>
-      </div>
-    </dialog>
+      <DialogError error={error} style={{ marginTop: 12 }} />
+      <DialogActions onCancel={onClose} onConfirm={onConfirm} busy={isConfirming} confirmLabel={confirmLabel} cancelLabel={cancelLabel} variant={confirmVariant} autoFocusCancel />
+    </Modal>
   );
 };

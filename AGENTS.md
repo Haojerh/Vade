@@ -24,10 +24,13 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 
 ## HTTP Endpoints & API Contract
 
-Implemented in [`server/http/api.ts`](server/http/api.ts). Collection uses `GET` or `HEAD`. Allowed mutation actions include agent-message, closing an agent tab, renaming a node title, creating a worktree agent, and deleting a worktree; other mutations return `405 METHOD_NOT_ALLOWED`.
+Implemented in [`server/http/api.ts`](server/http/api.ts). Collection uses `GET` or `HEAD`. Allowed mutation actions include agent-message, closing an agent tab, renaming a node title or worktree display name, creating a worktree or worktree agent, and deleting a worktree; other mutations return `405 METHOD_NOT_ALLOWED`.
 
 | Endpoint | Query Parameters | Response / Behavior | Description |
 |---|---|---|---|
+| `POST /api/projects/:projectId/worktrees` | JSON `CreateWorktreeRequest` | `CreateWorktreeResponse` | Create an independent worktree through Orca, using a discovered repository and bounded name, source, optional agent and setup policy. |
+| `POST /api/projects/:projectId/nodes/:nodeId/rename-worktree` | JSON `RenameNodeTitleRequest` | `RenameNodeTitleResponse` | Change only the exact project worktree's display name. |
+| `GET /api/projects/:projectId/commit-graph` | `nodeId` (optional discovered worktree) | `Section<CommitGraphData>` | Bounded local topological history with parent SHAs and ref labels; all refs for project scope, HEAD for worktree scope. |
 | `GET /api/health` | None | `HealthResponse` (`{ status: 'ok', readOnly: true }`) | Process liveness check for backend server. |
 | `GET /api/prerequisites` | None | `PrerequisitesStatus` | Verifies local Orca installation: desktop application, CLI, and orchestration skill. |
 | `GET /api/usage` | None | `Section<UsageData>` | Normalized host-wide provider quota windows and buckets, read from Orca's cached runtime snapshot; no account identities or credentials. |
@@ -76,7 +79,8 @@ Standard error codes:
 - `src/app/`: dashboard composition, selection, subscriptions, and state.
 - `src/api/`: typed HTTP and SSE clients; no provider filesystem access.
 - `src/features/`: workflow, GitHub, usage, projects, and activity UI with feature-specific helpers.
-- `src/components/ui/` and `src/components/providers/`: reusable controls and the shared provider icon system.
+- `src/features/github/useGitHubActivity.ts`: shared repository/worktree activity loading; worktree history lives in Inspect Worktree while the sidebar remains repository-wide.
+- `src/components/ui/` and `src/components/providers/`: shared Modal, Popover, ContextMenu, Select, AgentPicker, dialog actions/errors, reusable controls and provider icons. Use these primitives instead of duplicating overlay lifecycle or dismissal code.
 - `src/hooks/`, `src/styles/`, `src/assets/`: common hooks, styles, and attributed assets.
 - `server/http/`: request validation, routing, loopback/origin constraints, and response envelopes.
 - `server/integrations/`: fixed read-only Orca, GitHub, CLI, and usage adapters.

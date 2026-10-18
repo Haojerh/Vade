@@ -436,6 +436,33 @@ function validateOrchestrationSend(args: string[]): boolean {
   return idx === args.length - 1 && args[idx] === '--json';
 }
 
+const safeWorktreeText = (value: string | undefined, max: number) =>
+  typeof value === 'string' && value.length > 0 && value.length <= max &&
+  !value.startsWith('-') && !/[\x00-\x1f\x7f]/.test(value);
+
+function validateWorktreeSet(args: string[]): boolean {
+  return args.length === 7 && args[2] === '--worktree' && safeWorktreeText(args[3], 1024) &&
+    args[4] === '--display-name' && typeof args[5] === 'string' && args[5].length <= 100 &&
+    !args[5].startsWith('-') && !/[\x00-\x1f\x7f]/.test(args[5]) && args[6] === '--json';
+}
+
+function validateWorktreeCreate(args: string[]): boolean {
+  if (args[2] !== '--repo' || !safeWorktreeText(args[3], 512) ||
+      args[4] !== '--name' || !safeWorktreeText(args[5], 100) || args[6] !== '--no-parent') return false;
+  const seen = new Set<string>();
+  let i = 7;
+  for (; i < args.length - 1; i += 2) {
+    const flag = args[i], value = args[i + 1];
+    if (seen.has(flag) || !safeWorktreeText(value, 256)) return false;
+    seen.add(flag);
+    if (flag === '--setup') { if (!['inherit', 'run', 'skip'].includes(value)) return false; }
+    else if (flag === '--agent') { if (!/^[a-zA-Z0-9_-]{1,64}$/.test(value)) return false; }
+    else if (flag === '--pr' || flag === '--issue') { if (!/^[1-9][0-9]{0,8}$/.test(value)) return false; }
+    else if (flag !== '--base-branch') return false;
+  }
+  return i === args.length - 1 && args[i] === '--json' && !(seen.has('--pr') && seen.has('--issue'));
+}
+
 const ORCA_COMMAND_VALIDATORS: Record<string, CommandValidator> = {
   'status': validateStatus,
   'skills installed': validateSkillsInstalled,
@@ -445,6 +472,8 @@ const ORCA_COMMAND_VALIDATORS: Record<string, CommandValidator> = {
   'worktree ps': validateWorktreePs,
   'worktree list': validateWorktreeList,
   'worktree rm': validateWorktreeRm,
+  'worktree set': validateWorktreeSet,
+  'worktree create': validateWorktreeCreate,
   'terminal list': validateTerminalList,
   'terminal read': validateTerminalRead,
   'terminal send': validateTerminalSend,

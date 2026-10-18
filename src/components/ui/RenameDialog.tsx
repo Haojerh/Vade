@@ -1,4 +1,6 @@
-import React, { useRef, useEffect, useState } from 'react';
+import { Modal } from './Modal';
+import { DialogActions, DialogError } from './DialogActions';
+import React, { useEffect, useState } from 'react';
 
 export interface RenameDialogProps {
   isOpen: boolean;
@@ -8,6 +10,7 @@ export interface RenameDialogProps {
   error?: string | null;
   onRename: (newTitle: string) => void | Promise<void>;
   onClose: () => void;
+  subject?: 'tab' | 'worktree';
 }
 
 export const RenameDialog: React.FC<RenameDialogProps> = ({
@@ -18,8 +21,8 @@ export const RenameDialog: React.FC<RenameDialogProps> = ({
   error = null,
   onRename,
   onClose,
+  subject = 'tab',
 }) => {
-  const dialogRef = useRef<HTMLDialogElement>(null);
   const [title, setTitle] = useState(initialTitle);
 
   useEffect(() => {
@@ -27,25 +30,6 @@ export const RenameDialog: React.FC<RenameDialogProps> = ({
       setTitle(initialTitle);
     }
   }, [isOpen, initialTitle]);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-
-    if (isOpen && !dialog.open) {
-      try {
-        dialog.showModal();
-      } catch {
-        // Modal unsupported or already open
-      }
-    } else if (!isOpen && dialog.open) {
-      try {
-        dialog.close();
-      } catch {
-        // ignore
-      }
-    }
-  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -57,24 +41,13 @@ export const RenameDialog: React.FC<RenameDialogProps> = ({
   };
 
   return (
-    <dialog
-      ref={dialogRef}
-      className={`node-modal-dialog confirmation-dialog rename-dialog ${isClosing ? 'is-closing' : ''}`}
-      aria-labelledby="rename-dialog-title"
-      onCancel={(e) => {
-        e.preventDefault();
-        if (!isRenaming) onClose();
-      }}
-      onClick={(e) => {
-        if (e.target === e.currentTarget && !isRenaming) {
-          onClose();
-        }
-      }}
-    >
-      <h2 id="rename-dialog-title">Rename Tab Title</h2>
+    <Modal isOpen={isOpen} isClosing={isClosing} busy={isRenaming} onClose={onClose}
+      className="confirmation-dialog rename-dialog"
+      aria-labelledby="rename-dialog-title">
+      <h2 id="rename-dialog-title">{subject === 'worktree' ? 'Rename Worktree' : 'Rename Tab Title'}</h2>
       <div className="confirmation-dialog-desc">
         <p className="text-sm text-muted mb-2">
-          Update the terminal tab title. Leave empty to reset to the default title.
+          {subject === 'worktree' ? 'Update the worktree display name. Leave empty to reset to the default name.' : 'Update the terminal tab title. Leave empty to reset to the default title.'}
         </p>
         <form onSubmit={handleSubmit}>
           <input
@@ -91,7 +64,8 @@ export const RenameDialog: React.FC<RenameDialogProps> = ({
               boxSizing: 'border-box',
               marginTop: '8px',
             }}
-            placeholder="Tab title (e.g. My Worker)"
+            aria-label={subject === 'worktree' ? 'Worktree name' : 'Tab title'}
+            placeholder={subject === 'worktree' ? 'Worktree display name' : 'Tab title (e.g. My Worker)'}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             disabled={isRenaming}
@@ -100,29 +74,8 @@ export const RenameDialog: React.FC<RenameDialogProps> = ({
           />
         </form>
       </div>
-      {error && (
-        <div className="panel-alert alert-error" style={{ marginTop: '12px' }} role="alert">
-          {error}
-        </div>
-      )}
-      <div className="confirmation-dialog-actions" style={{ marginTop: '16px' }}>
-        <button
-          type="button"
-          className="btn btn-secondary"
-          onClick={onClose}
-          disabled={isRenaming}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => handleSubmit()}
-          disabled={isRenaming}
-        >
-          {isRenaming ? 'Saving…' : 'Save'}
-        </button>
-      </div>
-    </dialog>
+      <DialogError error={error} style={{ marginTop: 12 }} />
+      <DialogActions onCancel={onClose} onConfirm={handleSubmit} busy={isRenaming} confirmLabel="Save" busyLabel="Saving…" style={{ marginTop: 16 }} />
+    </Modal>
   );
 };

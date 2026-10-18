@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import type { NodeDetails } from '../../../shared/contracts';
 import { fetchNodeDetails } from '../../api/client';
 import { latestAgentMessage } from './conversation';
+import { useDismissLayer } from '../../hooks/useDismissLayer';
 
 export function NodeMessagePreview({ projectId, runId, nodeId, anchor, onLeave }: {
   projectId: string; runId: string | null; nodeId: string; anchor: HTMLElement; onLeave: () => void;
@@ -11,6 +12,9 @@ export function NodeMessagePreview({ projectId, runId, nodeId, anchor, onLeave }
   const [error, setError] = useState(false);
   const [visible, setVisible] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const anchorRef = useRef(anchor);
+  anchorRef.current = anchor;
+  useDismissLayer(visible, ref, onLeave, anchorRef);
   const [position, setPosition] = useState({ left: 12, top: 12 });
   useEffect(() => {
     const abort = new AbortController();
@@ -36,12 +40,9 @@ export function NodeMessagePreview({ projectId, runId, nodeId, anchor, onLeave }
     place();
     window.addEventListener('resize', place);
     window.addEventListener('scroll', place, true);
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') onLeave(); };
-    document.addEventListener('keydown', escape);
     return () => {
       window.removeEventListener('resize', place);
       window.removeEventListener('scroll', place, true);
-      document.removeEventListener('keydown', escape);
     };
   }, [visible, details, error, anchor, onLeave]);
 

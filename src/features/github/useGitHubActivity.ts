@@ -1,46 +1,33 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import type { GitHubData, GitHubQuery } from '../../shared/contracts';
-import { fetchGitHub } from '../api/client';
+import type { GitHubData, GitHubQuery } from '../../../shared/contracts';
+import { fetchGitHub } from '../../api/client';
 
-export interface UseGitHubLoaderProps {
+export interface UseGitHubActivityProps {
   selectedProjectId: string | null;
+  query?: GitHubQuery;
 }
 
-export interface UseGitHubLoaderReturn {
+export interface UseGitHubActivityReturn {
   gitHubData: GitHubData | null;
   setGitHubData: React.Dispatch<React.SetStateAction<GitHubData | null>>;
   gitHubLoading: boolean;
   setGitHubLoading: React.Dispatch<React.SetStateAction<boolean>>;
   gitHubError: string | null;
   setGitHubError: React.Dispatch<React.SetStateAction<string | null>>;
-  gitHubQuery: GitHubQuery;
-  setGitHubQueryState: React.Dispatch<React.SetStateAction<GitHubQuery>>;
   githubAbortRef: React.MutableRefObject<AbortController | null>;
   githubGeneration: React.MutableRefObject<number>;
-  setGitHubQuery: (query: GitHubQuery) => void;
   loadGitHub: () => Promise<void>;
 }
 
-export function useGitHubLoader({ selectedProjectId }: UseGitHubLoaderProps): UseGitHubLoaderReturn {
+const REPOSITORY_QUERY: GitHubQuery = { scope: 'general' };
+
+export function useGitHubActivity({ selectedProjectId, query = REPOSITORY_QUERY }: UseGitHubActivityProps): UseGitHubActivityReturn {
   const [gitHubData, setGitHubData] = useState<GitHubData | null>(null);
   const [gitHubLoading, setGitHubLoading] = useState<boolean>(false);
   const [gitHubError, setGitHubError] = useState<string | null>(null);
-  const [gitHubQuery, setGitHubQueryState] = useState<GitHubQuery>({ scope: 'general' });
 
   const githubGeneration = useRef<number>(0);
   const githubAbortRef = useRef<AbortController | null>(null);
-
-  const setGitHubQuery = useCallback((query: GitHubQuery) => {
-    githubGeneration.current += 1;
-    if (githubAbortRef.current) {
-      githubAbortRef.current.abort();
-      githubAbortRef.current = null;
-    }
-    setGitHubData(null);
-    setGitHubError(null);
-    setGitHubLoading(true);
-    setGitHubQueryState(query);
-  }, []);
 
   const loadGitHub = useCallback(async () => {
     if (!selectedProjectId) {
@@ -60,7 +47,7 @@ export function useGitHubLoader({ selectedProjectId }: UseGitHubLoaderProps): Us
     setGitHubError(null);
 
     try {
-      const data = await fetchGitHub(selectedProjectId, gitHubQuery, abort.signal);
+      const data = await fetchGitHub(selectedProjectId, query, abort.signal);
       if (!abort.signal.aborted && currentGen === githubGeneration.current) {
         setGitHubData(data);
       }
@@ -73,7 +60,7 @@ export function useGitHubLoader({ selectedProjectId }: UseGitHubLoaderProps): Us
         setGitHubLoading(false);
       }
     }
-  }, [selectedProjectId, gitHubQuery]);
+  }, [selectedProjectId, query]);
 
   useEffect(() => {
     loadGitHub();
@@ -93,11 +80,8 @@ export function useGitHubLoader({ selectedProjectId }: UseGitHubLoaderProps): Us
     setGitHubLoading,
     gitHubError,
     setGitHubError,
-    gitHubQuery,
-    setGitHubQueryState,
     githubAbortRef,
     githubGeneration,
-    setGitHubQuery,
     loadGitHub,
   };
 }

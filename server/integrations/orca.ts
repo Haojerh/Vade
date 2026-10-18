@@ -843,7 +843,7 @@ function buildWorktreeAndAgentNodes(
     const isFolder = wt.workspaceKind === 'folder' || wt.isFolder;
     const wtLabel = isFolder
       ? `Folder: ${wt.comment?.trim() || wt.displayName || wt.repo || 'workspace'}`
-      : (wt.comment?.trim() || wt.displayName || wt.branch || wt.repo || 'Worktree');
+      : (wt.displayName || wt.comment?.trim() || wt.branch || wt.repo || 'Worktree');
     const wtNode: Node = {
       id: wtNodeId,
       kind: 'worktree',

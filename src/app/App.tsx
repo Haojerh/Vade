@@ -43,8 +43,6 @@ export const App: React.FC = () => {
     gitHubData,
     gitHubLoading,
     gitHubError,
-    gitHubQuery,
-    setGitHubQuery,
     refreshGitHub,
 
     refreshAll,
@@ -169,6 +167,11 @@ export const App: React.FC = () => {
   }, [orchestrationSeparated]);
 
   // 3. Persistent Node Details visible sections
+  const [commitGraphEnabled, setCommitGraphEnabled] = useState(() => {
+    try { return localStorage.getItem('orca-commit-graph') !== 'false'; } catch { return true; }
+  });
+  useEffect(() => { try { localStorage.setItem('orca-commit-graph', String(commitGraphEnabled)); } catch { /* Storage unavailable */ } }, [commitGraphEnabled]);
+
   const [visibleSections, setVisibleSections] = useState<NodeDetailsVisibleSections>(() => {
     try {
       const saved = localStorage.getItem('orca-node-details-visible-sections');
@@ -482,9 +485,7 @@ export const App: React.FC = () => {
   const effectiveRunId = selectedRunId ?? graph?.selectedRunId ?? runs[0]?.id ?? null;
   const effectiveRun = runs.find((r) => r.id === effectiveRunId) ?? runs[0];
 
-  const worktreeNodes = useMemo(() => {
-    return (graph?.nodes ?? []).filter((n) => n.kind === 'worktree');
-  }, [graph?.nodes]);
+
 
 
 
@@ -547,6 +548,8 @@ export const App: React.FC = () => {
           theme={theme}
           onToggleTheme={toggleTheme}
           cardStateColors={cardStateColors}
+          commitGraphEnabled={commitGraphEnabled}
+          onToggleCommitGraph={setCommitGraphEnabled}
           onToggleCardStateColors={setCardStateColors}
           orchestrationSeparated={orchestrationSeparated}
           onToggleOrchestrationSeparated={setOrchestrationSeparated}
@@ -612,6 +615,8 @@ export const App: React.FC = () => {
           {/* Graph Viewport (Self-contained scrollable canvas) */}
           <div className="stage-graph-container">
             <WorkflowGraph
+              project={currentProject}
+              onRefresh={refreshAll}
               projectId={selectedProjectId}
               runId={selectedRunId}
               loading={!snapshot && (snapshotLoading || projectsLoading)}
@@ -661,15 +666,13 @@ export const App: React.FC = () => {
         ariaLabel="GitHub Activity Sidebar"
       >
         <GitHubPanel
+          commitGraphEnabled={commitGraphEnabled}
           projectId={selectedProjectId}
           project={currentProject}
           projectKind={currentProject?.kind}
           data={gitHubData}
           loading={gitHubLoading}
           error={gitHubError}
-          query={gitHubQuery}
-          onScopeChange={setGitHubQuery}
-          availableWorktrees={worktreeNodes}
           onRefresh={refreshGitHub}
           onCollapse={() => handleToggleRight(false)}
         />
@@ -686,6 +689,7 @@ export const App: React.FC = () => {
         onClose={() => setSelectedNodeId(null)}
         onRefresh={refreshNodeDetails}
         visibleSections={visibleSections}
+        commitGraphEnabled={commitGraphEnabled}
       />
     </div>
   );

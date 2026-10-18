@@ -32,6 +32,9 @@ import { UsageCollector } from '../integrations/usage.js';
 import { decodeAttachments, storeAttachments } from '../services/attachments.js';
 import { runOrca } from '../integrations/cli.js';
 import { getAgentCatalog } from '../integrations/agents.js';
+import { createProjectWorktree, renameWorktree } from '../integrations/worktrees.js';
+import { collectCommitGraph } from '../integrations/commitGraph.js';
+import type { CreateWorktreeRequest } from '../../shared/contracts.js';
 
 export interface ApiServerOptions {
   runner?: CommandRunner;
@@ -153,6 +156,8 @@ export function createApiHandler(options: ApiServerOptions = {}) {
     const isMessagePost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/message$/);
     const isCloseTabPost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/close-tab$/);
     const isRenamePost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/rename$/);
+    const isRenameWorktreePost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/rename-worktree$/);
+    const isCreateWorktreePost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/worktrees$/);
     const isCreateAgentPost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/create-agent$/);
     const isDeleteWorktreePost = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/delete-worktree$/);
     const isDeleteWorktreeDelete = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/worktree$/);
@@ -162,6 +167,8 @@ export function createApiHandler(options: ApiServerOptions = {}) {
       !isMessagePost &&
       !isCloseTabPost &&
       !isRenamePost &&
+      !isRenameWorktreePost &&
+      !isCreateWorktreePost &&
       !isCreateAgentPost &&
       !isDeleteWorktreePost
     ) {
@@ -442,10 +449,35 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           return;
         }
 
-        // POST /api/projects/:projectId/nodes/:nodeId/rename
-        if (isRenamePost && reqMethod === 'POST') {
-          const projectId = decodeURIComponent(isRenamePost[1]);
-          const nodeId = decodeURIComponent(isRenamePost[2]);
+        if (isCreateWorktreePost && reqMethod === 'POST') {
+          if (Object.keys(query).length) {
+            sendError(400, 'INVALID_ARGUMENT', 'Create worktree does not accept query parameters');
+            return;
+          }
+          if (!req.headers['content-type']?.startsWith('application/json')) {
+            sendError(400, 'INVALID_ARGUMENT', 'Create worktree requires application/json');
+            return;
+          }
+          const body = await parseJsonBody<CreateWorktreeRequest>(req, 4096);
+          sendJson(200, await createProjectWorktree(isCreateWorktreePost[1], body, runner));
+          return;
+        }
+
+        const commitGraphMatch = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/commit-graph$/);
+        if (commitGraphMatch && reqMethod === 'GET') {
+          if (Object.keys(query).some(k => k !== 'nodeId') || (query.nodeId && !/^[a-zA-Z0-9_.-]{1,256}$/.test(query.nodeId))) {
+            sendError(400, 'INVALID_ARGUMENT', 'Invalid commit graph scope');
+            return;
+          }
+          sendJson(200, await collectCommitGraph(commitGraphMatch[1], query.nodeId, runner));
+          return;
+        }
+
+        // Explicit rename actions share the bounded title contract.
+        if ((isRenamePost || isRenameWorktreePost) && reqMethod === 'POST') {
+          const match = isRenameWorktreePost || isRenamePost!;
+          const projectId = decodeURIComponent(match[1]);
+          const nodeId = decodeURIComponent(match[2]);
           if (!req.headers['content-type']?.startsWith('application/json')) {
             sendError(400, 'INVALID_ARGUMENT', 'Rename requires application/json');
             return;
@@ -456,12 +488,12 @@ export function createApiHandler(options: ApiServerOptions = {}) {
             typeof body.title !== 'string' ||
             body.title.length > 100 ||
             body.title.includes('\n') ||
-            body.title.includes('\r')
+            /[\x00-\x1f\x7f]/.test(body.title) || body.title.trim().startsWith('-')
           ) {
             sendError(400, 'INVALID_ARGUMENT', 'Field "title" must be a single-line string up to 100 characters');
             return;
           }
-          const result = await renameNodeTitle(projectId, nodeId, body.title, runner);
+          const result = await (isRenameWorktreePost ? renameWorktree : renameNodeTitle)(projectId, nodeId, body.title, runner);
           sendJson(200, result);
           return;
         }

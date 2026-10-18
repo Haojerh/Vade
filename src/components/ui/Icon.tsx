@@ -28,6 +28,7 @@ export type IconName =
   | 'send'
   | 'trash'
   | 'x-square'
+  | 'terminal'
   | 'search'
   | 'paperclip'
   | 'edit'
@@ -57,6 +58,8 @@ export const Icon: React.FC<IconProps> = ({
 }) => {
   const renderPaths = () => {
     switch (name) {
+      case 'terminal':
+        return <><polyline points="4 5 10 11 4 17" /><line x1="13" y1="17" x2="20" y2="17" /></>;
       case 'chevron-down':
         return <polyline points="6 9 12 15 18 9" />;
       case 'chevron-up':

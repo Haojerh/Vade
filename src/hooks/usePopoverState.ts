@@ -1,19 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback } from 'react';
+import { useConfirmationState } from './useConfirmationState';
 
 export function usePopoverState() {
-  const [phase, setPhase] = useState<'closed' | 'open' | 'closing'>('closed');
-  const close = useCallback(() => {
-    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    setPhase((current) => current === 'closed' || reduced ? 'closed' : 'closing');
-  }, []);
+  const { present, closing, close, open } = useConfirmationState();
   const toggle = useCallback(() => {
-    if (phase === 'open') close();
-    else setPhase('open');
-  }, [phase, close]);
-  useEffect(() => {
-    if (phase !== 'closing') return;
-    const timer = setTimeout(() => setPhase('closed'), 150);
-    return () => clearTimeout(timer);
-  }, [phase]);
-  return { present: phase !== 'closed', closing: phase === 'closing', close, toggle };
+    if (present && !closing) close();
+    else open();
+  }, [present, closing, close, open]);
+  return { present, closing, close, toggle };
 }

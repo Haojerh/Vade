@@ -685,10 +685,6 @@ button {
 .run-select-wrapper {
   max-width: 280px;
 }
-.scope-select-wrapper {
-  width: 100%;
-}
-
 /* Meta controls in topbar */
 .topbar-meta-controls {
   display: flex;
@@ -2322,27 +2318,6 @@ button {
 .badge-auth-required { background: var(--state-waiting-bg); color: var(--state-waiting-text); }
 .badge-auth-unknown { background: var(--surface-2); color: var(--text-muted); }
 
-.github-scope-selector {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
-}
-.scope-label {
-  color: var(--text-secondary);
-}
-.scope-select {
-  background: transparent;
-  color: var(--text-main);
-  border: none;
-  font-size: 11px;
-  font-family: inherit;
-  outline: none;
-}
-
 .github-tabs-nav {
   display: flex;
   border-bottom: 1px solid var(--border-main);
@@ -2495,6 +2470,10 @@ dialog.node-modal-dialog {
 
 dialog.node-modal-dialog:not(.confirmation-dialog) {
   min-height: min(480px, 85vh);
+}
+
+dialog.node-modal-dialog.worktree-details-dialog {
+  min-height: 0;
 }
 
 .modal-loading-state {
@@ -3986,132 +3965,6 @@ dialog.add-agent-dialog {
   gap: 16px;
 }
 
-.agent-catalog-section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-
-.agent-catalog-section-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-main);
-}
-
-.agent-catalog-badge {
-  display: inline-flex;
-  align-items: center;
-  padding: 1px 7px;
-  border-radius: 9999px;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.agent-catalog-badge.badge-accent {
-  background: var(--surface-active);
-  color: var(--accent);
-  border: 1px solid var(--border-main);
-}
-
-.agent-catalog-badge.badge-muted {
-  background: var(--surface-2);
-  color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
-}
-
-.agent-catalog-list {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border-subtle);
-  border-radius: 8px;
-  background: var(--surface-1);
-  overflow: hidden;
-}
-
-.agent-catalog-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 14px;
-  border-bottom: 1px solid var(--border-subtle);
-  transition: background 0.15s ease;
-  cursor: pointer;
-}
-
-.agent-catalog-item:last-child {
-  border-bottom: none;
-}
-
-.agent-catalog-item:hover {
-  background: var(--surface-2);
-}
-
-.agent-catalog-item.is-selected {
-  background: var(--surface-active);
-  border-bottom-color: var(--border-subtle);
-}
-
-.agent-catalog-item.is-selected:last-child {
-  border-bottom: none;
-}
-
-.agent-catalog-item-icon {
-  width: 28px;
-  height: 28px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 6px;
-  background: var(--surface-2);
-  border: 1px solid var(--border-subtle);
-  flex-shrink: 0;
-}
-
-.agent-catalog-item-info {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.agent-catalog-item-name {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-main);
-  line-height: 1.2;
-}
-
-.agent-catalog-item-cmd {
-  font-size: 11px;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  margin-top: 3px;
-}
-
-.agent-catalog-item-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-.add-agent-input {
-  outline: none !important;
-  transition: border-color 0.15s ease;
-}
-
-.add-agent-input:focus,
-.add-agent-input:focus-visible {
-  outline: none !important;
-  outline-offset: 0 !important;
-  border-color: var(--accent) !important;
-  box-shadow: none !important;
-}
-
 .confirmation-dialog input[type="text"]:focus,
 .confirmation-dialog input[type="text"]:focus-visible {
   outline: none !important;
@@ -4236,3 +4089,70 @@ dialog.add-agent-dialog {
 
 
 
+/* Worktree creation shares the dashboard's native modal and control surfaces. */
+dialog.add-worktree-dialog {
+  width: min(560px, calc(100vw - 32px));
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+}
+.worktree-dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
+.worktree-dialog-heading h2 { margin: 0; }
+.worktree-field { display: flex; flex-direction: column; gap: 9px; margin: 0 0 22px; font-size: 13px; color: var(--text-secondary); }
+.worktree-field input { width: 100%; min-width: 0; box-sizing: border-box; padding: 11px 12px; border: 1px solid var(--border-main); border-radius: 9px; background: var(--surface-2); color: var(--text-main); font: inherit; }
+.worktree-field .custom-select-control { width: 100%; min-width: 0; padding-right: 0; border-radius: 9px; background: var(--surface-2); }
+.worktree-field .custom-select-native { min-width: 0; padding: 11px 34px 11px 12px; font: inherit; }
+.worktree-field input:focus-visible { outline: none; border-color: var(--accent); box-shadow: none; }
+.worktree-field .custom-select-control:focus-within { border-color: var(--accent); box-shadow: none; }
+.agent-picker-trigger:focus-visible { outline: none; border-color: var(--accent); box-shadow: none; }
+.worktree-field input[readonly] { color: var(--text-secondary); text-overflow: ellipsis; }
+.worktree-create-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+.worktree-source-tabs { display: flex; gap: 7px; flex-wrap: wrap; }
+.agent-picker { position: relative; min-width: 0; }
+.agent-picker-trigger { display: flex; align-items: center; gap: 10px; width: 100%; min-width: 0; padding: 11px 12px; border: 1px solid var(--border-main); border-radius: 9px; background: var(--surface-2); color: var(--text-main); font: inherit; cursor: pointer; }
+.agent-picker-label { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-picker-trigger svg { flex-shrink: 0; }
+.agent-picker-popover { position: absolute; left: 0; right: 0; z-index: 10; border: 1px solid var(--border-main); border-radius: 9px; box-shadow: var(--shadow-lg); background: var(--surface-1); overflow: hidden; animation: contextMenuFadeIn 100ms ease-out; }
+.agent-picker-search { display: flex; align-items: center; gap: 10px; margin: 8px; padding: 9px 10px; border: 1px solid var(--border-main); border-radius: 6px; color: var(--text-muted); background: var(--surface-2); }
+.agent-picker-search:focus-within { border-color: var(--accent); }
+.agent-picker-search svg { flex-shrink: 0; }
+.agent-picker-search input, .agent-picker-search input:focus, .agent-picker-search input:focus-visible { width: 100%; min-width: 0; border: 0 !important; border-radius: 0; outline: none !important; box-shadow: none !important; background: transparent; color: var(--text-main); padding: 0; font: inherit; line-height: 20px; }
+.agent-picker-options { max-height: 230px; overflow-y: auto; overscroll-behavior: contain; padding: 4px; }
+.agent-picker-option { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px; border: 0; border-radius: 5px; color: var(--text-main); background: transparent; font: inherit; text-align: left; cursor: pointer; }
+.agent-picker-option:hover, .agent-picker-option[aria-pressed="true"] { background: var(--surface-hover); }
+.agent-picker-check { display: inline-flex; flex-shrink: 0; width: 14px; }
+.agent-picker-popover.is-closing { animation: backdropFadeOut 150ms ease forwards; pointer-events: none; }
+@media (prefers-reduced-motion: reduce) { .agent-picker-popover, .worktree-context-menu { animation: none !important; } }
+.worktree-advanced { margin-top: 18px; }
+.disclosure-trigger { display: inline-flex; align-items: center; gap: 6px; padding: 4px 0; border: 0; background: transparent; color: var(--text-main); text-align: left; font: inherit; cursor: pointer; }
+.disclosure-compact { font-size: 13px; }
+.disclosure-chevron { flex-shrink: 0; transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1); }
+.disclosure-chevron.is-expanded { transform: rotate(90deg); }
+.disclosure-content { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows 180ms cubic-bezier(0.23, 1, 0.32, 1), opacity 150ms ease; }
+.disclosure-content.is-expanded { grid-template-rows: 1fr; opacity: 1; }
+.disclosure-inner { min-height: 0; overflow: hidden; }
+@media (prefers-reduced-motion: reduce) { .disclosure-chevron, .disclosure-content { transition: none; } }
+.worktree-create-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 30px; }
+.worktree-create-footer label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+.commit-history-graph { overflow-x: auto; }
+.worktree-history-panel { border: 1px solid var(--border-main); border-radius: 8px; height: auto; max-height: 55vh; overflow: hidden; }
+.worktree-history-panel .github-header { flex-shrink: 0; }
+.worktree-history-panel .github-tab-content { overflow-y: auto; }
+.commit-history-graph ul { list-style: none; margin: 0; padding: 0; }
+.commit-history-graph li { display: flex; min-height: 36px; }
+.commit-history-rail { position: relative; flex-shrink: 0; min-height: 36px; }
+.commit-history-rail > svg:first-child { position: absolute; inset: 0; overflow: visible; }
+.commit-history-rail path { fill: none; stroke-width: 1.5; }
+.commit-history-dot { position: absolute; top: 50%; left: 0; transform: translateY(-50%); }
+.commit-history-content { min-width: 0; flex: 1; }
+.commit-history-row { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--text-main); text-align: left; cursor: pointer; font-size: 12px; padding: 0 4px; }
+.commit-history-row:hover { background: var(--surface-2); }
+.commit-history-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 35px; }
+.commit-history-chevron { color: var(--text-muted); }
+.commit-history-ref { border: 1px solid var(--border-main); border-radius: 12px; padding: 1px 6px; font-size: 10px; color: var(--text-secondary); max-width: 115px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.commit-history-ref.is-head { color: #3899ff; border-color: #3899ff; }
+.commit-history-details { display: flex; flex-direction: column; gap: 5px; padding: 0 8px 12px 16px; font-size: 11px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.commit-history-skeleton { height: 25px; border-radius: 4px; margin: 9px 8px; background: linear-gradient(90deg, var(--surface-2) 25%, var(--border-main) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: commit-history-shimmer 1.5s linear infinite; }
+@keyframes commit-history-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .commit-history-skeleton { animation: none; } }

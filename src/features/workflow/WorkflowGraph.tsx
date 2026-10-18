@@ -1,5 +1,7 @@
+import { ContextMenu } from '../../components/ui/ContextMenu';
 import React, { useRef, useState, useLayoutEffect, useEffect, useMemo, useCallback } from 'react';
-import type { Node, Edge } from '../../../shared/contracts';
+import type { Node, Edge, Project } from '../../../shared/contracts';
+import { AddWorktreeDialog } from './AddWorktreeDialog';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
 import { Icon } from '../../components/ui/Icon';
 import { NodeMessagePreview } from './NodeMessagePreview';
@@ -11,6 +13,7 @@ import {
   closeAgentTab,
   renameNodeTitle,
   createWorktreeAgent,
+  renameWorktree,
 } from '../../api/client';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
@@ -28,6 +31,8 @@ interface WorkflowGraphProps {
   isLocallyStale: boolean;
   loading: boolean;
   orchestrationSeparated?: boolean;
+  project?: Project | null;
+  onRefresh?: () => void;
 }
 
 interface AnchorBox {
@@ -136,6 +141,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   isLocallyStale,
   loading,
   orchestrationSeparated = true,
+  project,
+  onRefresh,
 }) => {
   const prefersReducedMotion = usePrefersReducedMotion();
   const resetConfirmation = useConfirmationState();
@@ -157,8 +164,13 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   // Worktree & node context menus, actions and dialog state
   const [worktreeContextMenu, setWorktreeContextMenu] = useState<{ x: number; y: number; worktree: Node } | null>(null);
   const [nodeContextMenu, setNodeContextMenu] = useState<{ x: number; y: number; node: Node } | null>(null);
-  const contextMenuRef = useRef<HTMLDivElement>(null);
-  const nodeContextMenuRef = useRef<HTMLDivElement>(null);
+  const [canvasMenu, setCanvasMenu] = useState<{ x: number; y: number } | null>(null);
+  const addWorktreeConfirmation = useConfirmationState();
+  const canAddWorktree = project?.kind === 'git' && project.repoIds.length === 1;
+  useEffect(() => {
+    setCanvasMenu(null); addWorktreeConfirmation.reset(); renameConfirmation.reset();
+  }, [projectId]);
+
 
   const deleteWorktreeConfirmation = useConfirmationState<Node>();
   const [isDeletingWorktree, setIsDeletingWorktree] = useState(false);
@@ -176,41 +188,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   const [isCreatingAgent, setIsCreatingAgent] = useState(false);
   const [createAgentError, setCreateAgentError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!worktreeContextMenu) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as globalThis.Node)) {
-        setWorktreeContextMenu(null);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setWorktreeContextMenu(null);
-    };
-    window.addEventListener('mousedown', handleClickOutside);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('mousedown', handleClickOutside);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [worktreeContextMenu]);
 
-  useEffect(() => {
-    if (!nodeContextMenu) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (nodeContextMenuRef.current && !nodeContextMenuRef.current.contains(e.target as globalThis.Node)) {
-        setNodeContextMenu(null);
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setNodeContextMenu(null);
-    };
-    window.addEventListener('mousedown', handleClickOutside);
-    window.addEventListener('keydown', handleKeyDown);
-    return () => {
-      window.removeEventListener('mousedown', handleClickOutside);
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [nodeContextMenu]);
+
+
 
   // Node repositioning (dragging worktrees, orchestrators, unassigned agents)
   const [nodeOffsets, setNodeOffsets] = useState<Record<string, { x: number; y: number }>>(() => {
@@ -916,8 +896,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     setIsRenaming(true);
     setRenameError(null);
     try {
-      await renameNodeTitle(projectId, node.id, newTitle);
+      await (node.kind === 'worktree' ? renameWorktree : renameNodeTitle)(projectId, node.id, newTitle);
       renameConfirmation.close();
+      onRefresh?.();
       scheduleUpdate();
     } catch (err: any) {
       setRenameError(err.message || 'Failed to rename tab title');
@@ -1295,7 +1276,15 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   }, [deduplicatedEdges, positions, nodeMap, prefersReducedMotion]);
 
   return (
-    <section className="workflow-graph-wrapper" aria-label="Workflow relationship graph">
+    <section className="workflow-graph-wrapper" aria-label="Workflow relationship graph" onContextMenu={e => {
+      if ((e.target as HTMLElement).closest('.worktree-box-container, .agent-card, .node-card, button, input, textarea, dialog, [role="menu"]')) return;
+      e.preventDefault(); setWorktreeContextMenu(null); setNodeContextMenu(null);
+      setCanvasMenu({ x: e.clientX, y: e.clientY }); closePreview();
+    }}>
+      {addWorktreeConfirmation.present && project && <AddWorktreeDialog key={project.id} project={project} isClosing={addWorktreeConfirmation.closing} onClose={addWorktreeConfirmation.close} onCreated={() => onRefresh?.()} />}
+      {canvasMenu && <ContextMenu position={canvasMenu} label="Topology actions" onClose={() => setCanvasMenu(null)} actions={[
+        { label: 'Add Worktree', icon: 'plus', disabled: !canAddWorktree, onSelect: () => addWorktreeConfirmation.open() },
+      ]} />}
       <ConfirmationDialog
         isOpen={resetConfirmation.present}
         isClosing={resetConfirmation.closing}
@@ -1351,6 +1340,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       />
 
       <RenameDialog
+        subject={renameConfirmation.data?.kind === 'worktree' ? 'worktree' : 'tab'}
         isOpen={renameConfirmation.present}
         isClosing={renameConfirmation.closing}
         initialTitle={renameConfirmation.data?.label || ''}
@@ -1376,111 +1366,16 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         }}
       />
 
-      {worktreeContextMenu && (
-        <div
-          ref={contextMenuRef}
-          className="worktree-context-menu"
-          style={{
-            left: Math.min(worktreeContextMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 800) - 190),
-            top: Math.min(worktreeContextMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 600) - 140),
-          }}
-          role="menu"
-          aria-label="Worktree actions"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="context-menu-item"
-            onClick={() => {
-              const wt = worktreeContextMenu.worktree;
-              setWorktreeContextMenu(null);
-              addAgentConfirmation.open(wt);
-            }}
-          >
-            <Icon name="plus" size={14} />
-            <span>Add New Agent</span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="context-menu-item"
-            onClick={() => {
-              const wt = worktreeContextMenu.worktree;
-              setWorktreeContextMenu(null);
-              onSelectNode(wt.id);
-            }}
-          >
-            <Icon name="search" size={14} />
-            <span>Inspect Worktree</span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="context-menu-item context-menu-item-danger"
-            onClick={() => {
-              const wt = worktreeContextMenu.worktree;
-              setWorktreeContextMenu(null);
-              deleteWorktreeConfirmation.open(wt);
-            }}
-          >
-            <Icon name="trash" size={14} />
-            <span>Delete Worktree</span>
-          </button>
-        </div>
-      )}
-
-      {nodeContextMenu && (
-        <div
-          ref={nodeContextMenuRef}
-          className="worktree-context-menu node-context-menu"
-          style={{
-            left: Math.min(nodeContextMenu.x, (typeof window !== 'undefined' ? window.innerWidth : 800) - 190),
-            top: Math.min(nodeContextMenu.y, (typeof window !== 'undefined' ? window.innerHeight : 600) - 140),
-          }}
-          role="menu"
-          aria-label="Agent actions"
-        >
-          <button
-            type="button"
-            role="menuitem"
-            className="context-menu-item"
-            onClick={() => {
-              const n = nodeContextMenu.node;
-              setNodeContextMenu(null);
-              setChatOpenNodeId(n.id);
-            }}
-          >
-            <Icon name="message-square" size={14} />
-            <span>Send Message</span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="context-menu-item"
-            onClick={() => {
-              const n = nodeContextMenu.node;
-              setNodeContextMenu(null);
-              renameConfirmation.open(n);
-            }}
-          >
-            <Icon name="edit" size={14} />
-            <span>Rename Title</span>
-          </button>
-          <button
-            type="button"
-            role="menuitem"
-            className="context-menu-item context-menu-item-danger"
-            onClick={() => {
-              const n = nodeContextMenu.node;
-              setNodeContextMenu(null);
-              closeAgentTabConfirmation.open(n);
-            }}
-          >
-            <Icon name="trash" size={14} />
-            <span>Close Agent Tabs</span>
-          </button>
-        </div>
-      )}
+      {worktreeContextMenu && <ContextMenu position={worktreeContextMenu} label="Worktree actions" onClose={() => setWorktreeContextMenu(null)} actions={[
+        { label: 'Add New Agent', icon: 'plus', onSelect: () => addAgentConfirmation.open(worktreeContextMenu.worktree) },
+        { label: 'Inspect Worktree', icon: 'search', onSelect: () => onSelectNode(worktreeContextMenu.worktree.id) },
+        { label: 'Delete Worktree', icon: 'trash', danger: true, onSelect: () => deleteWorktreeConfirmation.open(worktreeContextMenu.worktree) },
+      ]} />}
+      {nodeContextMenu && <ContextMenu position={nodeContextMenu} label="Agent actions" onClose={() => setNodeContextMenu(null)} actions={[
+        { label: 'Send Message', icon: 'message-square', onSelect: () => setChatOpenNodeId(nodeContextMenu.node.id) },
+        { label: 'Rename Title', icon: 'edit', onSelect: () => renameConfirmation.open(nodeContextMenu.node) },
+        { label: 'Close Agent Tabs', icon: 'trash', danger: true, onSelect: () => closeAgentTabConfirmation.open(nodeContextMenu.node) },
+      ]} />}
       {projectId && !selectedNodeId && !draggingNodeId && !isCanvasPanning && !isDraggingGitHubItem && preview && nodes.some((node) => node.id === preview.nodeId) &&
         <NodeMessagePreview key={`${projectId}:${runId}:${preview.nodeId}`} projectId={projectId} runId={runId}
           nodeId={preview.nodeId} anchor={preview.anchor} onLeave={closePreview} />}
@@ -1494,6 +1389,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         </div>
 
         <div className="graph-toolbar-actions">
+          <button type="button" className="btn btn-secondary btn-xs" disabled={!canAddWorktree} onClick={() => { closePreview(); addWorktreeConfirmation.open(); }} title={canAddWorktree ? 'Create a new worktree' : 'Select a Git project with one backing repository'}><Icon name="plus" size={12} /><span>Add Worktree</span></button>
           {(Object.keys(nodeOffsets).length > 0 || Object.keys(worktreeMemberOrder).length > 0) && (
             <button
               type="button"

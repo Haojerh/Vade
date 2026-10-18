@@ -1,3 +1,4 @@
+import { Select } from '../components/ui/Select';
 import React from 'react';
 import type { Project, Run, SourceMeta } from '../../shared/contracts';
 import { RefreshIcon } from '../components/ui/RefreshIcon';
@@ -87,10 +88,9 @@ export const TopBar: React.FC<TopBarProps> = ({
             <label htmlFor="center-run-select" className="run-picker-label text-xs font-semibold">
               Run:
             </label>
-            <div className="custom-select-control run-select-wrapper">
-              <select
+            <Select wrapperClassName="run-select-wrapper"
                 id="center-run-select"
-                className="center-run-select custom-select-native"
+                className="center-run-select"
                 value={selectedRunId || ''}
                 onChange={(e) => onSelectRun(e.target.value || null)}
                 aria-label="Select active workflow run"
@@ -101,9 +101,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                     {r.sourceRunId} {r.objective ? `— ${r.objective.slice(0, 40)}` : ''}
                   </option>
                 ))}
-              </select>
-              <Icon name="chevron-down" size={12} className="custom-select-arrow" />
-            </div>
+              </Select>
           </div>
         )}
       </div>

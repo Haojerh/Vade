@@ -4,6 +4,16 @@ A local dashboard for inspecting Orca multi-agent workflows, worktree relationsh
 
 The dashboard runs locally alongside the user's installed Orca runtime. It displays projects, worktree groups, orchestrators, worker agents, task progress, bounded activity feeds, and GitHub pull requests, commits, and issues.
 
+Create worktrees with **Add Worktree** beside Reset Layout or by right-clicking empty topology space. The dialog supports a name, branch/PR/issue source, optional installed agent, setup policy, and Create more. It creates an independent worktree in the selected Git project using Orca's repository default base unless a base is supplied. Open Inspect Worktree and use its edit icon to rename the display name; the checkout path and Git branch stay unchanged.
+
+Both agent dialogs share a searchable picker with provider icons. Its installed choices come from host detection in `server/integrations/agents.ts` through `/api/agents/catalog`; the frontend has no hardcoded installed-agent fallback. Detection failures expose retry controls.
+
+The GitHub sidebar always shows repository activity. For checkout-specific commits and pull requests, open **Inspect Worktree → Branch History**. That section loads on expansion and reuses the activity panel and pagination logic; issues remain in the repository sidebar. Branch history includes inherited ancestors, not just commits created after the checkout was made. Create Worktree initializes its optional agent from Orca's active-profile default, and preserves manual selections.
+
+**Settings → Commit Graph History** shows colored branch and merge lanes in the Commits tab and is enabled by default. Saved preferences persist locally. History reads up to 200 local Git commits, including unpushed commits, without requiring GitHub authentication; repository scope includes all local refs and worktree scope follows that checkout's HEAD. Expand a commit for its hash, author and date. Refresh and retry are explicit; no Git fetch is performed.
+
+Worktree actions use `POST /api/projects/:projectId/worktrees` and `POST /api/projects/:projectId/nodes/:nodeId/rename-worktree`; local commit history uses `GET /api/projects/:projectId/commit-graph` with an optional discovered worktree `nodeId`. Repository and checkout selectors come from project discovery, with fixed allowlisted command arguments.
+
 ## Quick Start
 
 Start Orca, then run these commands from the project directory:
@@ -133,7 +143,7 @@ Both the node-details composer and the inline card composer accept clipboard ima
   - **Pull Requests**: Recent pull requests with open/closed/merged and draft states.
   - **Commits**: Recent commit history. Handles empty repositories (HTTP 409) gracefully.
   - **Issues**: Recent repository issues, excluding pull requests.
-- **Scope**: General uses the repository default branch; worktree scope derives the branch from a discovered worktree. Commits and PRs indicate their branch coverage; issues stay repository-wide. Push events are not displayed.
+- **Scope**: The sidebar stays repository-wide; GitHub commits use the default branch, or all local refs with Commit Graph History enabled. Inspect Worktree provides checkout-scoped commits and PRs from discovered metadata. Issues stay in the repository sidebar. Push events are not displayed.
 
 ## Project Structure
 
@@ -150,7 +160,7 @@ src/
   app/                       # Dashboard shell and application state
   api/                       # Typed fetch and SSE clients
   features/                  # workflow, github, usage, projects, activity
-  components/ui/             # Shared controls
+  components/ui/             # Modal, Popover, ContextMenu, Select, AgentPicker, Disclosure and shared controls
   components/providers/      # Shared Orca provider icons
   hooks/                     # Shared interaction hooks
   styles/                    # Global and message/activity styles

@@ -321,6 +321,24 @@ export interface CreateAgentRequest {
   title?: string;
 }
 
+export interface CreateWorktreeRequest {
+  name: string;
+  baseBranch?: string;
+  from?: { kind: 'branch' | 'pr' | 'issue'; value: string };
+  agentId?: string;
+  setup?: 'inherit' | 'run' | 'skip';
+}
+export interface CreateWorktreeResponse { ok: boolean; message?: string }
+export interface CommitGraphEntry {
+  sha: string;
+  parents: string[];
+  message: string;
+  author: string;
+  committedAt: string;
+  refs: string[];
+}
+export interface CommitGraphData { commits: CommitGraphEntry[]; truncated: boolean }
+
 export interface CreateAgentResponse {
   ok: boolean;
   handle?: string;

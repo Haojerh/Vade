@@ -1,3 +1,5 @@
+import { Popover } from '../../components/ui/Popover';
+import { Select } from '../../components/ui/Select';
 import React from 'react';
 import { UsagePanel } from '../usage/UsagePanel';
 import { usePopoverState } from '../../hooks/usePopoverState';
@@ -27,6 +29,8 @@ export interface ProjectSelectorProps {
   visibleSections?: NodeDetailsVisibleSections;
   onToggleVisibleSection?: (key: keyof NodeDetailsVisibleSections) => void;
   onResetVisibleSections?: () => void;
+  commitGraphEnabled?: boolean;
+  onToggleCommitGraph?: (enabled: boolean) => void;
 }
 
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
@@ -48,30 +52,11 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   visibleSections,
   onToggleVisibleSection,
   onResetVisibleSections,
+  commitGraphEnabled,
+  onToggleCommitGraph,
 }) => {
   const { present: isSettingsOpen, closing: isSettingsClosing, close: closeSettings, toggle: toggleSettings } = usePopoverState();
-  const settingsRef = React.useRef<HTMLDivElement>(null);
-
-  // Close settings popover on click outside or escape
-  React.useEffect(() => {
-    if (!isSettingsOpen) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (settingsRef.current && !settingsRef.current.contains(e.target as Node)) {
-        closeSettings();
-      }
-    };
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeSettings();
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isSettingsOpen, closeSettings]);
+  const settingsTriggerRef = React.useRef<HTMLButtonElement>(null);
 
   const projects = inventorySection?.data?.projects ?? [];
   const runtime = snapshot?.runtime?.data;
@@ -201,10 +186,9 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
         <label htmlFor="mobile-project-select" className="rail-section-label">
           Active Project
         </label>
-        <div className="custom-select-control w-full">
-          <select
+        <Select wrapperClassName="w-full"
             id="mobile-project-select"
-            className="rail-select custom-select-native"
+            className="rail-select"
             value={selectedProjectId || ''}
             onChange={(e) => onSelectProject(e.target.value)}
             disabled={loading || projects.length === 0}
@@ -214,9 +198,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                 {p.name} ({p.kind})
               </option>
             ))}
-          </select>
-          <Icon name="chevron-down" size={12} className="custom-select-arrow" />
-        </div>
+          </Select>
       </div>
 
       {/* Project Navigation Section */}
@@ -306,10 +288,11 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
         {renderRuntimeStatus()}
 
         {/* Footer controls: Settings dropup popover */}
-        <div className="rail-footer-controls" ref={settingsRef}>
+        <div className="rail-footer-controls">
           <button
             type="button"
             className={`btn btn-secondary btn-xs ${isSettingsOpen ? 'btn-active' : ''}`}
+            ref={settingsTriggerRef}
             onClick={toggleSettings}
             aria-label="Dashboard settings"
             aria-haspopup="dialog"
@@ -320,12 +303,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             <span className="btn-label">Settings</span>
           </button>
 
-          {isSettingsOpen && (
-            <div
-              className={`footer-settings-popover ${isSettingsClosing ? 'is-closing' : ''}`}
-              role="dialog"
-              aria-label="Dashboard settings"
-            >
+          <Popover isOpen={isSettingsOpen} isClosing={isSettingsClosing} onClose={closeSettings} triggerRef={settingsTriggerRef}
+            className="footer-settings-popover" aria-label="Dashboard settings">
               <div className="settings-popover-header">
                 <span className="font-bold text-sm">Settings</span>
                 <button
@@ -338,6 +317,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                 </button>
               </div>
               <div className="settings-popover-body">
+                <label className="settings-option-row"><div className="settings-option-text"><span className="settings-option-label font-semibold">Commit Graph History</span><span className="settings-option-desc text-xs text-muted">Show local branches and merges in the Commits tab.</span></div><input type="checkbox" className="settings-checkbox" checked={commitGraphEnabled ?? false} onChange={e => onToggleCommitGraph?.(e.target.checked)} /></label>
                 <label className="settings-option-row">
                   <div className="settings-option-text">
                     <span className="settings-option-label font-semibold">Card State Colors</span>
@@ -473,8 +453,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                   </div>
                 </div>
               </div>
-            </div>
-          )}
+          </Popover>
         </div>
         <UsagePanel />
       </div>

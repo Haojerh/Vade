@@ -13,6 +13,9 @@ import type {
   RenameNodeTitleResponse,
   CreateAgentResponse,
   AgentCatalogResponse,
+  CreateWorktreeRequest,
+  CreateWorktreeResponse,
+  CommitGraphData,
 } from '../../shared/contracts';
 
 export async function fetchUsage(signal?: AbortSignal): Promise<Section<UsageData>> {
@@ -290,6 +293,22 @@ export async function fetchAgentCatalog(signal?: AbortSignal): Promise<AgentCata
     signal,
   });
   return handleResponse<AgentCatalogResponse>(res);
+}
+
+export async function createProjectWorktree(projectId: string, body: CreateWorktreeRequest): Promise<CreateWorktreeResponse> {
+  return handleResponse<CreateWorktreeResponse>(await fetch(`/api/projects/${encodeURIComponent(projectId)}/worktrees`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  }));
+}
+
+export async function renameWorktree(projectId: string, nodeId: string, title: string): Promise<RenameNodeTitleResponse> {
+  return handleResponse<RenameNodeTitleResponse>(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/rename-worktree`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title }),
+  }));
+}
+
+export async function fetchCommitGraph(projectId: string, nodeId?: string, signal?: AbortSignal): Promise<Section<CommitGraphData>> {
+  return handleResponse<Section<CommitGraphData>>(await fetch(`/api/projects/${encodeURIComponent(projectId)}/commit-graph${nodeId ? `?nodeId=${encodeURIComponent(nodeId)}` : ''}`, { signal }));
 }
 
 

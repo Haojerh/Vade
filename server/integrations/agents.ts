@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { DatabaseSync } from 'node:sqlite';
 import type { AgentCatalogEntry, AgentCatalogResponse } from '../../shared/contracts';
 
 export interface AgentDefinition {
@@ -373,12 +374,14 @@ export interface OrcaUserSettings {
   agentCmdOverrides?: Record<string, string>;
 }
 
-export function getOrcaUserSettings(): OrcaUserSettings {
+export function getOrcaUserSettings(userDataDir?: string): OrcaUserSettings {
   try {
     const isWin = process.platform === 'win32';
     const isMac = process.platform === 'darwin';
-    let baseDir = '';
-    if (isWin) {
+    let baseDir = userDataDir || process.env.ORCA_USER_DATA_PATH || '';
+    if (baseDir) {
+      // Match the active Orca profile when its runtime supplies a user-data root.
+    } else if (isWin) {
       baseDir = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming', 'orca');
       if (!baseDir.toLowerCase().endsWith('orca')) {
         baseDir = path.join(baseDir, 'orca');
@@ -414,14 +417,13 @@ export function getOrcaUserSettings(): OrcaUserSettings {
       return { defaultTuiAgent: null };
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { DatabaseSync } = require('node:sqlite');
     const db = new DatabaseSync(dbPath, { readOnly: true });
     try {
       const row = db.prepare("SELECT payload FROM profile_state_documents WHERE domain = 'settings'").get() as
         | { payload?: Buffer | string }
         | undefined;
       if (row?.payload) {
+        if (row.payload.length > 1024 * 1024) return { defaultTuiAgent: null };
         const str = typeof row.payload === 'string' ? row.payload : row.payload.toString('utf8');
         const settings = JSON.parse(str);
         return {

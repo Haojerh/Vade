@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import type {
   DashboardSnapshot,
   GitHubData,
-  GitHubQuery,
   Inventory,
   NodeDetails,
   Section,
@@ -10,7 +9,7 @@ import type {
 import { fetchProjects, fetchSnapshot } from '../api/client';
 import { useSelectionSync } from './useSelectionSync';
 import { useNodeDetailsLoader } from './useNodeDetailsLoader';
-import { useGitHubLoader } from './useGitHubLoader';
+import { useGitHubActivity } from '../features/github/useGitHubActivity';
 import { useSnapshotSubscription } from './useSnapshotSubscription';
 
 export interface UseDashboardReturn {
@@ -44,8 +43,6 @@ export interface UseDashboardReturn {
   gitHubData: GitHubData | null;
   gitHubLoading: boolean;
   gitHubError: string | null;
-  gitHubQuery: GitHubQuery;
-  setGitHubQuery: (query: GitHubQuery) => void;
   refreshGitHub: () => void;
 
   // Manual global refresh
@@ -95,13 +92,10 @@ export function useDashboard(): UseDashboardReturn {
     setGitHubLoading,
     gitHubError,
     setGitHubError,
-    gitHubQuery,
-    setGitHubQueryState,
     githubAbortRef,
     githubGeneration,
-    setGitHubQuery,
     loadGitHub,
-  } = useGitHubLoader({ selectedProjectId });
+  } = useGitHubActivity({ selectedProjectId });
 
   // 5. Snapshot subscription & staleness watchdog
   const handleSnapshotArrived = useCallback((snap: DashboardSnapshot) => {
@@ -140,19 +134,8 @@ export function useDashboard(): UseDashboardReturn {
       return currentRunId;
     });
 
-    // Verify that if a worktree scope is selected in GitHub, it still exists
-    setGitHubQueryState((prev) => {
-      if (prev.scope === 'worktree') {
-        const worktreeExists = snap.graph.data?.nodes?.some(
-          (n) => n.kind === 'worktree' && n.id === prev.nodeId,
-        );
-        if (!worktreeExists) {
-          return { scope: 'general' };
-        }
-      }
-      return prev;
-    });
-  }, [selectedProjectId, selectedRunId, syncUrl, setNodeDetails, setNodeDetailsError, setNodeDetailsLoading, nodeAbortRef, setSelectedNodeIdState, setSelectedRunIdState, setGitHubQueryState]);
+
+  }, [selectedProjectId, selectedRunId, syncUrl, setNodeDetails, setNodeDetailsError, setNodeDetailsLoading, nodeAbortRef, setSelectedNodeIdState, setSelectedRunIdState]);
 
   const {
     snapshot,
@@ -181,7 +164,6 @@ export function useDashboard(): UseDashboardReturn {
     setSelectedProjectIdState(id);
     setSelectedRunIdState(null);
     setSelectedNodeIdState(null);
-    setGitHubQueryState({ scope: 'general' });
 
     setSnapshot(null);
     setSnapshotLoading(true);
@@ -206,7 +188,7 @@ export function useDashboard(): UseDashboardReturn {
     }
 
     syncUrl(id, null, null);
-  }, [selectionGeneration, nodeGeneration, githubGeneration, setSelectedProjectIdState, setSelectedRunIdState, setSelectedNodeIdState, setGitHubQueryState, setSnapshot, setSnapshotLoading, setSnapshotError, setGitHubData, setGitHubLoading, setGitHubError, setNodeDetails, setNodeDetailsLoading, setNodeDetailsError, lastGraphObservedAtRef, setIsLocallyStale, githubAbortRef, nodeAbortRef, syncUrl]);
+  }, [selectionGeneration, nodeGeneration, githubGeneration, setSelectedProjectIdState, setSelectedRunIdState, setSelectedNodeIdState, setSnapshot, setSnapshotLoading, setSnapshotError, setGitHubData, setGitHubLoading, setGitHubError, setNodeDetails, setNodeDetailsLoading, setNodeDetailsError, lastGraphObservedAtRef, setIsLocallyStale, githubAbortRef, nodeAbortRef, syncUrl]);
 
   // Mutator for changing selected run
   const setSelectedRunId = useCallback((id: string | null) => {
@@ -326,8 +308,6 @@ export function useDashboard(): UseDashboardReturn {
     gitHubData,
     gitHubLoading,
     gitHubError,
-    gitHubQuery,
-    setGitHubQuery,
     refreshGitHub: loadGitHub,
 
     refreshAll,

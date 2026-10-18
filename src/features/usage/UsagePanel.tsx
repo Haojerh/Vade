@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { Popover } from '../../components/ui/Popover';
 import type { Section, UsageData, UsageWindow } from '../../../shared/contracts';
 import { fetchUsage } from '../../api/client';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
@@ -72,20 +72,9 @@ export function UsagePanel() {
         width, maxHeight: Math.max(120, window.innerHeight - bottom - 12) });
     };
     place();
-    popoverRef.current?.focus();
-    const dismiss = (event: PointerEvent) => {
-      if (!popoverRef.current?.contains(event.target as Node) && !triggerRef.current?.contains(event.target as Node)) close();
-    };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') { close(); triggerRef.current?.focus(); }
-    };
     window.addEventListener('resize', place);
-    document.addEventListener('pointerdown', dismiss);
-    document.addEventListener('keydown', onKey);
     return () => {
       window.removeEventListener('resize', place);
-      document.removeEventListener('pointerdown', dismiss);
-      document.removeEventListener('keydown', onKey);
     };
   }, [open, close]);
 
@@ -117,9 +106,8 @@ export function UsagePanel() {
         </button>
         {refreshButton}
       </div>
-      {open && createPortal(
-      <div ref={popoverRef} id={popoverId} className={`usage-popover ${closing ? 'is-closing' : ''}`} role="dialog" tabIndex={-1}
-        aria-label="Usage details" style={{ left: position.left, bottom: position.bottom, width: position.width, maxHeight: position.maxHeight }}>
+      <Popover isOpen={open} isClosing={closing} onClose={close} triggerRef={triggerRef} contentRef={popoverRef} portal focusOnOpen
+        id={popoverId} className="usage-popover" aria-label="Usage details" style={{ left: position.left, bottom: position.bottom, width: position.width, maxHeight: position.maxHeight }}>
       <div className="usage-header">
         <span className="font-semibold">Usage</span>
         <span className="usage-display-label">all agents · % used</span>
@@ -163,7 +151,7 @@ export function UsagePanel() {
         </details>}
       </div>
       <div className="usage-source">From Orca · all projects</div>
-      </div>, document.body)}
+      </Popover>
     </section>
   );
 }

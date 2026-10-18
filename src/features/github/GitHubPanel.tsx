@@ -3,13 +3,13 @@ import { acknowledgeGitHubItem, observeGitHubItems, readUnreadHistory, saveUnrea
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { Icon } from '../../components/ui/Icon';
 import { useGitHubPagination } from './useGitHubPagination';
+import { CommitHistoryGraph } from './CommitHistoryGraph';
 import type {
   GitHubData,
   GitHubQuery,
   PullRequest,
   Commit,
   GitHubIssue,
-  Node,
   Project,
   Section,
 } from '../../../shared/contracts';
@@ -21,12 +21,14 @@ interface GitHubPanelProps {
   data: GitHubData | null;
   loading: boolean;
   error: string | null;
-  query: GitHubQuery;
-  onScopeChange: (query: GitHubQuery) => void;
-  availableWorktrees: Node[];
+  query?: GitHubQuery;
+  embedded?: boolean;
   onRefresh: () => void;
   onCollapse?: () => void;
+  commitGraphEnabled?: boolean;
 }
+
+const REPOSITORY_QUERY: GitHubQuery = { scope: 'general' };
 
 type TabKey = 'commits' | 'prs' | 'issues';
 
@@ -37,17 +39,25 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   data,
   loading,
   error,
-  query,
-  onScopeChange,
-  availableWorktrees,
+  query = REPOSITORY_QUERY,
+  embedded = false,
   onRefresh,
   onCollapse,
+  commitGraphEnabled = false,
 }) => {
+  const instanceId = React.useId();
+  const titleId = `${instanceId}-github-title`;
+  const tabId = (tab: TabKey) => `${instanceId}-tab-${tab}`;
+  const panelId = (tab: TabKey) => `${instanceId}-panel-${tab}`;
   const isFolder =
     projectKind === 'folder' ||
     project?.kind === 'folder' ||
     data?.projectKind === 'folder';
   const [activeTab, setActiveTab] = useState<TabKey>('commits');
+  const [graphRefresh, setGraphRefresh] = useState(0);
+  const graphScopeKey = `${projectId}:${query.scope === 'worktree' ? query.nodeId : 'all'}`;
+  const [graphCount, setGraphCount] = useState<{ key: string; count: number; truncated: boolean } | null>(null);
+  const handleGraphCount = React.useCallback((count: number, truncated: boolean) => setGraphCount({ key: graphScopeKey, count, truncated }), [graphScopeKey]);
   const [prFilter, setPrFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
   const history = useRef(new Map<string, UnreadHistory>());
@@ -121,7 +131,6 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
 
   const repo = data?.repository;
   const auth = data?.auth ?? 'unknown';
-  const scope = data?.scope;
 
   const isSafeGitHubUrl = (url: string | null | undefined): boolean => {
     if (!url) return false;
@@ -186,7 +195,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const { commits, prs, issues } = pagination;
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-  const more = pagination.nextPage(activeTab);
+  const more = commitGraphEnabled && activeTab === 'commits' ? null : pagination.nextPage(activeTab);
   const loadingMore = pagination.loading.includes(activeTab);
   const pageError = pagination.errors[activeTab];
   useEffect(() => {
@@ -239,7 +248,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   }, [activeTab]);
 
   return (
-    <section className="dashboard-panel github-panel" aria-labelledby="github-panel-title">
+    <section className={`dashboard-panel github-panel ${embedded ? 'worktree-history-panel' : ''}`} aria-labelledby={titleId}>
       {/* Panel Header */}
       <div className="panel-header github-header">
         <div className="github-header-top">
@@ -254,7 +263,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             >
               <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z" />
             </svg>
-            <h2 id="github-panel-title" className="panel-title">GitHub Activity</h2>
+            <h2 id={titleId} className="panel-title">{embedded ? 'Branch Activity' : 'GitHub Activity'}</h2>
           </div>
 
           <div className="panel-actions">
@@ -269,7 +278,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             <button
               type="button"
               className="btn-icon"
-              onClick={onRefresh}
+              onClick={() => { setGraphRefresh(value => value + 1); onRefresh(); }}
               disabled={loading || isFolder}
               aria-label={isFolder ? 'GitHub not connected for folder project' : 'Refresh GitHub activity'}
               title={isFolder ? 'GitHub not connected for folder project' : 'Refresh GitHub activity'}
@@ -347,61 +356,32 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             </div>
           )}
 
-          {/* Scope Selector */}
-          <div className="github-scope-selector">
-        <label htmlFor="github-scope-select" className="scope-label text-xs font-semibold">
-          History Scope:
-        </label>
-        <div className="custom-select-control scope-select-wrapper">
-          <select
-            id="github-scope-select"
-            className="scope-select custom-select-native"
-            value={query.scope === 'worktree' ? query.nodeId : 'general'}
-            onChange={(e) => {
-              const val = e.target.value;
-              if (val === 'general') {
-                onScopeChange({ scope: 'general' });
-              } else {
-                onScopeChange({ scope: 'worktree', nodeId: val });
-              }
-            }}
-          >
-            <option value="general">General (Repository default branch)</option>
-            {availableWorktrees.map((wt) => (
-              <option key={wt.id} value={wt.id}>
-                Worktree: {wt.branch ? `${wt.branch} (${wt.label})` : wt.label}
-              </option>
-            ))}
-          </select>
-          <Icon name="chevron-down" size={12} className="custom-select-arrow" />
-        </div>
-      </div>
-
       {/* Tabs: Commits, Pull Requests, Issues */}
-      <div ref={tabsRef} className="github-tabs-nav" role="tablist" aria-label="GitHub activity views">
+      <div ref={tabsRef} className="github-tabs-nav" role="tablist" aria-label={embedded ? 'Worktree history views' : 'GitHub activity views'}>
         <span className="github-tab-indicator" aria-hidden="true" style={{
           transform: `translateX(${tabLine.left}px) scaleX(${tabLine.width})`, opacity: tabLine.width ? 1 : 0,
         }} />
         <button
           type="button"
           role="tab"
-          id="tab-commits"
+          id={tabId('commits')}
           aria-selected={activeTab === 'commits'}
-          aria-controls="panel-commits"
-          className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${unread.commits.size ? 'github-has-new' : ''}`}
+          aria-controls={panelId('commits')}
+          className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${!commitGraphEnabled && unread.commits.size ? 'github-has-new' : ''}`}
           onClick={() => selectTab('commits')}
         >
           Commits
-          {unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
-          <span className="tab-count font-mono" title={`${commits.length} loaded`}>{commits.length}{pagination.nextPage('commits') ? '+' : ''}</span>
+          {!commitGraphEnabled && unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
+          {!commitGraphEnabled && <span className="tab-count font-mono" title={`${commits.length} loaded`}>{commits.length}{pagination.nextPage('commits') ? '+' : ''}</span>}
+          {commitGraphEnabled && graphCount?.key === graphScopeKey && <span className="tab-count font-mono" title={`${graphCount.count} local commits loaded`}>{graphCount.count}{graphCount.truncated ? '+' : ''}</span>}
         </button>
 
         <button
           type="button"
           role="tab"
-          id="tab-prs"
+          id={tabId('prs')}
           aria-selected={activeTab === 'prs'}
-          aria-controls="panel-prs"
+          aria-controls={panelId('prs')}
           className={`tab-btn ${activeTab === 'prs' ? 'active' : ''} ${unread.prs.size ? 'github-has-new' : ''}`}
           onClick={() => selectTab('prs')}
         >
@@ -410,12 +390,13 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           <span className="tab-count font-mono" title={`${prs.length} loaded`}>{prs.length}{pagination.nextPage('prs') ? '+' : ''}</span>
         </button>
 
+        {!embedded && <>
         <button
           type="button"
           role="tab"
-          id="tab-issues"
+          id={tabId('issues')}
           aria-selected={activeTab === 'issues'}
-          aria-controls="panel-issues"
+          aria-controls={panelId('issues')}
           className={`tab-btn ${activeTab === 'issues' ? 'active' : ''} ${unread.issues.size ? 'github-has-new' : ''}`}
           onClick={() => selectTab('issues')}
         >
@@ -423,6 +404,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           {unread.issues.size > 0 && <span className="sr-only">{unread.issues.size} new items</span>}
           <span className="tab-count font-mono" title={`${issues.length} loaded`}>{issues.length}{pagination.nextPage('issues') ? '+' : ''}</span>
         </button>
+        </>}
       </div>
 
       {/* Tab Panels */}
@@ -430,11 +412,12 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         {/* Commits Tab */}
         {activeTab === 'commits' && (
           <div
-            id="panel-commits"
+            id={panelId('commits')}
             role="tabpanel"
-            aria-labelledby="tab-commits"
+            aria-labelledby={tabId('commits')}
             className="tab-pane"
           >
+            {commitGraphEnabled && projectId ? <CommitHistoryGraph key={graphScopeKey} projectId={projectId} nodeId={query.scope === 'worktree' ? query.nodeId : undefined} refresh={graphRefresh} onCount={handleGraphCount} /> : <>
             {renderSectionMeta(data?.commits, 'Commits')}
             {commits.length === 0 ? (
               <div className="empty-hint">
@@ -483,15 +466,16 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
                 ))}
               </ul>
             )}
+            </>}
           </div>
         )}
 
         {/* Pull Requests Tab */}
         {activeTab === 'prs' && (
           <div
-            id="panel-prs"
+            id={panelId('prs')}
             role="tabpanel"
-            aria-labelledby="tab-prs"
+            aria-labelledby={tabId('prs')}
             className="tab-pane"
           >
             {/* PR Status Filter: All, Open, Closed */}
@@ -618,9 +602,9 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
         {/* Issues Tab */}
         {activeTab === 'issues' && (
           <div
-            id="panel-issues"
+            id={panelId('issues')}
             role="tabpanel"
-            aria-labelledby="tab-issues"
+            aria-labelledby={tabId('issues')}
             className="tab-pane"
           >
             {/* Issue Status Filter: All, Open, Closed */}
@@ -737,7 +721,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             )}
           </div>
         )}
-        <div ref={sentinelRef} className="github-pagination" aria-live="polite" aria-busy={loadingMore}>
+        {!(commitGraphEnabled && activeTab === 'commits') && <div ref={sentinelRef} className="github-pagination" aria-live="polite" aria-busy={loadingMore}>
           {pageError && <span role="alert">{pageError}</span>}
           {loadingMore ? <div className="github-skeleton-list" role="status" aria-label="Loading more activity">
             <span className="sr-only">Loading more activity</span>
@@ -751,7 +735,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
               {pageError ? 'Retry loading' : 'Load 20 more'}
             </button>
           )}
-        </div>
+        </div>}
       </div>
     </>
   )}

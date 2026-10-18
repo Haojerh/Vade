@@ -1,3 +1,6 @@
+import { WorktreeHistory } from '../github/WorktreeHistory';
+import { Disclosure } from '../../components/ui/Disclosure';
+import { Modal } from '../../components/ui/Modal';
 import React, { useRef, useEffect, useState, useCallback, useId, useLayoutEffect } from 'react';
 import type { Node, NodeDetails as NodeDetailsType, Task } from '../../../shared/contracts';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
@@ -11,6 +14,7 @@ import {
   deleteWorktree,
   closeAgentTab,
   renameNodeTitle,
+  renameWorktree,
   createWorktreeAgent,
 } from '../../api/client';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
@@ -47,6 +51,7 @@ interface NodeDetailsProps {
   onClose: () => void;
   onRefresh: () => void;
   visibleSections?: NodeDetailsVisibleSections;
+  commitGraphEnabled?: boolean;
 }
 
 function TaskCard({ task }: { task: Task }) {
@@ -123,16 +128,13 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   onClose,
   onRefresh,
   visibleSections,
+  commitGraphEnabled = false,
 }) => {
-  const dialogRef = useRef<HTMLDialogElement>(null);
-  const openerRef = useRef<HTMLElement | null>(null);
-  const restoredRef = useRef<boolean>(false);
 
   const [expandedMsgIds, setExpandedMsgIds] = useState<Set<string>>(new Set());
-  const [isClosing, setIsClosing] = useState<boolean>(false);
-  const closingTimerRef = useRef<number | null>(null);
+  const detailsOverlay = useConfirmationState({ onClosed: onClose });
+  const isClosing = detailsOverlay.closing;
 
-  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
   const [chatMessage, setChatMessage] = useState<string>('');
   const [chatFiles, setChatFiles] = useState<File[]>([]);
   useEffect(() => { setChatFiles([]); setChatMessage(''); }, [projectId, selectedNodeId]);
@@ -167,10 +169,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
 
   const activeVisibleSections = visibleSections ?? DEFAULT_VISIBLE_SECTIONS;
 
-  const toggleSection = (key: string) => {
-    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  };
-
   const handleSendMessage = async () => {
     if (!projectId || !details?.node || (!chatMessage.trim() && !chatFiles.length) || chatSending) return;
     setChatSending(true);
@@ -190,112 +188,10 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   };
 
   useEffect(() => {
-    return () => {
-      if (closingTimerRef.current !== null) {
-        window.clearTimeout(closingTimerRef.current);
-      }
-    };
-  }, []);
-
-  // Reliable focus restoration to opener or stable topbar fallback (idempotent)
-  const restoreFocus = useCallback(() => {
-    if (restoredRef.current) return;
-    restoredRef.current = true;
-
-    const opener = openerRef.current;
-    openerRef.current = null;
-
-    if (opener && document.contains(opener)) {
-      try {
-        opener.focus();
-        return;
-      } catch {
-        // Fall back to header
-      }
-    }
-
-    // Stable fallback: first focusable element in topbar only if opener is gone
-    const fallback = document.querySelector<HTMLElement>(
-      '.dashboard-topbar .btn-sidebar-reopen, .dashboard-topbar button, .dashboard-topbar select'
-    );
-    if (fallback) {
-      try {
-        fallback.focus();
-        return;
-      } catch {
-        // ignore
-      }
-    }
-  }, []);
-
-  // Store opener on fresh open
-  useEffect(() => {
-    if (selectedNodeId) {
-      restoredRef.current = false;
-      if (!openerRef.current) {
-        openerRef.current = document.activeElement as HTMLElement | null;
-      }
-    }
-  }, [selectedNodeId]);
-
-  // Restore focus when modal unmounts or selection clears
-  useEffect(() => {
-    return () => {
-      restoreFocus();
-    };
-  }, [restoreFocus]);
-
-  // Open native dialog with showModal()
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) return;
-
-    if (selectedNodeId && !dialog.open) {
-      setIsClosing(false);
-      try {
-        dialog.showModal();
-      } catch {
-        // If already open or showModal unsupported
-      }
-    }
-  }, [selectedNodeId]);
-
-  const handleClose = useCallback(() => {
-    if (isClosing) return;
-    const dialog = dialogRef.current;
-    const prefersReducedMotion =
-      typeof window !== 'undefined' &&
-      window.matchMedia &&
-      window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-    if (prefersReducedMotion || !dialog || !dialog.open) {
-      if (dialog && dialog.open) {
-        try {
-          dialog.close();
-        } catch {
-          // ignore
-        }
-      }
-      restoreFocus();
-      onClose();
-      return;
-    }
-
-    setIsClosing(true);
-    closingTimerRef.current = window.setTimeout(() => {
-      setIsClosing(false);
-      closingTimerRef.current = null;
-      if (dialog && dialog.open) {
-        try {
-          dialog.close();
-        } catch {
-          // ignore
-        }
-      }
-      restoreFocus();
-      onClose();
-    }, 150);
-  }, [isClosing, onClose, restoreFocus]);
+    if (selectedNodeId) detailsOverlay.open();
+    else detailsOverlay.reset();
+  }, [selectedNodeId, detailsOverlay.open, detailsOverlay.reset]);
+  const handleClose = detailsOverlay.close;
 
   const handleDeleteWorktree = useCallback(async () => {
     if (!projectId || !details?.node || isDeletingWorktree) return;
@@ -335,9 +231,9 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
     setIsRenaming(true);
     setRenameError(null);
     try {
-      await renameNodeTitle(projectId, details.node.id, newTitle);
+      await (details.node.kind === 'worktree' ? renameWorktree : renameNodeTitle)(projectId, details.node.id, newTitle);
       renameConfirmation.close();
-      setActionSuccess('Tab title renamed successfully');
+      setActionSuccess(details.node.kind === 'worktree' ? 'Worktree renamed successfully' : 'Tab title renamed successfully');
       setTimeout(() => setActionSuccess(null), 3000);
       onRefresh();
     } catch (err: any) {
@@ -363,44 +259,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
       setIsCreatingAgent(false);
     }
   }, [projectId, details?.node, isCreatingAgent, addAgentConfirmation, onRefresh]);
-
-  // Trap focus within dialog and handle Escape
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLDialogElement>) => {
-      if (e.key === 'Escape') {
-        e.preventDefault();
-        handleClose();
-        return;
-      }
-
-      if (e.key === 'Tab') {
-        const dialog = dialogRef.current;
-        if (!dialog) return;
-
-        const focusableElements = dialog.querySelectorAll<HTMLElement>(
-          'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-        );
-
-        if (focusableElements.length === 0) return;
-
-        const firstElement = focusableElements[0];
-        const lastElement = focusableElements[focusableElements.length - 1];
-
-        if (e.shiftKey) {
-          if (document.activeElement === firstElement) {
-            e.preventDefault();
-            lastElement.focus();
-          }
-        } else {
-          if (document.activeElement === lastElement) {
-            e.preventDefault();
-            firstElement.focus();
-          }
-        }
-      }
-    },
-    [handleClose],
-  );
 
   const toggleExpand = (msgId: string) => {
     setExpandedMsgIds((prev) => {
@@ -450,22 +308,9 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
 
   return (
     <>
-      <dialog
-      ref={dialogRef}
-      className={`node-modal-dialog ${isClosing ? 'is-closing' : ''}`}
-      aria-labelledby="dialog-node-title"
-      aria-describedby="dialog-node-desc"
-      onClick={(e) => {
-        if (e.target === dialogRef.current) {
-          handleClose();
-        }
-      }}
-      onCancel={(e) => {
-        e.preventDefault();
-        handleClose();
-      }}
-      onKeyDown={handleKeyDown}
-    >
+      <Modal isOpen={Boolean(selectedNodeId)} isClosing={isClosing} onClose={handleClose}
+      className={isWorktree ? 'worktree-details-dialog' : ''}
+      aria-labelledby="dialog-node-title" aria-describedby="dialog-node-desc">
       <div className="modal-dialog-container">
         {/* Modal Header */}
         <header className="modal-dialog-header">
@@ -480,7 +325,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 <h2 id="dialog-node-title" className="modal-node-title">
                   {node ? node.label : `Node: ${selectedNodeId}`}
                 </h2>
-                {node && !isWorktree && (
+                {node && (
                   <button
                     type="button"
                     className="btn-icon btn-rename-node"
@@ -488,8 +333,8 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                       setRenameError(null);
                       renameConfirmation.open();
                     }}
-                    aria-label="Rename tab title"
-                    title="Rename tab title"
+                    aria-label={isWorktree ? 'Rename worktree' : 'Rename tab title'}
+                    title={isWorktree ? 'Rename worktree' : 'Rename tab title'}
                     style={{
                       background: 'transparent',
                       border: 'none',
@@ -644,27 +489,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
             <>
               {/* Status & Location Facts */}
               {activeVisibleSections.status && (
-                <div className="modal-section facts-section">
-                  <div className="section-header-row">
-                    <button
-                      type="button"
-                      className="section-title-btn"
-                      onClick={() => toggleSection('status')}
-                      aria-expanded={!collapsedSections['status']}
-                      aria-label={`${collapsedSections['status'] ? 'Expand' : 'Collapse'} Status & Workspace section`}
-                    >
-                      <h3 className="section-title">Status & Workspace</h3>
-                      <Icon
-                        name="chevron-down"
-                        size={13}
-                        strokeWidth={2.5}
-                        className={`section-chevron-icon ${collapsedSections['status'] ? 'is-collapsed' : ''}`}
-                      />
-                    </button>
-                  </div>
-
-                  <div className={`section-collapsible-body ${collapsedSections['status'] ? 'is-collapsed' : ''}`}>
-                    <div className="section-collapsible-inner">
+                <Disclosure title="Status & Workspace" defaultOpen className="facts-section">
                       <div className="facts-panel">
                         <div className="facts-metadata-row">
                           <div className="fact-col">
@@ -715,95 +540,33 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                           )}
                         </div>
                       </div>
-                    </div>
-                  </div>
-                </div>
+                </Disclosure>
               )}
+
+              {isWorktree && projectId && <Disclosure key={`${projectId}:${node.id}`} title="Branch History" lazy><WorktreeHistory projectId={projectId} nodeId={node.id} commitGraphEnabled={commitGraphEnabled} /></Disclosure>}
 
               {/* Assigned Tasks (agents only, below status & workspace if exists) */}
               {activeVisibleSections.tasks && !isWorktree && assignedTasks.length > 0 && (
-                <div className="modal-section assigned-tasks-section">
-                  <div className="section-header-row">
-                    <button
-                      type="button"
-                      className="section-title-btn"
-                      onClick={() => toggleSection('tasks')}
-                      aria-expanded={!collapsedSections['tasks']}
-                      aria-label={`${collapsedSections['tasks'] ? 'Expand' : 'Collapse'} Assigned Tasks section`}
-                    >
-                      <h3 className="section-title">Assigned Tasks</h3>
-                      <span className="badge badge-neutral text-xs font-mono">{assignedTasks.length}</span>
-                      <Icon
-                        name="chevron-down"
-                        size={13}
-                        strokeWidth={2.5}
-                        className={`section-chevron-icon ${collapsedSections['tasks'] ? 'is-collapsed' : ''}`}
-                      />
-                    </button>
-                  </div>
-                  <div className={`section-collapsible-body ${collapsedSections['tasks'] ? 'is-collapsed' : ''}`}>
-                    <div className="section-collapsible-inner">
+                <Disclosure title="Assigned Tasks" defaultOpen className="assigned-tasks-section" badge={<span className="badge badge-neutral text-xs font-mono">{assignedTasks.length}</span>}>
                       <div className="assigned-tasks-list">
                         {assignedTasks.map((t) => (
                           <TaskCard key={t.id} task={t} />
                         ))}
                       </div>
-                    </div>
-                  </div>
-                </div>
+                </Disclosure>
               )}
 
               {activeVisibleSections.latest && !isWorktree && (
-                <div className="modal-section latest-message-section">
-                  <div className="section-header-row">
-                    <button
-                      type="button"
-                      className="section-title-btn"
-                      onClick={() => toggleSection('latest')}
-                      aria-expanded={!collapsedSections['latest']}
-                      aria-label={`${collapsedSections['latest'] ? 'Expand' : 'Collapse'} Latest Agent Message section`}
-                    >
-                      <h3 className="section-title">Latest Agent Message</h3>
-                      <Icon
-                        name="chevron-down"
-                        size={13}
-                        strokeWidth={2.5}
-                        className={`section-chevron-icon ${collapsedSections['latest'] ? 'is-collapsed' : ''}`}
-                      />
-                    </button>
-                  </div>
-                  <div className={`section-collapsible-body ${collapsedSections['latest'] ? 'is-collapsed' : ''}`}>
-                    <div className="section-collapsible-inner">
+                <Disclosure title="Latest Agent Message" defaultOpen className="latest-message-section">
                       {latestReply ? <LatestMessageCard key={latestReply.id} message={latestReply} stale={Boolean(convMeta?.stale)} />
                         : <p className="text-xs text-muted">{convMeta?.availability === 'unsupported' || convMeta?.availability === 'unavailable'
                         ? (isUnstartedAgentConvo ? 'No agent reply in recent history.' : 'Agent message unavailable from this conversation source.') : 'No agent reply in recent history.'}</p>}
-                    </div>
-                  </div>
-                </div>
+                </Disclosure>
               )}
 
               {/* Current Tool Activity (agents only) */}
               {activeVisibleSections.tool && !isWorktree && currentTool && (
-                <div className="modal-section tool-section">
-                  <div className="section-header-row">
-                    <button
-                      type="button"
-                      className="section-title-btn"
-                      onClick={() => toggleSection('tool')}
-                      aria-expanded={!collapsedSections['tool']}
-                      aria-label={`${collapsedSections['tool'] ? 'Expand' : 'Collapse'} Current Tool Activity section`}
-                    >
-                      <h3 className="section-title">Current Tool Activity</h3>
-                      <Icon
-                        name="chevron-down"
-                        size={13}
-                        strokeWidth={2.5}
-                        className={`section-chevron-icon ${collapsedSections['tool'] ? 'is-collapsed' : ''}`}
-                      />
-                    </button>
-                  </div>
-                  <div className={`section-collapsible-body ${collapsedSections['tool'] ? 'is-collapsed' : ''}`}>
-                    <div className="section-collapsible-inner">
+                <Disclosure title="Current Tool Activity" defaultOpen className="tool-section">
                       <div className="current-tool-card">
                         <div className="tool-name-row">
                           <span className="tool-tag">Active Tool</span>
@@ -816,34 +579,12 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                           </div>
                         )}
                       </div>
-                    </div>
-                  </div>
-                </div>
+                </Disclosure>
               )}
 
               {/* Conversation Section (agents only) */}
               {activeVisibleSections.conversation && !isWorktree && (
-                <div className="modal-section conversation-section">
-                  <div className="section-header-row">
-                    <button
-                      type="button"
-                      className="section-title-btn"
-                      onClick={() => toggleSection('conversation')}
-                      aria-expanded={!collapsedSections['conversation']}
-                      aria-label={`${collapsedSections['conversation'] ? 'Expand' : 'Collapse'} Conversation History section`}
-                    >
-                      <h3 className="section-title">Conversation History</h3>
-                      <Icon
-                        name="chevron-down"
-                        size={13}
-                        strokeWidth={2.5}
-                        className={`section-chevron-icon ${collapsedSections['conversation'] ? 'is-collapsed' : ''}`}
-                      />
-                    </button>
-                  </div>
-
-                  <div className={`section-collapsible-body ${collapsedSections['conversation'] ? 'is-collapsed' : ''}`}>
-                    <div className="section-collapsible-inner">
+                <Disclosure title="Conversation History" defaultOpen className="conversation-section">
                       {/* Section Meta Alerts */}
                       {convMeta?.issue && !isUnstartedAgentConvo && (
                         <div className="panel-alert alert-error mb-3" role="alert">
@@ -910,9 +651,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         </div>
                       )}
 
-                    </div>
-                  </div>
-                </div>
+                </Disclosure>
               )}
 
               {/* Chatbox to send message to agent (at bottom most below convo history) */}
@@ -973,7 +712,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
               )}
 
               {/* Hint when all sections are hidden */}
-              {!activeVisibleSections.status &&
+              {!(isWorktree && projectId) && !activeVisibleSections.status &&
                 (!activeVisibleSections.tasks || isWorktree || assignedTasks.length === 0) &&
                 (!activeVisibleSections.latest || isWorktree) &&
                 (!activeVisibleSections.tool || isWorktree || !currentTool) &&
@@ -987,7 +726,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
           )}
         </div>
       </div>
-    </dialog>
+    </Modal>
 
     <ConfirmationDialog
       isOpen={deleteWorktreeConfirmation.present}
@@ -1030,6 +769,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
     />
 
     <RenameDialog
+      subject={isWorktree ? 'worktree' : 'tab'}
       isOpen={renameConfirmation.present}
       isClosing={renameConfirmation.closing}
       initialTitle={details?.node?.label || ''}
