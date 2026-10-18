@@ -29,13 +29,13 @@ export function toolLabel(name: string, rawInput: unknown, maxLength = 160): str
     : /exec|bash|shell|command|terminal/i.test(name) ? 'Run' : name;
   const patch = wrappedPatch ?? input.patch;
   const patchPath = typeof patch === 'string' ? patch.match(/\*\*\* (?:Update|Add|Delete) File: ([^\r\n]+)/)?.[1] : null;
-  const detail = action === 'Run' ? input.command ?? input.cmd ?? input.command_line ?? wrappedCommand
-    : input.file_path ?? input.path ?? input.filePath ?? input.filename ?? patchPath ?? input.title;
+  const detail = action === 'Run' ? input.command ?? input.cmd ?? input.command_line ?? input.CommandLine ?? wrappedCommand
+    : input.file_path ?? input.path ?? input.filePath ?? input.filename ?? input.AbsolutePath ?? input.TargetFile ?? input.FilePath ?? patchPath ?? input.title;
   const safe = typeof detail === 'string' ? detail.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, maxLength) : '';
   return `${action.slice(0, 60)}${safe ? `: ${safe}` : ''}`;
 }
 
-function activity(session: string, id: unknown, name: unknown, input: unknown, at: unknown): ToolActivity | null {
+export function toolActivityFromCall(session: string, id: unknown, name: unknown, input: unknown, at: unknown): ToolActivity | null {
   if (typeof id !== 'string' || !id || typeof name !== 'string' || !name) return null;
   const timestamp = typeof at === 'number' ? new Date(at).toISOString()
     : typeof at === 'string' && Number.isFinite(Date.parse(at)) ? new Date(at).toISOString() : null;
@@ -50,7 +50,7 @@ export function transcriptToolActivity(provider: string, session: string, line: 
     if (provider === 'codex') {
       const p = record.payload;
       if (record.type !== 'response_item' || !['function_call', 'custom_tool_call'].includes(p?.type)) return [];
-      const item = activity(session, p.call_id, p.name, p.arguments ?? p.input, record.timestamp);
+      const item = toolActivityFromCall(session, p.call_id, p.name, p.arguments ?? p.input, record.timestamp);
       return item ? [item] : [];
     }
     if (!['claude', 'pi', 'omp'].includes(provider) || record.message?.role !== 'assistant') return [];
@@ -58,7 +58,7 @@ export function transcriptToolActivity(provider: string, session: string, line: 
     if (!Array.isArray(content)) return [];
     return content.flatMap((part: any) => {
       if (!['tool_use', 'toolCall'].includes(part?.type)) return [];
-      const item = activity(session, part.id, part.name, part.input ?? part.arguments, record.timestamp ?? record.message.timestamp);
+      const item = toolActivityFromCall(session, part.id, part.name, part.input ?? part.arguments, record.timestamp ?? record.message.timestamp);
       return item ? [item] : [];
     });
   } catch { return []; }
@@ -77,7 +77,7 @@ export function databaseToolActivity(file: string, session: string): ToolActivit
       try {
         const part = JSON.parse(row.data);
         if (part.type !== 'tool') return [];
-        const item = activity(session, part.callID ?? row.id, part.tool, part.state?.input, part.state?.time?.start);
+        const item = toolActivityFromCall(session, part.callID ?? row.id, part.tool, part.state?.input, part.state?.time?.start);
         return item ? [item] : [];
       } catch { return []; }
     });

@@ -4,10 +4,11 @@ import { DatabaseSync } from 'node:sqlite';
 import type { Edge, Node, Run, Section, ToolActivity } from '../../../shared/contracts.js';
 import { databaseToolActivity, transcriptToolActivity } from '../../providers/toolActivity.js';
 import { openCodeDatabase } from '../../providers/opencode.js';
+import { readAntigravityToolActivity } from '../../providers/antigravity.js';
 import { globalSourceMaps } from './state.js';
 import { hashId, readBoundedTranscriptLines } from './utils.js';
 
-const providers = ['claude', 'codex', 'pi', 'omp', 'opencode', 'kilo', 'kilocode'];
+const providers = ['claude', 'codex', 'pi', 'omp', 'opencode', 'kilo', 'kilocode', 'antigravity'];
 
 export async function collectToolActivity(node: Node, entry: any, allowed: (file: string) => boolean): Promise<void> {
   const now = new Date().toISOString();
@@ -17,6 +18,10 @@ export async function collectToolActivity(node: Node, entry: any, allowed: (file
     issue: failed ? { code: 'SOURCE_CHANGED', message: 'Tool activity could not be read from the bound provider session.', retryable: true } : null,
   } });
   if (!providers.includes(node.agentType || '')) return;
+  if ((entry.source && entry.source !== node.agentType) || (entry.worktreeId && entry.worktreeId !== node.worktreeId)) {
+    node.toolActivity = section(null, true);
+    return;
+  }
   if (typeof entry.providerSession?.id !== 'string' || !entry.providerSession.id.trim()) {
     node.toolActivity = section(null, true);
     return;
@@ -24,7 +29,10 @@ export async function collectToolActivity(node: Node, entry: any, allowed: (file
   const session = entry.providerSession.id;
   try {
     let items: ToolActivity[];
-    if (['opencode', 'kilo', 'kilocode'].includes(node.agentType!)) {
+    if (node.agentType === 'antigravity') {
+      if (entry.providerSession.key !== 'conversation_id') { node.toolActivity = section(null, true); return; }
+      items = readAntigravityToolActivity(session, allowed);
+    } else if (['opencode', 'kilo', 'kilocode'].includes(node.agentType!)) {
       const file = openCodeDatabase(node.agentType!, session, allowed);
       if (!file) { node.toolActivity = section(null, true); return; }
       items = databaseToolActivity(file, session);

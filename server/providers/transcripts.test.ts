@@ -8,7 +8,8 @@ import { publicTranscriptRecord, transcriptSettings } from './shared.js';
 import { readOpenCodePage, readOpenCodeModel, findOpenCodeSession } from './opencode.js';
 import { findClaudeTranscript } from './claude.js';
 import { findCodexTranscript } from './codex.js';
-import { resolveAntigravityConversation } from './antigravity.js';
+import { resolveAntigravityConversation, readAntigravityToolActivity } from './antigravity.js';
+import { collectToolActivity } from '../integrations/orca/liveActivity.js';
 import { resolveCoordinatorConversation } from '../integrations/orca/nodeDetails.js';
 import { globalSourceMaps } from '../integrations/orca/state.js';
 import { transcriptToolActivity, databaseToolActivity, toolLabel } from './toolActivity.js';
@@ -289,6 +290,72 @@ test('idle Antigravity node in same worktree does not steal active Antigravity s
     globalSourceMaps.nodeSourceMap.delete('node-idle');
     if (previous === undefined) delete process.env.ORCA_APPDATA_DIR;
     else process.env.ORCA_APPDATA_DIR = previous;
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('Antigravity reads exact-session protobuf tool metadata without output or reasoning', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-ag-tools-'));
+  const previous = process.env.ANTIGRAVITY_APPDATA_DIR;
+  const previousGemini = process.env.GEMINI_APPDATA_DIR;
+  delete process.env.GEMINI_APPDATA_DIR;
+  process.env.ANTIGRAVITY_APPDATA_DIR = dir;
+  const id = 'exact-ag-session';
+  fs.mkdirSync(path.join(dir, 'conversations'));
+  const db = new DatabaseSync(path.join(dir, 'conversations', `${id}.db`));
+  const varint = (value: number) => {
+    const bytes: number[] = [];
+    do { const part = value % 128; value = Math.floor(value / 128); bytes.push(part | (value ? 128 : 0)); } while (value);
+    return Buffer.from(bytes);
+  };
+  const field = (number: number, value: string | Buffer | number): Buffer => {
+    if (typeof value === 'number') return Buffer.concat([varint(number * 8), varint(value)]);
+    const bytes = typeof value === 'string' ? Buffer.from(value) : value;
+    return Buffer.concat([varint(number * 8 + 2), varint(bytes.length), bytes]);
+  };
+  const call = (name: string, args: object, callId: string) => Buffer.concat([
+    field(1, callId), field(2, name), field(3, JSON.stringify(args)), field(6, 'private signature'),
+  ]);
+  try {
+    db.exec('CREATE TABLE trajectory_meta(cascade_id TEXT); CREATE TABLE steps(idx INTEGER PRIMARY KEY,metadata BLOB,step_payload BLOB)');
+    db.prepare('INSERT INTO trajectory_meta VALUES(?)').run(id);
+    const insert = db.prepare('INSERT INTO steps VALUES(?,?,?)');
+    const timestamp = field(1, field(1, 1792330000));
+    insert.run(1, Buffer.concat([timestamp, field(4, call('run_command', { CommandLine: 'npm test' }, 'run-1'))]), Buffer.from('private command output'));
+    insert.run(2, Buffer.concat([timestamp, field(4, call('view_file', { AbsolutePath: 'src/main.ts' }, 'read-1'))]), Buffer.from('private file contents'));
+    insert.run(3, Buffer.concat([timestamp, field(4, call('replace_file_content', { TargetFile: 'old.ts' }, 'edit-1')),
+      field(29, call('replace_file_content', { TargetFile: 'new.ts', ReplacementContent: 'private edit content' }, 'edit-1'))]), Buffer.from('private diff'));
+    insert.run(4, Buffer.from([255]), Buffer.from('malformed'));
+    insert.run(5, Buffer.alloc(524289), Buffer.from('oversized'));
+    insert.run(6, Buffer.concat([timestamp, field(7, 'private planner thinking')]), Buffer.from('private assistant turn'));
+    const allowed = (file: string) => file.startsWith(dir + path.sep);
+    const items = readAntigravityToolActivity(id, allowed);
+    assert.deepEqual(items.map((item) => item.label), ['Run: npm test', 'Read: src/main.ts', 'Edit: new.ts']);
+    assert.equal(items.every((item) => item.at === new Date(1792330000 * 1000).toISOString()), true);
+    assert.equal(JSON.stringify(items).includes('private'), false);
+    assert.deepEqual(readAntigravityToolActivity(id, allowed).map((item) => item.id), items.map((item) => item.id));
+    assert.throws(() => readAntigravityToolActivity('../escape', allowed), /identity/);
+    assert.throws(() => readAntigravityToolActivity(id, () => false), /outside allowed/);
+    const node = { id: 'agy', agentType: 'antigravity', worktreeId: 'wt' } as any;
+    await collectToolActivity(node, { source: 'antigravity', worktreeId: 'wt', providerSession: { key: 'conversation_id', id } }, allowed);
+    assert.equal(node.toolActivity.meta.availability, 'ready');
+    assert.equal(node.toolActivity.data.length, 3);
+    await collectToolActivity(node, { source: 'antigravity', worktreeId: 'other-wt', providerSession: { key: 'conversation_id', id } }, allowed);
+    assert.equal(node.toolActivity.meta.availability, 'unavailable');
+    await collectToolActivity(node, { providerSession: { key: 'session_id', id } }, allowed);
+    assert.equal(node.toolActivity.meta.availability, 'unavailable');
+    db.prepare('UPDATE trajectory_meta SET cascade_id = ?').run('different-conversation');
+    assert.throws(() => readAntigravityToolActivity(id, allowed), /identity changed/);
+    await collectToolActivity(node, { providerSession: { key: 'conversation_id', id } }, allowed);
+    assert.equal(node.toolActivity.meta.availability, 'unavailable');
+    db.prepare('UPDATE trajectory_meta SET cascade_id = ?').run(id);
+    const large = Buffer.alloc(524288);
+    for (let index = 10; index < 27; index++) insert.run(index, large, null);
+    assert.throws(() => readAntigravityToolActivity(id, allowed), /byte limit/);
+  } finally {
+    db.close();
+    if (previous === undefined) delete process.env.ANTIGRAVITY_APPDATA_DIR; else process.env.ANTIGRAVITY_APPDATA_DIR = previous;
+    if (previousGemini === undefined) delete process.env.GEMINI_APPDATA_DIR; else process.env.GEMINI_APPDATA_DIR = previousGemini;
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });

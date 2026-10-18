@@ -9,7 +9,9 @@ import {
   Section,
   ConversationPage,
   ConversationMessage,
+  ToolActivity,
 } from '../../shared/contracts.js';
+import { toolActivityFromCall } from './toolActivity.js';
 import { cleanErrorMessage } from '../integrations/cli.js';
 import {
   hashId,
@@ -35,7 +37,7 @@ import {
 // CortexStepGeneratorMetadata.chat_model = 1;
 // ChatModelMetadata.response_model = 19.
 // Read only these fields; never search prompt/tool text for model names.
-function protobufField(bytes: Uint8Array, field: number): Uint8Array | null {
+function protobufField(bytes: Uint8Array, field: number, scalar?: (field: number, value: number) => void): Uint8Array | null {
   let offset = 0;
   let value: Uint8Array | null = null;
   const varint = () => {
@@ -58,7 +60,8 @@ function protobufField(bytes: Uint8Array, field: number): Uint8Array | null {
     const wire = tag % 8;
     if (number < 1) throw new Error('Invalid protobuf field');
     if (wire === 0) {
-      varint();
+      const integer = varint();
+      scalar?.(number, integer);
     } else if (wire === 2) {
       const size = varint();
       if (offset + size > bytes.length) throw new Error('Invalid protobuf length');
@@ -72,6 +75,53 @@ function protobufField(bytes: Uint8Array, field: number): Uint8Array | null {
     }
   }
   return value;
+}
+
+/** Verified against bundled cortex.proto and codeium_common.proto in agy 2026-10-18.
+ * CortexStepMetadata: created_at=1, tool_call=4, modified_tool_call=29.
+ * ChatToolCall: id=1, name=2, arguments_json=3. All other fields are excluded.
+ */
+export function readAntigravityToolActivity(conversationId: string, allowed: (file: string) => boolean): ToolActivity[] {
+  if (!/^[a-zA-Z0-9_-]{1,200}$/.test(conversationId)) throw new Error('Invalid Antigravity conversation identity');
+  const base = process.env.GEMINI_APPDATA_DIR || process.env.ANTIGRAVITY_APPDATA_DIR ||
+    path.join(process.env.USERPROFILE || process.env.HOME || '', '.gemini', 'antigravity-cli');
+  const file = path.join(base, 'conversations', `${conversationId}.db`);
+  if (!allowed(file)) throw new Error('Antigravity tool metadata is outside allowed provider directories');
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    if (!db.prepare('SELECT 1 FROM trajectory_meta WHERE cascade_id = ? LIMIT 1').get(conversationId)) {
+      throw new Error('Antigravity conversation identity changed');
+    }
+    const rows = db.prepare(`SELECT idx, CASE WHEN length(metadata) <= 524288 THEN metadata END AS metadata
+      FROM steps ORDER BY idx DESC LIMIT 200`).all();
+    let bytes = 0;
+    const result: ToolActivity[] = [];
+    for (const row of rows.reverse()) {
+      if (!(row.metadata instanceof Uint8Array)) continue;
+      bytes += row.metadata.byteLength;
+      if (bytes > 8 * 1024 * 1024) throw new Error('Antigravity tool metadata exceeds byte limit');
+      try {
+        const call = protobufField(row.metadata, 29) ?? protobufField(row.metadata, 4);
+        if (!call) continue;
+        const text = (field: number) => {
+          const value = protobufField(call, field);
+          return value ? Buffer.from(value).toString('utf8') : '';
+        };
+        const name = text(2);
+        if (!name) continue;
+        const timestamp = protobufField(row.metadata, 1);
+        let seconds: number | null = null, nanos = 0;
+        if (timestamp) protobufField(timestamp, 0, (field, value) => {
+          if (field === 1) seconds = value;
+          if (field === 2) nanos = value;
+        });
+        const at = seconds === null ? null : Number(seconds) * 1000 + nanos / 1e6;
+        const item = toolActivityFromCall(`antigravity:${conversationId}`, text(1) || `step:${row.idx}`, name, text(3), at);
+        if (item) result.push(item);
+      } catch { /* Ignore malformed individual rows; never guess from output or reasoning. */ }
+    }
+    return result;
+  } finally { db.close(); }
 }
 
 export function readAntigravityModel(
