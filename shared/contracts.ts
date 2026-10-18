@@ -106,6 +106,7 @@ export interface ToolActivity {
   id: Id;
   at: ISO | null;
   label: string;
+  detail?: string;
 }
 
 export interface OrchestrationMessage {

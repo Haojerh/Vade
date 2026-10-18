@@ -1,6 +1,7 @@
 import React, { useMemo } from 'react';
 import type { Edge, Node } from '../../../shared/contracts';
 import type { LivePacket } from './useLiveGraphActivity';
+import { DeliveryPacket } from './DeliveryPacket';
 
 export interface AnchorBox {
   x: number;
@@ -120,27 +121,9 @@ export const WorkflowEdgesSvg: React.FC<WorkflowEdgesSvgProps> = ({
           {packets.filter((packet) =>
             (packet.source === edge.source && packet.target === edge.target) ||
             (packet.source === edge.target && packet.target === edge.source)).map((packet) => (
-            prefersReducedMotion ? (
-              <g key={packet.id} className="delivery-packet static-packet">
-                <circle cx={packet.target === edge.target ? endX : startX} cy={packet.target === edge.target ? endY : startY} r="5" className="edge-delivery-halo" />
-                <circle cx={packet.target === edge.target ? endX : startX} cy={packet.target === edge.target ? endY : startY} r="3" className="edge-delivery-bead" />
-              </g>
-            ) : (
-              <g key={packet.id} className="delivery-packet">
-                <circle r="5" className="edge-delivery-halo" />
-                <circle r="3" className="edge-delivery-bead" />
-                <animateMotion
-                  path={pathData}
-                  dur="1.4s"
-                  repeatCount="1"
-                  keyPoints={packet.source === edge.source ? '0;1' : '1;0'}
-                  keyTimes="0;1"
-                  calcMode="linear"
-                  fill="freeze"
-                  rotate="auto"
-                />
-              </g>
-            )
+            <DeliveryPacket key={packet.id} path={pathData} reverse={packet.source !== edge.source}
+              reducedMotion={prefersReducedMotion} endX={packet.target === edge.target ? endX : startX}
+              endY={packet.target === edge.target ? endY : startY} />
           ))}
         </g>
       );

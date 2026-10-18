@@ -11,11 +11,16 @@ export function useLiveGraphActivity(scope: string, nodes: Node[], edges: Edge[]
   const initializedSources = useRef(new Set<string>());
   const [tools, setTools] = useState<LiveTool[]>([]);
   const [packets, setPackets] = useState<LivePacket[]>([]);
+  const heldTools = useRef(new Set<string>());
+  const holdTool = (id: string, held: boolean) => {
+    if (held) heldTools.current.add(id); else heldTools.current.delete(id);
+  };
   useEffect(() => {
     const first = boundScope.current !== scope;
     if (first) {
       boundScope.current = scope;
       seen.current.clear();
+      heldTools.current.clear();
       initializedSources.current.clear();
       setTools([]);
       setPackets([]);
@@ -51,10 +56,11 @@ export function useLiveGraphActivity(scope: string, nodes: Node[], edges: Edge[]
   useEffect(() => {
     const timer = window.setInterval(() => {
       const now = Date.now();
-      setTools((items) => items.some((item) => item.expiresAt <= now) ? items.filter((item) => item.expiresAt > now) : items);
+      setTools((items) => items.some((item) => item.expiresAt <= now && !heldTools.current.has(item.id))
+        ? items.filter((item) => item.expiresAt > now || heldTools.current.has(item.id)) : items);
       setPackets((items) => items.some((item) => item.expiresAt <= now) ? items.filter((item) => item.expiresAt > now) : items);
     }, 200);
     return () => window.clearInterval(timer);
   }, []);
-  return { tools, packets };
+  return { tools, packets, holdTool };
 }

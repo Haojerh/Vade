@@ -17,7 +17,7 @@ function stringLiteral(literal: string | undefined): string | null {
   } catch { return null; }
 }
 
-export function toolLabel(name: string, rawInput: unknown): string {
+export function toolLabel(name: string, rawInput: unknown, maxLength = 160): string {
   const input = inputObject(rawInput);
   // Code-mode wrappers carry literal tool arguments in `code`; inspect text only, never execute it.
   const code = typeof input.code === 'string' ? input.code : typeof input.patch === 'string' && /exec/i.test(name) ? input.patch : '';
@@ -31,7 +31,7 @@ export function toolLabel(name: string, rawInput: unknown): string {
   const patchPath = typeof patch === 'string' ? patch.match(/\*\*\* (?:Update|Add|Delete) File: ([^\r\n]+)/)?.[1] : null;
   const detail = action === 'Run' ? input.command ?? input.cmd ?? input.command_line ?? wrappedCommand
     : input.file_path ?? input.path ?? input.filePath ?? input.filename ?? patchPath ?? input.title;
-  const safe = typeof detail === 'string' ? detail.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, 160) : '';
+  const safe = typeof detail === 'string' ? detail.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, maxLength) : '';
   return `${action.slice(0, 60)}${safe ? `: ${safe}` : ''}`;
 }
 
@@ -39,7 +39,8 @@ function activity(session: string, id: unknown, name: unknown, input: unknown, a
   if (typeof id !== 'string' || !id || typeof name !== 'string' || !name) return null;
   const timestamp = typeof at === 'number' ? new Date(at).toISOString()
     : typeof at === 'string' && Number.isFinite(Date.parse(at)) ? new Date(at).toISOString() : null;
-  return { id: `tool_${createHash('sha256').update(`${session}:${id}`).digest('base64url').slice(0, 24)}`, at: timestamp, label: toolLabel(name, input) };
+  return { id: `tool_${createHash('sha256').update(`${session}:${id}`).digest('base64url').slice(0, 24)}`, at: timestamp,
+    label: toolLabel(name, input), detail: toolLabel(name, input, 2000) };
 }
 
 export function transcriptToolActivity(provider: string, session: string, line: string): ToolActivity[] {

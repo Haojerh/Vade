@@ -12,6 +12,7 @@ import { validateMessageFiles, MessageAttachments } from '../features/workflow/M
 import type { Node, Edge, NodeDetails as NodeDetailsType } from '../../shared/contracts';
 import { WorkflowEdgesSvg } from '../features/workflow/WorkflowEdgesSvg';
 import { ToolActivityOverlay } from '../features/workflow/ToolActivityOverlay';
+import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts } from '../features/workflow/toolActivityLayout';
 
 test('working graph edges animate only explicit message packets, once and in the observed direction', () => {
   const source = { id: 'source', kind: 'orchestrator' } as Node;
@@ -33,13 +34,48 @@ test('working graph edges animate only explicit message packets, once and in the
     tools: [{ id: 'tool', nodeId: 'target', label: 'Read: index.html', at: null, expiresAt: Date.now() + 4500 }] }));
   assert.match(toolHtml, /Read: index.html/);
   assert.match(toolHtml, /repeatCount="1"/);
-  assert.match(toolHtml, /left:364px/);
+  assert.match(toolHtml, /delivery-packet-green/);
   const outside = renderToStaticMarkup(createElement(ToolActivityOverlay, {
     positions: new Map([['target', { x: 400, y: 80, width: 260, height: 100 }]]), canvasWidth: 700, reducedMotion: true,
     tools: [{ id: 'tool', nodeId: 'target', label: 'Read: index.html', at: null, expiresAt: Date.now() + 4500 }],
   }));
-  assert.match(outside, /left:86px/);
+  assert.match(outside, /tool-activity-detail/);
   assert.equal(outside.includes('animateMotion'), false);
+});
+
+test('tool cards avoid occupied worktrees and route their delivery paths around blockers', () => {
+  const anchor = { x: 400, y: 80, width: 260, height: 100 };
+  const otherWorktree = { x: 690, y: 40, width: 380, height: 500 };
+  const previousCard = { x: 80, y: 80, width: 280, height: 56 };
+  const obstacles = [anchor, otherWorktree, previousCard];
+  const card = placeToolCard(anchor, obstacles, 1100);
+  for (const obstacle of obstacles) assert.equal(boxesOverlap(card, obstacle), false);
+  const blocker = { x: 200, y: 50, width: 100, height: 100 };
+  const path = toolConnectionPath({ x: 100, y: 100 }, { x: 400, y: 100 }, [blocker]);
+  assert.ok(path);
+  assert.notEqual(path, 'M 100 100 L 400 100');
+  assert.match(path, / Q /);
+  const points = [...path.matchAll(/[ML] ([\d.-]+) ([\d.-]+)/g)].map((match) => ({ x: Number(match[1]), y: Number(match[2]) }));
+  assert.deepEqual(points[0], { x: 100, y: 100 });
+  assert.deepEqual(points.at(-1), { x: 400, y: 100 });
+  for (let index = 1; index < points.length; index++) {
+    const a = points[index - 1], b = points[index];
+    if (a.y === b.y) assert.ok(a.y <= blocker.y || a.y >= blocker.y + blocker.height || Math.max(a.x, b.x) <= blocker.x || Math.min(a.x, b.x) >= blocker.x + blocker.width);
+    else assert.ok(a.x <= blocker.x || a.x >= blocker.x + blocker.width || Math.max(a.y, b.y) <= blocker.y || Math.min(a.y, b.y) >= blocker.y + blocker.height);
+  }
+});
+
+test('tool placement favors a clean direct connection and leaves room for the packet at arrival', () => {
+  const anchor = { x: 400, y: 80, width: 260, height: 100 };
+  const card = placeToolCard(anchor, [anchor], 800);
+  const { start, end, cardPort } = toolPorts(anchor, card);
+  assert.equal(start.y, end.y);
+  assert.equal(Math.abs(end.x - cardPort.x), 8);
+  assert.match(toolConnectionPath(start, end, [])!, /^M [\d.]+ [\d.]+ L [\d.]+ [\d.]+$/);
+  const below = toolPorts(anchor, { x: 400, y: 240, width: 280, height: 56 });
+  assert.equal(below.start.y, 180);
+  assert.equal(below.start.x, below.end.x);
+  assert.equal(below.end.y, 232);
 });
 
 test('workflow collision layout separates dragged boxes and only moves later boxes on chat expansion', () => {

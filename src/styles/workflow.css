@@ -845,7 +845,7 @@
 .tool-activity-event {
   position: absolute;
   inset: 0;
-  animation: tool-event-enter 180ms var(--ease-out) both, tool-event-exit 180ms var(--ease-out) 4.3s forwards;
+  animation: tool-event-fade-in 180ms var(--ease-out) both, tool-event-fade-out 180ms var(--ease-out) 4.3s forwards;
 }
 .tool-activity-connection { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
 .tool-activity-node {
@@ -853,24 +853,42 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 250px;
-  width: 250px;
+  max-width: 280px;
+  width: 280px;
+  height: 56px;
   box-sizing: border-box;
   padding: 8px 12px;
-  border: 1px solid currentColor;
-  border-radius: 9px;
-  background: var(--bg-panel, #202421);
-  box-shadow: 0 4px 16px #0003;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--surface-1);
+  color: var(--text-main);
+  text-align: left;
+  pointer-events: auto;
+  cursor: default;
+  box-shadow: 0 6px 20px #0003;
   font-size: 12px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.tool-activity-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+.tool-activity-icon { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; flex-shrink: 0; border-radius: 7px; background: var(--surface-hover); color: var(--text-muted); }
+.tool-activity-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.tool-activity-action { font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.tool-activity-detail { color: var(--text-main); font-family: var(--font-mono, monospace); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.tool-activity-node { animation: tool-event-enter 180ms var(--ease-out) both, tool-event-exit 180ms var(--ease-out) 4.3s forwards; }
+.delivery-packet-green .edge-delivery-halo { fill: #49ce89; filter: none; opacity: .25; }
+.delivery-packet-green .edge-delivery-bead { fill: #d3ffe5; filter: none; }
+.tool-activity-event:has(.tool-activity-node:hover), .tool-activity-event:has(.tool-activity-node:focus-visible),
+.tool-activity-event:has(.tool-activity-node[aria-expanded="true"]),
+.tool-activity-node:hover, .tool-activity-node:focus-visible, .tool-activity-node[aria-expanded="true"] { animation-play-state: paused; }
+.tool-activity-preview { padding: 14px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--surface-1); color: var(--text-main); box-shadow: 0 8px 28px #0005; font-size: 12px; }
+.tool-activity-preview-heading { font-weight: 600; margin-bottom: 8px; }
+.tool-activity-preview pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; }
+.tool-activity-preview time { display: block; margin-top: 10px; color: var(--text-muted); font-size: 10px; }
 @keyframes tool-event-enter { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes tool-event-exit { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(4px); } }
 @media (prefers-reduced-motion: reduce) {
-  .tool-activity-event { animation-name: tool-event-fade-in, tool-event-fade-out; }
+  .tool-activity-node { animation-name: tool-event-fade-in, tool-event-fade-out; }
 }
 @keyframes tool-event-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes tool-event-fade-out { from { opacity: 1; } to { opacity: 0; } }

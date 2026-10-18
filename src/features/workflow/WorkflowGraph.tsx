@@ -93,7 +93,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   onRefresh,
 }) => {
   const prefersReducedMotion = usePrefersReducedMotion();
-  const { tools, packets } = useLiveGraphActivity(`${projectId}:${runId}`, nodes, edges, toolActivityEnabled && !isLocallyStale);
+  const { tools, packets, holdTool } = useLiveGraphActivity(`${projectId}:${runId}`, nodes, edges, toolActivityEnabled && !isLocallyStale);
   const [preview, setPreview] = useState<{ nodeId: string; anchor: HTMLElement } | null>(null);
   const suppressPreviewRef = useRef(false);
   const closePreview = useCallback(() => setPreview(null), []);
@@ -593,7 +593,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
           prefersReducedMotion={prefersReducedMotion}
           packets={isLocallyStale ? [] : packets}
         />
-        <ToolActivityOverlay tools={isLocallyStale ? [] : tools} positions={positions} reducedMotion={prefersReducedMotion} canvasWidth={canvasSize.width} />
+        <ToolActivityOverlay tools={isLocallyStale ? [] : tools} positions={positions} reducedMotion={prefersReducedMotion} canvasWidth={containerRef.current?.clientWidth || canvasSize.width} nodes={nodes} onHold={holdTool} />
 
         {nodes.length === 0 ? (
           <div className="graph-empty-state">

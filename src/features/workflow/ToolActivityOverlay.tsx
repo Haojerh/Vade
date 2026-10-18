@@ -1,34 +1,47 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import type { Node } from '../../../shared/contracts';
 import type { AnchorBox } from './WorkflowEdgesSvg';
 import type { LiveTool } from './useLiveGraphActivity';
+import { DeliveryPacket } from './DeliveryPacket';
+import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts } from './toolActivityLayout';
+import { ToolActivityCard } from './ToolActivityCard';
 
-export function ToolActivityOverlay({ tools, positions, reducedMotion, canvasWidth = Infinity }: {
-  tools: LiveTool[]; positions: Map<string, AnchorBox>; reducedMotion: boolean; canvasWidth?: number;
+export function ToolActivityOverlay({ tools, positions, reducedMotion, canvasWidth = Infinity, nodes = [], onHold }: {
+  tools: LiveTool[]; positions: Map<string, AnchorBox>; reducedMotion: boolean; canvasWidth?: number; nodes?: Node[];
+  onHold?: (id: string, held: boolean) => void;
 }) {
-  const slots = new Map<string, number>();
+  const placements = useRef(new Map<string, { box: AnchorBox; anchor: string; routeKey: string; path: string | null }>());
+  const currentIds = new Set(tools.map((tool) => tool.id));
+  for (const id of placements.current.keys()) if (!currentIds.has(id)) placements.current.delete(id);
+  const placed: AnchorBox[] = [];
+  const byId = new Map(nodes.map((node) => [node.id, node]));
   return <div className="tool-activity-overlay" aria-label="Live tool activity">
     {tools.map((tool) => {
       const anchor = positions.get(tool.nodeId);
       if (!anchor?.width) return null;
-      const index = slots.get(tool.nodeId) ?? 0;
-      slots.set(tool.nodeId, index + 1);
-      const right = anchor.x + anchor.width + 64 + Math.floor(index / 4) * 314;
-      const onLeft = right + 250 > canvasWidth && anchor.x >= 314;
-      const x = onLeft ? Math.max(8, anchor.x - 314 - Math.floor(index / 4) * 314) : right;
-      const y = anchor.y + (index % 4) * 42;
-      const startX = onLeft ? anchor.x : anchor.x + anchor.width;
-      const startY = anchor.y + anchor.height / 2;
-      const endX = onLeft ? x + 250 : x;
-      const d = `M ${startX} ${startY} C ${endX} ${startY}, ${startX} ${y + 16}, ${endX} ${y + 16}`;
+      const agent = byId.get(tool.nodeId);
+      const obstacles = [...positions].filter(([id]) => {
+        if (id === tool.nodeId) return false;
+        const node = byId.get(id);
+        return !(node?.kind === 'worktree' && agent?.worktreeId && node.worktreeId === agent.worktreeId);
+      }).map(([, box]) => box);
+      const blockers = [...obstacles, anchor, ...placed];
+      const anchorKey = `${anchor.x}:${anchor.y}:${anchor.width}:${anchor.height}`;
+      const previous = placements.current.get(tool.id);
+      const box = previous?.anchor === anchorKey && !blockers.some((blocker) => boxesOverlap(previous.box, blocker))
+        ? previous.box : placeToolCard(anchor, blockers, canvasWidth);
+      const { start, end, cardPort } = toolPorts(anchor, box);
+      const routeKey = `${anchorKey}:${box.x}:${box.y}:${JSON.stringify(obstacles)}`;
+      const path = previous?.routeKey === routeKey ? previous.path : toolConnectionPath(start, end, [...obstacles, ...placed]);
+      placements.current.set(tool.id, { box, anchor: anchorKey, routeKey, path });
+      placed.push(box);
       return <div key={tool.id} className="tool-activity-event">
-        <svg className="tool-activity-connection" aria-hidden="true">
-          <path d={d} fill="none" stroke="currentColor" strokeWidth="2" />
-          <circle cx={startX} cy={startY} r="3" fill="currentColor" />
-          {!reducedMotion && <circle r="4" fill="currentColor"><animateMotion path={d} dur="0.7s" repeatCount="1" fill="freeze" /></circle>}
-        </svg>
-        <div className="tool-activity-node" style={{ left: x, top: y }} title={tool.label}>
-          <span className="tool-activity-dot" />{tool.label}
-        </div>
+        {path && <svg className="tool-activity-connection" aria-hidden="true">
+          <path d={path} fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" />
+          <path d={`M ${end.x} ${end.y} L ${cardPort.x} ${cardPort.y}`} fill="none" stroke="currentColor" strokeWidth="1.5" />
+          <DeliveryPacket key={path} path={path} reducedMotion={reducedMotion} endX={end.x} endY={end.y} tone="green" />
+        </svg>}
+        <ToolActivityCard tool={tool} box={box} onHold={onHold} />
       </div>;
     })}
   </div>;
