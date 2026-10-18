@@ -76,6 +76,9 @@ test('tool placement favors a clean direct connection and leaves room for the pa
   assert.equal(below.start.y, 180);
   assert.equal(below.start.x, below.end.x);
   assert.equal(below.end.y, 232);
+  const smooth = toolConnectionPath({ x: 420, y: 100 }, { x: 340, y: 200 }, []);
+  assert.equal(smooth, 'M 420 100 C 380 100, 380 200, 340 200');
+  assert.equal(smooth.includes(' Q '), false);
 });
 
 test('workflow collision layout separates dragged boxes and only moves later boxes on chat expansion', () => {

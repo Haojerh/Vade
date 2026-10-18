@@ -67,10 +67,31 @@ function crosses(a: Point, b: Point, box: AnchorBox): boolean {
   return a.y > box.y && a.y < box.y + box.height && Math.max(a.x, b.x) > box.x && Math.min(a.x, b.x) < box.x + box.width;
 }
 
+function curveAvoidsBoxes(points: Point[], boxes: AnchorBox[], depth = 0): boolean {
+  const minX = Math.min(...points.map((point) => point.x)), maxX = Math.max(...points.map((point) => point.x));
+  const minY = Math.min(...points.map((point) => point.y)), maxY = Math.max(...points.map((point) => point.y));
+  const nearby = boxes.filter((box) => maxX > box.x && minX < box.x + box.width && maxY > box.y && minY < box.y + box.height);
+  if (!nearby.length) return true;
+  if (depth >= 10) return false;
+  const midpoint = (a: Point, b: Point): Point => ({ x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+  const a = midpoint(points[0], points[1]), b = midpoint(points[1], points[2]), c = midpoint(points[2], points[3]);
+  const d = midpoint(a, b), e = midpoint(b, c), center = midpoint(d, e);
+  return curveAvoidsBoxes([points[0], a, d, center], nearby, depth + 1)
+    && curveAvoidsBoxes([center, e, c, points[3]], nearby, depth + 1);
+}
+
 /** Route on obstacle boundaries, so green connectors never cut through another worktree. */
 export function toolConnectionPath(start: Point, end: Point, obstacles: AnchorBox[]): string | null {
   const blockers = obstacles.map((box) => ({ x: box.x - 10, y: box.y - 10, width: box.width + 20, height: box.height + 20 }));
   if ((start.x === end.x || start.y === end.y) && !blockers.some((box) => crosses(start, end, box))) return roundedToolPath([start, end]);
+  // Match the flowing horizontal connections used by the orchestration graph.
+  const direction = end.x >= start.x ? 1 : -1;
+  const handle = Math.max(40, Math.abs(end.x - start.x) / 2);
+  const first = { x: start.x + direction * handle, y: start.y };
+  const second = { x: end.x - direction * handle, y: end.y };
+  if (curveAvoidsBoxes([start, first, second, end], blockers)) {
+    return `M ${start.x} ${start.y} C ${first.x} ${first.y}, ${second.x} ${second.y}, ${end.x} ${end.y}`;
+  }
   const xs = [...new Set([start.x, end.x, ...blockers.flatMap((box) => [box.x, box.x + box.width])])].sort((a, b) => a - b);
   const ys = [...new Set([start.y, end.y, ...blockers.flatMap((box) => [box.y, box.y + box.height])])].sort((a, b) => a - b);
   // Bound routing work in very large projects; hide the connector rather than draw through a worktree.
