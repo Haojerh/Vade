@@ -3,6 +3,7 @@ import type { Edge, Node } from '../../../shared/contracts';
 import { separateWorkflowBoxes, type LayoutBox } from './workflowCollision';
 import type { AnchorBox } from './WorkflowEdgesSvg';
 import { placeNewWorktree } from './newWorktreePlacement';
+import { clampWorkflowZoom, zoomScrollOffset, workflowBox } from './workflowZoom';
 
 function arePositionsEqual(a: Map<string, AnchorBox>, b: Map<string, AnchorBox>): boolean {
   if (a.size !== b.size) return false;
@@ -135,6 +136,47 @@ export function useWorkflowCanvas({
   });
 
   const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(1);
+  const zoomAnchorRef = useRef<{ left: number; top: number } | null>(null);
+  const changeZoom = useCallback((value: number, point?: { x: number; y: number }) => {
+    const container = containerRef.current;
+    if (!container || dragNodeInfoRef.current || draggingMemberRef.current) return;
+    const next = clampWorkflowZoom(value);
+    const before = zoomRef.current;
+    if (next === before) return;
+    const x = point?.x ?? container.clientWidth / 2;
+    const y = point?.y ?? container.clientHeight / 2;
+    zoomAnchorRef.current = {
+      left: zoomScrollOffset(container.scrollLeft, x, before, next),
+      top: zoomScrollOffset(container.scrollTop, y, before, next),
+    };
+    closePreview();
+    zoomRef.current = next;
+    setZoom(next);
+  }, [closePreview, draggingMemberRef]);
+  useLayoutEffect(() => {
+    if (zoomAnchorRef.current && containerRef.current) {
+      containerRef.current.scrollLeft = zoomAnchorRef.current.left;
+      containerRef.current.scrollTop = zoomAnchorRef.current.top;
+      zoomAnchorRef.current = null;
+    }
+  }, [zoom]);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const wheel = (event: WheelEvent) => {
+      // Pinch gestures arrive as Ctrl+wheel. Normal two-finger scrolling pans.
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const rect = container.getBoundingClientRect();
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? container.clientHeight : 1);
+      changeZoom(zoomRef.current * Math.exp(-delta * 0.005), { x: event.clientX - rect.left, y: event.clientY - rect.top });
+    };
+    container.addEventListener('wheel', wheel, { passive: false });
+    return () => container.removeEventListener('wheel', wheel);
+  }, [changeZoom]);
   const layoutRef = useRef<HTMLDivElement>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const elementRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -152,9 +194,11 @@ export function useWorkflowCanvas({
     const container = containerRef.current;
     if (!container) return;
 
-    const containerRect = container.getBoundingClientRect();
-    const scrollLeft = container.scrollLeft;
-    const scrollTop = container.scrollTop;
+    const contentRect = contentRef.current?.getBoundingClientRect();
+    if (!contentRect) return;
+    const scale = zoomRef.current;
+    const scrollLeft = container.scrollLeft / scale;
+    const scrollTop = container.scrollTop / scale;
     const graph = liveGraphRef.current;
     if (graph.projectId && graph.ready) {
       const ids = graph.nodes.filter((node) => node.kind === 'worktree').map((node) => node.id);
@@ -177,10 +221,11 @@ export function useWorkflowCanvas({
       if (worktree && worktree !== element && !worktree.classList.contains('unassigned-box-container')) return;
       const group = element.closest('.orchestrator-group') || element;
       const rect = group.getBoundingClientRect();
+      const logical = workflowBox(rect, contentRect, scale);
       const correction = collisionOffsetsRef.current[id] || { x: 0, y: 0 };
       const flow = {
-        x: rect.left - containerRect.left + scrollLeft - correction.x,
-        y: rect.top - containerRect.top + scrollTop - correction.y,
+        x: logical.x - correction.x,
+        y: logical.y - correction.y,
       };
       flowPositions.set(id, flow);
       const offset = nodeOffsetsRef.current[id] || { x: 0, y: 0 };
@@ -188,7 +233,7 @@ export function useWorkflowCanvas({
         layoutAnchorsRef.current.set(id, { x: flow.x - offset.x, y: flow.y - offset.y });
       }
       const anchor = layoutAnchorsRef.current.get(id)!;
-      boxes.push({ id, x: anchor.x + offset.x, y: anchor.y + offset.y, width: rect.width, height: rect.height });
+      boxes.push({ id, x: anchor.x + offset.x, y: anchor.y + offset.y, width: logical.width, height: logical.height });
     });
     for (const id of layoutAnchorsRef.current.keys()) {
       if (!flowPositions.has(id)) layoutAnchorsRef.current.delete(id);
@@ -200,7 +245,7 @@ export function useWorkflowCanvas({
         const box = boxes.find((box) => box.id === id);
         const anchor = layoutAnchorsRef.current.get(id);
         if (!box?.width || !box.height || !anchor) continue;
-        const placement = placeNewWorktree(box, { x: scrollLeft, y: scrollTop, width: container.clientWidth, height: container.clientHeight },
+        const placement = placeNewWorktree(box, { x: scrollLeft, y: scrollTop, width: container.clientWidth / scale, height: container.clientHeight / scale },
           boxes.filter((other) => other.id !== id).map((other) => {
             const correction = collisionOffsetsRef.current[other.id];
             return { ...other, x: other.x + (correction?.x ?? 0), y: other.y + (correction?.y ?? 0) };
@@ -242,12 +287,7 @@ export function useWorkflowCanvas({
     elementRefs.current.forEach((el, id) => {
       if (el && el.isConnected) {
         const rect = el.getBoundingClientRect();
-        newPositions.set(id, {
-          x: rect.left - containerRect.left + scrollLeft,
-          y: rect.top - containerRect.top + scrollTop,
-          width: rect.width,
-          height: rect.height,
-        });
+        newPositions.set(id, workflowBox(rect, contentRect, scale));
       }
     });
 
@@ -268,8 +308,8 @@ export function useWorkflowCanvas({
     elementRefs.current.forEach((el) => {
       if (el && el.isConnected) {
         const rect = el.getBoundingClientRect();
-        const right = rect.right - containerRect.left + scrollLeft + 60;
-        const bottom = rect.bottom - containerRect.top + scrollTop + 60;
+        const right = (rect.right - contentRect.left) / scale + 60;
+        const bottom = (rect.bottom - contentRect.top) / scale + 60;
         if (right > contentWidth) contentWidth = right;
         if (bottom > contentHeight) contentHeight = bottom;
       }
@@ -282,7 +322,7 @@ export function useWorkflowCanvas({
     if (revealWorktreeRef.current) {
       const box = newPositions.get(revealWorktreeRef.current);
       if (box) {
-        container.scrollTo({ left: Math.max(0, box.x - 24), top: Math.max(0, box.y - 24), behavior: 'auto' });
+        container.scrollTo({ left: Math.max(0, (box.x - 24) * scale), top: Math.max(0, (box.y - 24) * scale), behavior: 'auto' });
         revealWorktreeRef.current = null;
       }
     }
@@ -382,32 +422,25 @@ export function useWorkflowCanvas({
       const boundedElement = draggedElement?.matches('.worktree-box-container')
         ? draggedElement
         : draggedElement?.closest<HTMLElement>('.orchestrator-group');
-      const canvas = containerRef.current;
       const anchor = layoutAnchorsRef.current.get(id);
       const rect = (boundedElement || draggedElement)?.getBoundingClientRect();
+      const contentRect = contentRef.current?.getBoundingClientRect();
+      const scale = zoomRef.current;
       const currentOffset =
-        anchor && rect && canvas
+        anchor && rect && contentRect
           ? {
-              x: rect.left - canvas.getBoundingClientRect().left + canvas.scrollLeft - anchor.x,
-              y: rect.top - canvas.getBoundingClientRect().top + canvas.scrollTop - anchor.y,
+              x: (rect.left - contentRect.left) / scale - anchor.x,
+              y: (rect.top - contentRect.top) / scale - anchor.y,
             }
           : nodeOffsets[id] || { x: 0, y: 0 };
       setNodeOffsets((previous) => ({ ...previous, [id]: currentOffset }));
       const minimumX =
-        boundedElement && canvas
-          ? currentOffset.x -
-            (boundedElement.getBoundingClientRect().left -
-              canvas.getBoundingClientRect().left -
-              canvas.clientLeft +
-              canvas.scrollLeft)
+        rect && contentRect
+          ? currentOffset.x - (rect.left - contentRect.left) / scale
           : -Infinity;
       const minimumY =
-        boundedElement && canvas
-          ? currentOffset.y -
-            (boundedElement.getBoundingClientRect().top -
-              canvas.getBoundingClientRect().top -
-              canvas.clientTop +
-              canvas.scrollTop)
+        rect && contentRect
+          ? currentOffset.y - (rect.top - contentRect.top) / scale
           : -Infinity;
       dragNodeInfoRef.current = {
         id,
@@ -429,8 +462,8 @@ export function useWorkflowCanvas({
           setDraggingNodeId(id);
         }
         if (dragNodeInfoRef.current.hasMoved) {
-          const newX = Math.max(minimumX, dragNodeInfoRef.current.originX + dx);
-          const newY = Math.max(minimumY, dragNodeInfoRef.current.originY + dy);
+          const newX = Math.max(minimumX, dragNodeInfoRef.current.originX + dx / scale);
+          const newY = Math.max(minimumY, dragNodeInfoRef.current.originY + dy / scale);
           setNodeOffsets((prev) => ({
             ...prev,
             [id]: { x: newX, y: newY },
@@ -489,6 +522,7 @@ export function useWorkflowCanvas({
     chatOpenNodeId,
     measurePositions,
     ready,
+    zoom,
   ]);
 
   const registerRef = useCallback(
@@ -570,6 +604,9 @@ export function useWorkflowCanvas({
 
   return {
     containerRef,
+    contentRef,
+    zoom,
+    changeZoom,
     layoutRef,
     elementRefs,
     registerRef,

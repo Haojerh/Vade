@@ -13,7 +13,7 @@ import { collectToolActivity } from '../integrations/orca/liveActivity.js';
 import { enrichAgentModelsAndEffort } from '../integrations/orca/graphWorkers.js';
 import { resolveCoordinatorConversation } from '../integrations/orca/nodeDetails.js';
 import { globalSourceMaps } from '../integrations/orca/state.js';
-import { transcriptToolActivity, databaseToolActivity, toolLabel } from './toolActivity.js';
+import { transcriptToolActivity, databaseToolActivity, toolLabel, toolActivityFromCall, toolEditPreview } from './toolActivity.js';
 
 test('hookless Kilo tool activity uses a unique exact terminal title and directory even when model is already known', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-kilo-pane-'));
@@ -55,6 +55,33 @@ test('hookless Kilo tool activity uses a unique exact terminal title and directo
     if (previousApp === undefined) delete process.env.ORCA_APPDATA_DIR; else process.env.ORCA_APPDATA_DIR = previousApp;
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('edit previews normalize provider argument formats and stay bounded', () => {
+  for (const [name, input] of [
+    ['Edit', { file_path: 'a.ts', old_string: 'before', new_string: 'after' }],
+    ['edit', { path: 'a.ts', oldText: 'before', newText: 'after' }],
+    ['edit', { filePath: 'a.ts', oldString: 'before', newString: 'after' }],
+    ['replace_file_content', { TargetFile: 'a.ts', StartLine: 12, TargetContent: 'before', ReplacementContent: 'after' }],
+  ] as const) {
+    const item = toolActivityFromCall('session', 'edit', name, input, null)!;
+    assert.deepEqual(item.edits?.[0].lines, [{ kind: 'remove', text: 'before' }, { kind: 'add', text: 'after' }]);
+  }
+  const patch = '*** Begin Patch\n*** Update File: a.ts\n@@ function main\n-before\n+after\n*** End Patch';
+  for (const input of [patch, { patchText: patch }, { code: `await tools.apply_patch(${JSON.stringify(patch)});` }]) {
+    const preview = toolEditPreview(input)[0];
+    assert.equal(preview.path, 'a.ts');
+    assert.equal(preview.location, '@@ function main');
+    assert.equal(preview.lines[1].text, 'after');
+  }
+  const large = toolEditPreview({ filePath: 'a.ts', oldString: 'a'.repeat(40000), newString: Array(100).fill('b').join('\n') })[0];
+  assert.equal(large.truncated, true);
+  assert.ok(large.lines.length <= 16 && large.lines.every((line) => line.text.length <= 200));
+  assert.deepEqual(toolEditPreview({ file_path: 'a.ts' }), []);
+  const kilo = toolActivityFromCall('kilo', 'edit', 'apply_diff', { path: 'a.ts', diff: '<<<<<<< SEARCH\n:start_line:8\n-------\nbefore\n=======\nafter\n>>>>>>> REPLACE' }, null)!;
+  assert.equal(kilo.edits?.[0].location, 'Line 8');
+  assert.deepEqual(kilo.edits?.[0].lines, [{ kind: 'remove', text: 'before' }, { kind: 'add', text: 'after' }]);
+  assert.equal(toolActivityFromCall('session', 'read', 'Read', { file_path: 'a.ts', content: 'read contents' }, null)?.edits, undefined);
 });
 
 test('tool metadata adapters cover Claude, Codex, Pi, OMP and omit output and thinking', () => {
@@ -367,7 +394,7 @@ test('Antigravity reads exact-session protobuf tool metadata without output or r
     insert.run(1, Buffer.concat([timestamp, field(4, call('run_command', { CommandLine: 'npm test' }, 'run-1'))]), Buffer.from('private command output'));
     insert.run(2, Buffer.concat([timestamp, field(4, call('view_file', { AbsolutePath: 'src/main.ts' }, 'read-1'))]), Buffer.from('private file contents'));
     insert.run(3, Buffer.concat([timestamp, field(4, call('replace_file_content', { TargetFile: 'old.ts' }, 'edit-1')),
-      field(29, call('replace_file_content', { TargetFile: 'new.ts', ReplacementContent: 'private edit content' }, 'edit-1'))]), Buffer.from('private diff'));
+      field(29, call('replace_file_content', { TargetFile: 'new.ts', TargetContent: 'old code', ReplacementContent: 'new code' }, 'edit-1'))]), Buffer.from('private diff'));
     insert.run(4, Buffer.from([255]), Buffer.from('malformed'));
     insert.run(5, Buffer.alloc(524289), Buffer.from('oversized'));
     insert.run(6, Buffer.concat([timestamp, field(7, 'private planner thinking')]), Buffer.from('private assistant turn'));
@@ -376,6 +403,7 @@ test('Antigravity reads exact-session protobuf tool metadata without output or r
     assert.deepEqual(items.map((item) => item.label), ['Run: npm test', 'Read: src/main.ts', 'Edit: new.ts']);
     assert.equal(items.every((item) => item.at === new Date(1792330000 * 1000).toISOString()), true);
     assert.equal(JSON.stringify(items).includes('private'), false);
+    assert.deepEqual(items[2].edits?.[0].lines, [{ kind: 'remove', text: 'old code' }, { kind: 'add', text: 'new code' }]);
     assert.deepEqual(readAntigravityToolActivity(id, allowed).map((item) => item.id), items.map((item) => item.id));
     assert.throws(() => readAntigravityToolActivity('../escape', allowed), /identity/);
     assert.throws(() => readAntigravityToolActivity(id, () => false), /outside allowed/);

@@ -86,6 +86,7 @@ Standard error codes:
 - `server/integrations/` and `server/integrations/orca/`: fixed read-only Orca (`inventory.ts`, `graph.ts`, `graphNodes.ts`, `graphWorkers.ts`, `nodeDetails.ts`, `actions.ts`, `prerequisites.ts`, `state.ts`, `utils.ts`), GitHub, CLI (`cli.ts`, `cliValidators.ts`), and usage adapters.
 - `server/providers/`: exact-session transcript parsers and effective model/effort readers.
 - `server/providers/toolActivity.ts` decodes bounded tool-call metadata separately from public conversation; `server/integrations/orca/liveActivity.ts` binds it to exact panes and reads run-scoped toolkit mailbox metadata. Graph packets must use stable observed event IDs, never working-state inference.
+- Tool edit previews contain only bounded recorded edit arguments: at most two files/chunks, 16 lines each, and 200 characters per line. Show observed patch context or line numbers only; do not read current files, infer applied success, expose tool results/thinking, or mix edit previews into conversation history.
 - `server/services/`: snapshot collection, caching, and subscriptions. `server/index.ts` stays the process entry.
 - `shared/contracts.ts` stays dependency-free and shared by both layers.
 - Keep backend tests next to their modules; frontend behavior/render tests live in `src/tests/`.

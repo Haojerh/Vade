@@ -358,7 +358,7 @@ export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
           ) : (
             <button
               type="button"
-              className="btn btn-secondary btn-xs btn-close-tab"
+              className="btn btn-danger btn-xs btn-close-tab"
               onClick={() => {
                 actions.setCloseTabError(null);
                 actions.closeAgentTabConfirmation.open();

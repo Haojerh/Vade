@@ -3,7 +3,7 @@ import type { Node } from '../../../shared/contracts';
 import type { AnchorBox } from './WorkflowEdgesSvg';
 import type { LiveTool } from './useLiveGraphActivity';
 import { DeliveryPacket } from './DeliveryPacket';
-import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts } from './toolActivityLayout';
+import { boxesOverlap, placeToolCard, toolCardConnectionPath, toolPorts } from './toolActivityLayout';
 import { ToolActivityCard } from './ToolActivityCard';
 
 export function ToolActivityOverlay({ tools, positions, reducedMotion, canvasWidth = Infinity, nodes = [], onHold }: {
@@ -19,20 +19,22 @@ export function ToolActivityOverlay({ tools, positions, reducedMotion, canvasWid
     {tools.map((tool) => {
       const anchor = positions.get(tool.nodeId);
       if (!anchor?.width) return null;
-      const agent = byId.get(tool.nodeId);
-      const obstacles = [...positions].filter(([id]) => {
+      const occupied = [...positions].filter(([id]) => id !== tool.nodeId).map(([, box]) => box);
+      const obstacles = [...positions].filter(([id, box]) => {
         if (id === tool.nodeId) return false;
         const node = byId.get(id);
-        return !(node?.kind === 'worktree' && agent?.worktreeId && node.worktreeId === agent.worktreeId);
+        const containsAnchor = anchor.x >= box.x && anchor.y >= box.y &&
+          anchor.x + anchor.width <= box.x + box.width && anchor.y + anchor.height <= box.y + box.height;
+        return !(node?.kind === 'worktree' && containsAnchor);
       }).map(([, box]) => box);
-      const blockers = [...obstacles, anchor, ...placed];
+      const blockers = [...occupied, anchor, ...placed];
       const anchorKey = `${anchor.x}:${anchor.y}:${anchor.width}:${anchor.height}`;
       const previous = placements.current.get(tool.id);
       const box = previous?.anchor === anchorKey && !blockers.some((blocker) => boxesOverlap(previous.box, blocker))
         ? previous.box : placeToolCard(anchor, blockers, canvasWidth);
-      const { start, end, cardPort } = toolPorts(anchor, box);
-      const routeKey = `${anchorKey}:${box.x}:${box.y}:${JSON.stringify(obstacles)}`;
-      const path = previous?.routeKey === routeKey ? previous.path : toolConnectionPath(start, end, [...obstacles, ...placed]);
+      const { end, cardPort } = toolPorts(anchor, box);
+      const routeKey = `${anchorKey}:${box.x}:${box.y}:${JSON.stringify([...obstacles, ...placed])}`;
+      const path = previous?.routeKey === routeKey ? previous.path : toolCardConnectionPath(anchor, box, [...obstacles, ...placed]);
       placements.current.set(tool.id, { box, anchor: anchorKey, routeKey, path });
       placed.push(box);
       return <div key={tool.id} className="tool-activity-event">

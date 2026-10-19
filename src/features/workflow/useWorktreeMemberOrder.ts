@@ -10,6 +10,7 @@ export interface UseWorktreeMemberOrderOptions {
   nodeOffsets: Record<string, { x: number; y: number }>;
   setNodeOffsets: React.Dispatch<React.SetStateAction<Record<string, { x: number; y: number }>>>;
   prefersReducedMotion: boolean;
+  zoom: number;
   scheduleUpdate: () => void;
   draggingMemberRef: React.MutableRefObject<{ worktreeId: string; agentId: string } | null>;
 }
@@ -22,6 +23,7 @@ export function useWorktreeMemberOrder({
   nodeOffsets,
   setNodeOffsets,
   prefersReducedMotion,
+  zoom,
   scheduleUpdate,
   draggingMemberRef,
 }: UseWorktreeMemberOrderOptions) {
@@ -168,7 +170,7 @@ export function useWorktreeMemberOrder({
       if (!el || !el.isConnected) continue;
 
       const nextTop = el.getBoundingClientRect().top;
-      const deltaY = prevTop - nextTop;
+      const deltaY = (prevTop - nextTop) / zoom;
 
       if (Math.abs(deltaY) > 0.5) {
         // Invert: position element back at its previous visual location
@@ -198,7 +200,7 @@ export function useWorktreeMemberOrder({
     }, 300);
 
     return () => clearTimeout(timer);
-  }, [worktreeMemberOrder, nodeOffsets, prefersReducedMotion, elementRefs, containerRef, scheduleUpdate]);
+  }, [worktreeMemberOrder, nodeOffsets, prefersReducedMotion, elementRefs, containerRef, scheduleUpdate, zoom]);
 
   return {
     worktreeMemberOrder,

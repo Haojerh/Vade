@@ -34,6 +34,29 @@ import {
 import { findCodexTranscript } from '../../providers/codex.js';
 
 describe('server/orca/prerequisites', () => {
+  test('prerequisites follow ready, app closed, CLI missing and recovered transitions without a restart', async () => {
+    let state: 'ready' | 'closed' | 'missing' = 'ready';
+    const runner: CommandRunner = async (_exe, args) => {
+      if (state === 'missing') throw new CliError('CLI_MISSING', 'orca command not found');
+      return { stdout: JSON.stringify({ ok: true, result: args[0] === 'status'
+        ? { app: { running: state === 'ready', desktopWindowStatus: state === 'ready' ? 'available' : 'unavailable' }, runtime: { capabilities: ['orchestration.contract.v1'] } }
+        : { skills: [{ name: 'orchestration', sourceKind: 'home' }, { name: 'orca-cli', sourceKind: 'home' }] } }), stderr: '', exitCode: 0 };
+    };
+    const options = { checkAppInstallation: () => true, checkCliInstallation: () => state !== 'missing',
+      checkCliSkillInstallation: () => true, checkOrchestrationSkillInstallation: () => true };
+    assert.equal((await checkPrerequisites(runner, options)).ready, true);
+    state = 'closed';
+    const closed = await checkPrerequisites(runner, options);
+    assert.equal(closed.ready, false);
+    assert.equal(closed.orcaApp, true);
+    assert.equal(closed.orcaAppOpen, false);
+    state = 'missing';
+    const missing = await checkPrerequisites(runner, options);
+    assert.equal(missing.ready, false);
+    assert.equal(missing.orcaCli, false);
+    state = 'ready';
+    assert.equal((await checkPrerequisites(runner, options)).ready, true);
+  });
   test('checkPrerequisites reports ready when Orca app, CLI, and orchestration skill are present', async () => {
     const fakeRunner: CommandRunner = async (_exe, args) => {
       const cmd = args.join(' ');

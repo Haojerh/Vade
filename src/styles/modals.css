@@ -1048,7 +1048,8 @@ kbd {
   font-size: 12px;
 }
 
-.btn-delete-worktree {
+.btn-delete-worktree,
+.btn-close-tab.btn-danger {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1058,7 +1059,8 @@ kbd {
   border-color: var(--state-failed-border);
 }
 
-.btn-delete-worktree:hover:not(:disabled) {
+.btn-delete-worktree:hover:not(:disabled),
+.btn-close-tab.btn-danger:hover:not(:disabled) {
   background: var(--state-failed-bg);
   border-color: var(--state-failed-text);
 }

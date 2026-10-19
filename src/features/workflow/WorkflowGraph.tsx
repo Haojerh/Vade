@@ -202,6 +202,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
   const {
     containerRef,
+    contentRef,
+    zoom,
+    changeZoom,
     layoutRef,
     elementRefs,
     registerRef,
@@ -251,6 +254,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     prefersReducedMotion,
     scheduleUpdate,
     draggingMemberRef,
+    zoom,
   });
 
   const overlays = useWorkflowOverlays({
@@ -586,6 +590,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         ref={containerRef}
         onPointerDown={handleCanvasPointerDown}
       >
+        <div className="workflow-zoom-extent" style={{ width: canvasSize.width * zoom, height: canvasSize.height * zoom }}>
+        <div className="workflow-zoom-content" ref={contentRef} style={{ width: canvasSize.width || '100%', minHeight: canvasSize.height, transform: `scale(${zoom})` }}>
         <WorkflowEdgesSvg
           edges={deduplicatedEdges}
           positions={positions}
@@ -594,7 +600,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
           prefersReducedMotion={prefersReducedMotion}
           packets={isLocallyStale ? [] : packets}
         />
-        <ToolActivityOverlay tools={isLocallyStale ? [] : tools} positions={positions} reducedMotion={prefersReducedMotion} canvasWidth={containerRef.current?.clientWidth || canvasSize.width} nodes={nodes} onHold={holdTool} />
+        <ToolActivityOverlay tools={isLocallyStale ? [] : tools} positions={positions} reducedMotion={prefersReducedMotion} canvasWidth={(containerRef.current?.clientWidth || canvasSize.width) / zoom} nodes={nodes} onHold={holdTool} />
 
         {nodes.length === 0 ? (
           <div className="graph-empty-state">
@@ -826,6 +832,15 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
             </div>
           </div>
         )}
+        </div>
+        </div>
+      </div>
+      <div className="workflow-zoom-controls" role="group" aria-label="Topology zoom" title="Ctrl + mouse wheel or touchpad pinch to zoom; scroll or drag the background to pan">
+        <button type="button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= 0.4} onClick={() => changeZoom(zoom - 0.1)}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M5 12h14" /></svg>
+        </button>
+        <button type="button" className="workflow-zoom-value" aria-label={`Zoom ${Math.round(zoom * 100)} percent. Reset to 100 percent`} title="Reset zoom to 100%" onClick={() => changeZoom(1)}>{Math.round(zoom * 100)}<span>%</span></button>
+        <button type="button" aria-label="Zoom in" title="Zoom in" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.1)}><Icon name="plus" size={14} /></button>
       </div>
     </section>
   );

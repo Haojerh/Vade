@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import type { ToolActivity } from '../../shared/contracts.js';
+import type { ToolActivity, ToolEditPreview } from '../../shared/contracts.js';
 
 function inputObject(input: unknown): Record<string, any> {
   if (typeof input === 'string') {
@@ -24,10 +24,10 @@ export function toolLabel(name: string, rawInput: unknown, maxLength = 160): str
   const commandLiteral = code.match(/\b(?:cmd|command)\s*["']?\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1];
   const wrappedCommand = stringLiteral(commandLiteral);
   const wrappedPatch = stringLiteral(code.match(/\bapply_patch\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1]);
-  const action = wrappedPatch || /edit|write|patch|replace/i.test(name) ? 'Edit'
+  const action = wrappedPatch || /edit|write|patch|replace|diff/i.test(name) ? 'Edit'
     : /read|view|cat/i.test(name) ? 'Read'
     : /exec|bash|shell|command|terminal/i.test(name) ? 'Run' : name;
-  const patch = wrappedPatch ?? input.patch;
+  const patch = wrappedPatch ?? input.patch ?? input.patchText ?? input.diff;
   const patchPath = typeof patch === 'string' ? patch.match(/\*\*\* (?:Update|Add|Delete) File: ([^\r\n]+)/)?.[1] : null;
   const detail = action === 'Run' ? input.command ?? input.cmd ?? input.command_line ?? input.CommandLine ?? wrappedCommand
     : input.file_path ?? input.path ?? input.filePath ?? input.filename ?? input.AbsolutePath ?? input.TargetFile ?? input.FilePath ?? patchPath ?? input.title;
@@ -40,7 +40,68 @@ export function toolActivityFromCall(session: string, id: unknown, name: unknown
   const timestamp = typeof at === 'number' ? new Date(at).toISOString()
     : typeof at === 'string' && Number.isFinite(Date.parse(at)) ? new Date(at).toISOString() : null;
   return { id: `tool_${createHash('sha256').update(`${session}:${id}`).digest('base64url').slice(0, 24)}`, at: timestamp,
-    label: toolLabel(name, input), detail: toolLabel(name, input, 2000) };
+    label: toolLabel(name, input), detail: toolLabel(name, input, 2000),
+    ...(toolLabel(name, input).startsWith('Edit') ? { edits: toolEditPreview(input) } : {}) };
+}
+
+// Only recorded edit arguments are inspected. Never read the current file or tool output.
+export function toolEditPreview(raw: unknown): ToolEditPreview[] {
+  const input = inputObject(raw);
+  const code = typeof input.code === 'string' ? input.code : typeof input.patch === 'string' ? input.patch : '';
+  const wrapped = stringLiteral(code.match(/\bapply_patch\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1]);
+  const patch = wrapped ?? input.patch ?? input.patchText ?? input.diff;
+  const previews: ToolEditPreview[] = [];
+  const clean = (text: string) => text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
+  const addLine = (preview: ToolEditPreview, kind: 'add' | 'remove' | 'context', text: string) => {
+    if (preview.lines.length >= 16) { preview.truncated = true; return; }
+    const safe = clean(text);
+    if (safe.length > 200) preview.truncated = true;
+    preview.lines.push({ kind, text: safe.slice(0, 200) });
+  };
+  if (typeof patch === 'string' && /(?:\*\*\* (?:Update|Add|Delete) File:|^diff --git )/m.test(patch)) {
+    let current: ToolEditPreview | undefined;
+    const bounded = patch.slice(0, 64000);
+    for (const line of bounded.split(/\r?\n/)) {
+      const path = line.match(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/)?.[1] ?? line.match(/^diff --git a\/.+ b\/(.+)$/)?.[1];
+      if (path) {
+        if (previews.length >= 2) { previews[1].truncated = true; break; }
+        current = { path: clean(path).slice(0, 500), lines: [], truncated: patch.length > bounded.length };
+        previews.push(current);
+      } else if (current && line.startsWith('@@')) {
+        if (!current.location) current.location = clean(line).slice(0, 200);
+        else addLine(current, 'context', line);
+      } else if (current && !line.startsWith('---') && !line.startsWith('+++') && /^[+\- ]/.test(line)) {
+        addLine(current, line[0] === '+' ? 'add' : line[0] === '-' ? 'remove' : 'context', line.slice(1));
+      }
+    }
+    return previews.filter((preview) => preview.lines.some((line) => line.kind !== 'context'));
+  }
+  const path = input.file_path ?? input.path ?? input.filePath ?? input.filename ?? input.TargetFile ?? input.AbsolutePath ?? input.FilePath;
+  if (typeof path !== 'string') return [];
+  if (typeof patch === 'string' && patch.includes('<<<<<<< SEARCH')) {
+    const bounded = patch.slice(0, 64000);
+    const matches = [...bounded.matchAll(/<<<<<<< SEARCH\r?\n(?::start_line:(\d+)\r?\n)?-------\r?\n([\s\S]*?)\r?\n=======\r?\n([\s\S]*?)\r?\n>>>>>>> REPLACE/g)];
+    const edits = toolEditPreview({ path, edits: matches.slice(0, 2).map((match) => ({ StartLine: Number(match[1]), oldText: match[2], newText: match[3] })) });
+    if (matches.length > 2 || patch.length > bounded.length) edits.forEach((edit) => { edit.truncated = true; });
+    return edits;
+  }
+  const chunks = Array.isArray(input.ReplacementChunks) ? input.ReplacementChunks : Array.isArray(input.edits) ? input.edits : [input];
+  for (const chunk of chunks.slice(0, 2)) {
+    const before = chunk.old_string ?? chunk.oldString ?? chunk.oldText ?? chunk.TargetContent;
+    const after = chunk.new_string ?? chunk.newString ?? chunk.newText ?? chunk.ReplacementContent ?? chunk.content ?? chunk.Content;
+    if (typeof before !== 'string' && typeof after !== 'string') continue;
+    const start = chunk.StartLine ?? input.StartLine;
+    const preview: ToolEditPreview = { path: clean(path).slice(0, 500), lines: [], truncated: chunks.length > 2,
+      ...(Number.isInteger(start) && start > 0 ? { location: `Line ${start}` } : {}) };
+    for (const [kind, text] of [['remove', before], ['add', after]] as const) {
+      if (typeof text !== 'string') continue;
+      const lines = text.slice(0, 32000).split(/\r?\n/);
+      if (text.length > 32000 || lines.length > 8) preview.truncated = true;
+      for (const line of lines.slice(0, 8)) addLine(preview, kind, line);
+    }
+    previews.push(preview);
+  }
+  return previews;
 }
 
 export function transcriptToolActivity(provider: string, session: string, line: string): ToolActivity[] {

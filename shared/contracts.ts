@@ -101,12 +101,19 @@ export interface Node {
   toolActivity?: Section<ToolActivity[]>;
 }
 
-/** Observed tool metadata only; never tool output, file contents or private reasoning. */
+/** Observed tool calls, with bounded edit-input excerpts; never tool output or private reasoning. */
+export interface ToolEditPreview {
+  path: string;
+  location?: string;
+  lines: { kind: 'add' | 'remove' | 'context'; text: string }[];
+  truncated: boolean;
+}
 export interface ToolActivity {
   id: Id;
   at: ISO | null;
   label: string;
   detail?: string;
+  edits?: ToolEditPreview[];
 }
 
 export interface OrchestrationMessage {

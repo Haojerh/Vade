@@ -4,6 +4,24 @@ import type { LiveTool } from './useLiveGraphActivity';
 import { Icon } from '../../components/ui/Icon';
 import { Popover } from '../../components/ui/Popover';
 import { usePopoverState } from '../../hooks/usePopoverState';
+import type { ToolEditPreview } from '../../../shared/contracts';
+
+export function ToolEditDiff({ edits }: { edits: ToolEditPreview[] }) {
+  return <div className="tool-edit-diffs">
+    <div className="tool-edit-caption">Recorded edit · preview</div>
+    {edits.map((edit, index) => <div className="tool-edit-file" key={`${edit.path}:${index}`}>
+      <div className="tool-edit-path">{edit.path}</div>
+      {edit.location && <div className="tool-edit-location">{edit.location}</div>}
+      <pre className="tool-edit-code" aria-label={`Edit preview for ${edit.path}`}>
+        {edit.lines.map((line, row) => <span key={row} className={`tool-edit-line tool-edit-${line.kind}`}>
+          <span className="tool-edit-sign">{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span>
+          <code>{line.text || ' '}</code>
+        </span>)}
+      </pre>
+      {edit.truncated && <div className="tool-edit-caption">Preview shortened</div>}
+    </div>)}
+  </div>;
+}
 
 export function ToolActivityCard({ tool, box, onHold }: { tool: LiveTool; box: AnchorBox; onHold?: (id: string, held: boolean) => void }) {
   const trigger = useRef<HTMLButtonElement>(null);
@@ -29,7 +47,7 @@ export function ToolActivityCard({ tool, box, onHold }: { tool: LiveTool; box: A
       floating portal className="tool-activity-preview" onMouseEnter={() => onHold?.(tool.id, true)} onMouseLeave={leave} onBlur={leave}
       aria-label="Tool call details">
       <div className="tool-activity-preview-heading">{action}</div>
-      <pre>{tool.detail ?? tool.label}</pre>
+      {tool.edits?.length ? <ToolEditDiff edits={tool.edits} /> : <pre>{tool.detail ?? tool.label}</pre>}
       {tool.at && <time dateTime={tool.at}>{new Date(tool.at).toLocaleString()}</time>}
     </Popover>
   </>;

@@ -34,6 +34,45 @@ export function placeToolCard(anchor: AnchorBox, obstacles: AnchorBox[], canvasW
 }
 
 type Point = { x: number; y: number };
+/** Try another exit when a nearby sibling's clearance margin traps the facing port. */
+export function toolCardConnectionPath(anchor: AnchorBox, card: AnchorBox, obstacles: AnchorBox[]): string | null {
+  const { start, end, cardPort } = toolPorts(anchor, card);
+  const direct = toolConnectionPath(start, end, obstacles);
+  if (direct && !direct.includes(' Q ')) return direct;
+  const cx = anchor.x + anchor.width / 2, cy = anchor.y + anchor.height / 2;
+  const exits = [
+    { point: { x: anchor.x + anchor.width, y: cy }, dx: 12, dy: 0 },
+    { point: { x: anchor.x, y: cy }, dx: -12, dy: 0 },
+    { point: { x: cx, y: anchor.y }, dx: 0, dy: -12 },
+    { point: { x: cx, y: anchor.y + anchor.height }, dx: 0, dy: 12 },
+  ].sort((a, b) => Math.abs(a.point.x - end.x) + Math.abs(a.point.y - end.y) - Math.abs(b.point.x - end.x) - Math.abs(b.point.y - end.y));
+  for (const { point, dx, dy } of exits) {
+    const exit = { x: point.x + dx, y: point.y + dy };
+    if (exit.x < 0 || exit.y < 0 || obstacles.some((box) => crosses(point, exit, box))) continue;
+    // Prefer one flowing curve over a staircase when there is room around the cards.
+    for (const reach of [64, 128, 192, 256, 384, 512]) for (const arrival of [8, 24, 64]) {
+      const first = { x: point.x + dx / 12 * reach, y: point.y + dy / 12 * reach };
+      const second = { x: end.x + (end.x - cardPort.x) / 8 * arrival, y: end.y + (end.y - cardPort.y) / 8 * arrival };
+      const curve = [point, first, second, end];
+      const extent = Math.max(...curve.flatMap((p) => [Math.abs(p.x), Math.abs(p.y)])) + 1;
+      const outsideCanvas = [
+        { x: -extent, y: -extent, width: extent, height: extent * 2 },
+        { x: 0, y: -extent, width: extent, height: extent },
+      ];
+      if (curveAvoidsBoxes(curve, [...obstacles, anchor, ...outsideCanvas])) {
+        return `M ${point.x} ${point.y} C ${first.x} ${first.y}, ${second.x} ${second.y}, ${end.x} ${end.y}`;
+      }
+    }
+  }
+  if (direct) return direct;
+  for (const { point, dx, dy } of exits) {
+    const exit = { x: point.x + dx, y: point.y + dy };
+    if (exit.x < 0 || exit.y < 0 || obstacles.some((box) => crosses(point, exit, box))) continue;
+    const route = toolConnectionPath(exit, end, [...obstacles, anchor], point);
+    if (route) return route;
+  }
+  return null;
+}
 /** Use the facing borders; vertically stacked cards should not exit from the agent's side. */
 export function toolPorts(anchor: AnchorBox, card: AnchorBox): { start: Point; end: Point; cardPort: Point } {
   const cx = anchor.x + anchor.width / 2, cy = anchor.y + anchor.height / 2;
@@ -45,7 +84,7 @@ export function toolPorts(anchor: AnchorBox, card: AnchorBox): { start: Point; e
   if (card.y >= anchor.y + anchor.height) return { start: { x, y: anchor.y + anchor.height }, end: { x, y: card.y - 8 }, cardPort: { x, y: card.y } };
   return { start: { x, y: anchor.y }, end: { x, y: card.y + card.height + 8 }, cardPort: { x, y: card.y + card.height } };
 }
-export function roundedToolPath(points: Point[]): string {
+export function roundedToolPath(points: Point[], obstacles: AnchorBox[] = []): string {
   const route = points.filter((point, index) => {
     const before = points[index - 1], after = points[index + 1];
     return !before || !after || !((before.x === point.x && point.x === after.x) || (before.y === point.y && point.y === after.y));
@@ -55,9 +94,16 @@ export function roundedToolPath(points: Point[]): string {
     const point = route[index], next = route[index + 1], previous = route[index - 1];
     if (!next) { path += ` L ${point.x} ${point.y}`; continue; }
     const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
-    const radius = Math.min(12, distance(previous, point) / 2, distance(point, next) / 2);
-    const approach = { x: point.x + (previous.x - point.x) * radius / distance(previous, point), y: point.y + (previous.y - point.y) * radius / distance(previous, point) };
-    const leave = { x: point.x + (next.x - point.x) * radius / distance(point, next), y: point.y + (next.y - point.y) * radius / distance(point, next) };
+    let radius = Math.min(40, distance(previous, point) / 2, distance(point, next) / 2);
+    const corner = () => {
+      const approach = { x: point.x + (previous.x - point.x) * radius / distance(previous, point), y: point.y + (previous.y - point.y) * radius / distance(previous, point) };
+      const leave = { x: point.x + (next.x - point.x) * radius / distance(point, next), y: point.y + (next.y - point.y) * radius / distance(point, next) };
+      return { approach, leave, curve: [approach,
+        { x: approach.x + (point.x - approach.x) * 2 / 3, y: approach.y + (point.y - approach.y) * 2 / 3 },
+        { x: leave.x + (point.x - leave.x) * 2 / 3, y: leave.y + (point.y - leave.y) * 2 / 3 }, leave] };
+    };
+    while (radius > 1 && !curveAvoidsBoxes(corner().curve, obstacles)) radius /= 2;
+    const { approach, leave } = corner();
     path += ` L ${approach.x} ${approach.y} Q ${point.x} ${point.y} ${leave.x} ${leave.y}`;
   }
   return path;
@@ -81,15 +127,15 @@ function curveAvoidsBoxes(points: Point[], boxes: AnchorBox[], depth = 0): boole
 }
 
 /** Route on obstacle boundaries, so green connectors never cut through another worktree. */
-export function toolConnectionPath(start: Point, end: Point, obstacles: AnchorBox[]): string | null {
+export function toolConnectionPath(start: Point, end: Point, obstacles: AnchorBox[], lead?: Point): string | null {
   const blockers = obstacles.map((box) => ({ x: box.x - 10, y: box.y - 10, width: box.width + 20, height: box.height + 20 }));
-  if ((start.x === end.x || start.y === end.y) && !blockers.some((box) => crosses(start, end, box))) return roundedToolPath([start, end]);
+  if ((start.x === end.x || start.y === end.y) && !blockers.some((box) => crosses(start, end, box))) return roundedToolPath(lead ? [lead, start, end] : [start, end], obstacles);
   // Match the flowing horizontal connections used by the orchestration graph.
   const direction = end.x >= start.x ? 1 : -1;
   const handle = Math.max(40, Math.abs(end.x - start.x) / 2);
   const first = { x: start.x + direction * handle, y: start.y };
   const second = { x: end.x - direction * handle, y: end.y };
-  if (curveAvoidsBoxes([start, first, second, end], blockers)) {
+  if (!lead && curveAvoidsBoxes([start, first, second, end], blockers)) {
     return `M ${start.x} ${start.y} C ${first.x} ${first.y}, ${second.x} ${second.y}, ${end.x} ${end.y}`;
   }
   const xs = [...new Set([start.x, end.x, ...blockers.flatMap((box) => [box.x, box.x + box.width])])].sort((a, b) => a - b);
@@ -116,7 +162,8 @@ export function toolConnectionPath(start: Point, end: Point, obstacles: AnchorBo
     if (current === target) {
       const route: Point[] = [];
       for (let index: number | undefined = current; index !== undefined; index = parents.get(index)) route.unshift(points[index]);
-      return roundedToolPath(route);
+      if (lead) route.unshift(lead);
+      return roundedToolPath(route, obstacles);
     }
     const point = points[current];
     const xi = xs.indexOf(point.x), yi = ys.indexOf(point.y);

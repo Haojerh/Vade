@@ -12,8 +12,36 @@ import { validateMessageFiles, MessageAttachments } from '../features/workflow/M
 import type { Node, Edge, NodeDetails as NodeDetailsType } from '../../shared/contracts';
 import { WorkflowEdgesSvg } from '../features/workflow/WorkflowEdgesSvg';
 import { ToolActivityOverlay } from '../features/workflow/ToolActivityOverlay';
-import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts } from '../features/workflow/toolActivityLayout';
+import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts, toolCardConnectionPath, roundedToolPath } from '../features/workflow/toolActivityLayout';
 import { placeNewWorktree } from '../features/workflow/newWorktreePlacement';
+import { clampWorkflowZoom, workflowBox, zoomScrollOffset } from '../features/workflow/workflowZoom';
+import { ToolEditDiff } from '../features/workflow/ToolActivityCard';
+
+test('tool edit hover renders safe before/after code, location and truncation', () => {
+  const html = renderToStaticMarkup(createElement(ToolEditDiff, { edits: [{ path: 'src/app.ts', location: '@@ main', truncated: true,
+    lines: [{ kind: 'remove', text: 'before' }, { kind: 'add', text: '<script>after</script>' }] }] }));
+  assert.match(html, /src\/app.ts/);
+  assert.match(html, /@@ main/);
+  assert.match(html, /tool-edit-remove/);
+  assert.match(html, /tool-edit-add/);
+  assert.match(html, /Preview shortened/);
+  assert.ok(!html.includes('<script>'));
+});
+
+test('topology zoom keeps geometry logical and the pointer anchored across scales', () => {
+  for (const zoom of [0.4, 0.75, 1, 1.5, 2]) {
+    const origin = { left: -200, top: -150 };
+    const rect = { left: origin.left + 320 * zoom, top: origin.top + 180 * zoom, width: 300 * zoom, height: 120 * zoom };
+    assert.deepEqual(workflowBox(rect, origin, zoom), { x: 320, y: 180, width: 300, height: 120 });
+    const next = clampWorkflowZoom(zoom + 0.1);
+    const before = (500 + 200) / zoom;
+    const after = (zoomScrollOffset(500, 200, zoom, next) + 200) / next;
+    assert.ok(Math.abs(before - after) < 0.00001);
+  }
+  assert.equal(clampWorkflowZoom(0.1), 0.4);
+  assert.equal(clampWorkflowZoom(5), 2);
+  assert.equal(zoomScrollOffset(0, 0, 1, 0.4), 0);
+});
 
 test('new worktrees use free space in the scrolled viewport without covering existing groups', () => {
   const viewport = { x: 500, y: 800, width: 1000, height: 700 };
@@ -84,6 +112,36 @@ test('tool cards avoid occupied worktrees and route their delivery paths around 
   }
 });
 
+test('orchestrator tools never overlap their associated worktree, inside or outside its box', () => {
+  const worktree = { x: 360, y: 80, width: 600, height: 500 };
+  for (const anchor of [{ x: 20, y: 100, width: 260, height: 100 }, { x: 400, y: 140, width: 260, height: 100 }]) {
+    const html = renderToStaticMarkup(createElement(ToolActivityOverlay, {
+      tools: [{ id: 'edit', nodeId: 'coordinator', label: 'Edit: test.ts', at: null, expiresAt: 9999999999999 }],
+      positions: new Map([['coordinator', anchor], ['workspace', worktree]]), reducedMotion: true, canvasWidth: 1100,
+      nodes: [{ id: 'coordinator', kind: 'orchestrator', worktreeId: 'wt' }, { id: 'workspace', kind: 'worktree', worktreeId: 'wt' }] as Node[],
+    }));
+    const style = html.match(/class="tool-activity-node" style="([^"]+)"/)?.[1];
+    assert.ok(style);
+    const x = Number(style.match(/left:([\d.-]+)px/)?.[1]);
+    const y = Number(style.match(/top:([\d.-]+)px/)?.[1]);
+    assert.equal(boxesOverlap({ x, y, width: 280, height: 56 }, worktree), false);
+    assert.equal(boxesOverlap({ x, y, width: 280, height: 56 }, anchor), false);
+  }
+});
+
+test('tool connectors can exit a containing worktree without matching optional workspace IDs', () => {
+  const html = renderToStaticMarkup(createElement(ToolActivityOverlay, {
+    tools: [{ id: 'edit', nodeId: 'agent', label: 'Edit: test.ts', at: null, expiresAt: 9999999999999 }],
+    positions: new Map([
+      ['agent', { x: 60, y: 80, width: 260, height: 100 }],
+      ['workspace', { x: 20, y: 20, width: 440, height: 300 }],
+      ['sibling', { x: 60, y: 185, width: 260, height: 100 }],
+    ]), reducedMotion: true, canvasWidth: 900,
+    nodes: [{ id: 'agent', kind: 'agent' }, { id: 'workspace', kind: 'worktree' }, { id: 'sibling', kind: 'agent' }] as Node[],
+  }));
+  assert.match(html, /class="tool-activity-connection"/);
+});
+
 test('tool placement favors a clean direct connection and leaves room for the packet at arrival', () => {
   const anchor = { x: 400, y: 80, width: 260, height: 100 };
   const card = placeToolCard(anchor, [anchor], 800);
@@ -98,6 +156,16 @@ test('tool placement favors a clean direct connection and leaves room for the pa
   const smooth = toolConnectionPath({ x: 420, y: 100 }, { x: 340, y: 200 }, []);
   assert.equal(smooth, 'M 420 100 C 380 100, 380 200, 340 200');
   assert.equal(smooth.includes(' Q '), false);
+});
+
+test('tool detours prefer one smooth curve and round the complete exit path', () => {
+  const path = toolCardConnectionPath({ x: 400, y: 80, width: 260, height: 100 },
+    { x: 400, y: 400, width: 280, height: 56 }, [{ x: 400, y: 190, width: 260, height: 100 }]);
+  assert.ok(path);
+  assert.match(path, / C /);
+  assert.equal(path.includes(' L '), false);
+  assert.equal(roundedToolPath([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]),
+    'M 0 0 L 60 0 Q 100 0 100 40 L 100 100');
 });
 
 test('workflow collision layout separates dragged boxes and only moves later boxes on chat expansion', () => {

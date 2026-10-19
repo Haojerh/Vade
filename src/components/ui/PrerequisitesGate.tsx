@@ -314,7 +314,7 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
           </button>
           <div className="prereq-footer-hint">
             <span className="prereq-pulse-dot" aria-hidden="true" />
-            <span>Automatically re-checking every 5s. This screen will unlock once ready.</span>
+            <span>Automatically re-checking every 3s. This screen will unlock once ready.</span>
           </div>
         </div>
       </div>

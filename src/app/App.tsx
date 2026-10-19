@@ -49,24 +49,26 @@ export const App: React.FC = () => {
   const [prerequisites, setPrerequisites] = useState<PrerequisitesStatus | null>(null);
   const [prerequisitesLoading, setPrerequisitesLoading] = useState<boolean>(true);
   const [isCheckingPrerequisites, setIsCheckingPrerequisites] = useState<boolean>(false);
+  const prerequisitesRequestRef = useRef(false);
+  const prerequisitesReadyRef = useRef(false);
 
   // Stable reference for refreshAll so prerequisites check does not recreate on node/run selection
   const refreshAllRef = useRef(refreshAll);
   refreshAllRef.current = refreshAll;
 
   const checkPrerequisitesStatus = useCallback(async (isManual = false) => {
+    if (prerequisitesRequestRef.current) return;
+    prerequisitesRequestRef.current = true;
     if (isManual) {
       setIsCheckingPrerequisites(true);
     }
     try {
       const status = await fetchPrerequisites();
-      setPrerequisites((prev) => {
-        if (status.ready && (!prev || !prev.ready || isManual)) {
-          refreshAllRef.current();
-        }
-        return status;
-      });
+      if (status.ready && (!prerequisitesReadyRef.current || isManual)) refreshAllRef.current();
+      prerequisitesReadyRef.current = status.ready;
+      setPrerequisites(status);
     } catch {
+      prerequisitesReadyRef.current = false;
       setPrerequisites({
         orcaApp: false,
         orcaAppOpen: false,
@@ -77,6 +79,7 @@ export const App: React.FC = () => {
         issues: ['Prerequisites check failed to connect to local server.'],
       });
     } finally {
+      prerequisitesRequestRef.current = false;
       setPrerequisitesLoading(false);
       if (isManual) {
         setIsCheckingPrerequisites(false);
@@ -85,17 +88,18 @@ export const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    checkPrerequisitesStatus();
+    const check = () => { void checkPrerequisitesStatus(); };
+    const visible = () => { if (document.visibilityState === 'visible') check(); };
+    check();
+    const timer = setInterval(check, 3000);
+    window.addEventListener('focus', check);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('focus', check);
+      document.removeEventListener('visibilitychange', visible);
+    };
   }, [checkPrerequisitesStatus]);
-
-  useEffect(() => {
-    if (prerequisites && !prerequisites.ready) {
-      const timer = setInterval(() => {
-        checkPrerequisitesStatus();
-      }, 5000);
-      return () => clearInterval(timer);
-    }
-  }, [prerequisites, checkPrerequisitesStatus]);
 
   const {
     theme,
