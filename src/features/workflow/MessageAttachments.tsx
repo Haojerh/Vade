@@ -12,7 +12,7 @@ export function validateMessageFiles(files: File[]): string | null {
   return null;
 }
 
-function AttachmentPreview({ file }: { file: File }) {
+export function AttachmentPreview({ file }: { file: File }) {
   const [url, setUrl] = useState('');
   useEffect(() => {
     if (!file.type.startsWith('image/')) return;

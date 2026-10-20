@@ -1,4 +1,5 @@
 import type {
+  InboxData,
   DashboardSnapshot,
   GitHubData,
   GitHubQuery,
@@ -17,6 +18,12 @@ import type {
   CreateWorktreeResponse,
   CommitGraphData,
 } from '../../shared/contracts';
+
+export async function fetchInbox(signal?: AbortSignal): Promise<Section<InboxData>> {
+  return handleResponse<Section<InboxData>>(await fetch('/api/inbox', {
+    headers: { Accept: 'application/json' }, signal,
+  }));
+}
 
 export async function fetchUsage(signal?: AbortSignal): Promise<Section<UsageData>> {
   return handleResponse<Section<UsageData>>(await fetch('/api/usage', {
@@ -105,6 +112,7 @@ export async function fetchNodeDetails(
   const params = new URLSearchParams();
   if (options?.runId) params.set('runId', options.runId);
   if (options?.cursor) params.set('cursor', options.cursor);
+  if (options?.direction) params.set('direction', options.direction);
   if (options?.limit !== undefined && options?.limit !== null) {
     params.set('limit', String(options.limit));
   }

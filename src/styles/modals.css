@@ -21,6 +21,8 @@ dialog.node-modal-dialog:not(.confirmation-dialog) {
 dialog.node-modal-dialog.worktree-details-dialog {
   min-height: 0;
 }
+dialog.node-modal-dialog.composer-only-dialog { min-height: 0; }
+.composer-only-dialog .agent-chatbox-section { margin-top: 0; padding-top: 0; border-top: 0; }
 
 .modal-loading-state {
   display: flex;
@@ -232,6 +234,46 @@ dialog.node-modal-dialog.is-closing::backdrop {
   flex-shrink: 0;
 }
 
+@media (max-width: 900px) {
+  .node-modal-dialog:not(.confirmation-dialog) .modal-dialog-header { position: relative; padding-right: 58px; }
+  .node-modal-dialog .modal-header-actions > .btn-close { position: absolute; top: 14px; right: 14px; width: 26px; height: 26px; min-height: 26px; margin: 0; display: grid; place-items: center; z-index: 2; }
+}
+@media (max-width: 600px) {
+  dialog.node-modal-dialog:not(.confirmation-dialog) {
+    width: calc(100vw - 24px);
+    max-height: 90dvh;
+  }
+  .node-modal-dialog:not(.confirmation-dialog) .modal-dialog-header {
+    position: relative;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 14px;
+    gap: 12px;
+  }
+  .node-modal-dialog .modal-identity-hero { width: 100%; gap: 10px; }
+  .node-modal-dialog:not(.confirmation-dialog) .modal-identity-hero { width: calc(100% - 46px); }
+  .node-modal-dialog .modal-provider-avatar { width: 34px; height: 34px; }
+  .node-modal-dialog .modal-provider-avatar svg,
+  .node-modal-dialog .modal-provider-avatar img { max-width: 24px; max-height: 24px; }
+  .node-modal-dialog .modal-name-status-row { gap: 8px; }
+  .node-modal-dialog .modal-node-title { flex: 0 1 auto; max-width: calc(100% - 34px); min-width: 0; overflow-wrap: anywhere; font-size: 15px; }
+  .node-modal-dialog .btn-rename-node { flex-shrink: 0; }
+  .node-modal-dialog .modal-status-group { flex-basis: 100%; }
+  .node-modal-dialog .modal-meta-row { gap: 4px 6px; }
+  .node-modal-dialog .modal-meta-row > span { max-width: 100%; overflow-wrap: anywhere; }
+  .node-modal-dialog .modal-node-id { overflow-wrap: anywhere; }
+  .node-modal-dialog .modal-header-actions {
+    width: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    gap: 8px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border-subtle);
+  }
+  .node-modal-dialog .modal-header-actions > div { flex-wrap: wrap; min-width: 0; }
+  .node-modal-dialog .modal-header-actions button { flex-shrink: 0; min-height: 30px; white-space: nowrap; }
+}
+
 
 
 .modal-dialog-body {
@@ -280,6 +322,7 @@ dialog.node-modal-dialog.is-closing::backdrop {
   flex-direction: column;
   gap: 8px;
 }
+.fact-col > .node-badge-state { align-self: flex-start; }
 .fact-field-label {
   font-size: 11px;
   font-weight: 500;
@@ -393,7 +436,13 @@ dialog.node-modal-dialog.is-closing::backdrop {
 .conversation-section {
   display: flex;
   flex-direction: column;
+  flex-shrink: 0;
 }
+.conversation-history-content { min-width: 0; padding-bottom: 8px; }
+.modal-dialog-body { overflow-anchor: none; overscroll-behavior: contain; }
+.agent-details-container { position: relative; }
+.node-details-back-bottom { position: absolute; bottom: 16px; left: 50%; translate: -50% 0; z-index: 2; white-space: nowrap; }
+.conversation-history-pagination { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 4px 0 16px; }
 .conv-title-group {
   display: flex;
   align-items: center;

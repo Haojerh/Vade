@@ -1,3 +1,4 @@
+import { KANBAN_DRAG_TYPE } from '../kanban/kanban';
 import React from 'react';
 import type { Node } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
@@ -245,7 +246,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
                     });
                   }}
                   onDragOver={(e) => {
-                    if (isDraggingGitHubItem) {
+                    if (isDraggingGitHubItem || e.dataTransfer.types.includes(KANBAN_DRAG_TYPE)) {
                       onGitHubDragOver(e, ag.id);
                       return;
                     }
@@ -264,7 +265,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
                     }
                   }}
                   onDragLeave={(e) => {
-                    if (isDraggingGitHubItem) {
+                    if (isDraggingGitHubItem || e.dataTransfer.types.includes(KANBAN_DRAG_TYPE)) {
                       onGitHubDragLeave(e, ag.id);
                       return;
                     }
@@ -273,7 +274,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
                     }
                   }}
                   onDrop={(e) => {
-                    if (isDraggingGitHubItem) {
+                    if (isDraggingGitHubItem || e.dataTransfer.types.includes(KANBAN_DRAG_TYPE)) {
                       onGitHubDrop(e, ag.id);
                       return;
                     }

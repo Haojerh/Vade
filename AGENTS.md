@@ -24,6 +24,10 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 
 ## HTTP Endpoints & API Contract
 
+
+- `GET /api/inbox` returns `Section<InboxData>` with up to 200 observed agent/task results across projects. Collection is cached for 30 seconds, shares in-flight reads, and checks at most 10 recent runs with two run jobs in flight. Never infer failure from message text, tool errors, or liveness. Attribute task results to their worker's discovered workspace. Browser handling persists separately; the 24-hour project failure edge uses the latest result per agent/run and excludes handled items.
+- Node details support `direction=older` for bounded backward transcript pagination. Bind cursor direction as well as project/node/run/source, and include direction in cache keys. The agent modal opens at the newest end, prepends 20 older public turns on top-scroll or **Load more**, preserves the scroll anchor, and cancels obsolete requests. Never treat a forward cursor as older history.
+
 Implemented in [`server/http/api.ts`](server/http/api.ts), [`server/http/readRoutes.ts`](server/http/readRoutes.ts), and [`server/http/actionRoutes.ts`](server/http/actionRoutes.ts). Collection uses `GET` or `HEAD`. Allowed mutation actions include agent-message, closing an agent tab, renaming a node title or worktree display name, creating a worktree or worktree agent, and deleting a worktree; other mutations return `405 METHOD_NOT_ALLOWED`.
 
 | Endpoint | Query Parameters | Response / Behavior | Description |
@@ -79,6 +83,7 @@ Standard error codes:
 - `src/app/`: dashboard composition, selection, subscriptions, and state.
 - `src/api/`: typed HTTP and SSE clients; no provider filesystem access.
 - `src/features/`: workflow, GitHub, usage, projects, and activity UI with feature-specific helpers.
+- `src/features/kanban/`: browser-local project boards and IndexedDB attachment persistence. Dispatch uses the validated agent-message endpoint, with one active board task per agent; it never creates Orca tasks or changes their status. Completion requires an observed working/result cycle or a newer explicit Inbox agent result for the exact project/node. Stale results and tool/message text cannot move cards. Persist assignments before sending; never automatically retry uncertain delivery.
 - `src/features/github/useGitHubActivity.ts`: shared repository/worktree activity loading; worktree history lives in Inspect Worktree while the sidebar remains repository-wide.
 - `src/components/ui/` and `src/components/providers/`: shared Modal, Popover, ContextMenu, Select, AgentPicker, dialog actions/errors, reusable controls and provider icons. Use these primitives instead of duplicating overlay lifecycle or dismissal code.
 - `src/hooks/`, `src/styles/`, `src/assets/`: common hooks, domain-scoped stylesheets (`tokens.css`, `base.css`, `layout.css`, `workflow.css`, `panels.css`, `modals.css` imported via `global.css`), and attributed assets.

@@ -70,7 +70,8 @@ export function readOpenCodePage(
   file: string,
   sessionId: string,
   offset: number | null,
-  limit: number
+  limit: number,
+  direction?: 'older'
 ): BoundedTranscriptReadResult {
   const db = new DatabaseSync(file, { readOnly: true });
   try {
@@ -112,8 +113,8 @@ export function readOpenCodePage(
       });
     };
 
-    if (offset === null) {
-      let cursorRowId: number | null = null;
+    if (offset === null || direction === 'older') {
+      let cursorRowId: number | null = offset;
       let oldestIncludedRowId: number | null = null;
 
       while (lines.length < limit && totalScanned < MAX_SCAN) {
@@ -131,6 +132,7 @@ export function readOpenCodePage(
         cursorRowId = batch[batch.length - 1].rowid;
 
         for (const row of batch) {
+          if (direction === 'older') oldestIncludedRowId = row.rowid;
           if (row.rowid > maxScannedRowId) maxScannedRowId = row.rowid;
           const line = decodeMessage(row);
           if (line !== null) {
@@ -150,9 +152,9 @@ export function readOpenCodePage(
 
       return {
         lines,
-        hasMore: false,
+        hasMore: direction === 'older' && hasMoreOlder,
         limited: hasMoreOlder,
-        nextByteOffset: maxScannedRowId,
+        nextByteOffset: direction === 'older' ? oldestIncludedRowId ?? 0 : maxScannedRowId,
         totalScanned,
       };
     } else {

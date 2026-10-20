@@ -4,6 +4,7 @@ import { separateWorkflowBoxes, type LayoutBox } from './workflowCollision';
 import type { AnchorBox } from './WorkflowEdgesSvg';
 import { placeNewWorktree } from './newWorktreePlacement';
 import { clampWorkflowZoom, zoomScrollOffset, workflowBox } from './workflowZoom';
+import { bindWorkflowPinch } from './workflowTouch';
 
 function arePositionsEqual(a: Map<string, AnchorBox>, b: Map<string, AnchorBox>): boolean {
   if (a.size !== b.size) return false;
@@ -139,6 +140,7 @@ export function useWorkflowCanvas({
   const contentRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(1);
   const zoomRef = useRef(1);
+  const cancelGestureRef = useRef<(() => void) | null>(null);
   const zoomAnchorRef = useRef<{ left: number; top: number } | null>(null);
   const changeZoom = useCallback((value: number, point?: { x: number; y: number }) => {
     const container = containerRef.current;
@@ -176,6 +178,11 @@ export function useWorkflowCanvas({
     };
     container.addEventListener('wheel', wheel, { passive: false });
     return () => container.removeEventListener('wheel', wheel);
+  }, [changeZoom]);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    return bindWorkflowPinch(container, () => zoomRef.current, changeZoom, () => cancelGestureRef.current?.());
   }, [changeZoom]);
   const layoutRef = useRef<HTMLDivElement>(null);
   const resizeObserverRef = useRef<ResizeObserver | null>(null);
@@ -384,6 +391,7 @@ export function useWorkflowCanvas({
       };
 
       const handlePointerUp = () => {
+        if (cancelGestureRef.current === handlePointerUp) cancelGestureRef.current = null;
         setIsCanvasPanning(false);
         setTimeout(() => {
           suppressPreviewRef.current = false;
@@ -393,6 +401,7 @@ export function useWorkflowCanvas({
         window.removeEventListener('pointercancel', handlePointerUp);
       };
 
+      cancelGestureRef.current = handlePointerUp;
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', handlePointerUp);
       window.addEventListener('pointercancel', handlePointerUp);
@@ -473,6 +482,7 @@ export function useWorkflowCanvas({
       };
 
       const handlePointerUp = () => {
+        if (cancelGestureRef.current === handlePointerUp) cancelGestureRef.current = null;
         if (dragNodeInfoRef.current?.hasMoved) {
           justDraggedNodeRef.current = true;
           setTimeout(() => {
@@ -501,6 +511,7 @@ export function useWorkflowCanvas({
         window.removeEventListener('pointercancel', handlePointerUp);
       };
 
+      cancelGestureRef.current = handlePointerUp;
       window.addEventListener('pointermove', handlePointerMove);
       window.addEventListener('pointerup', handlePointerUp);
       window.addEventListener('pointercancel', handlePointerUp);

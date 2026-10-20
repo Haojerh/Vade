@@ -318,11 +318,11 @@ export class SnapshotManager {
   public async getNodeDetails(
     projectId: Id,
     nodeId: Id,
-    options?: { runId?: Id | null; cursor?: string | null; limit?: number },
+    options?: { runId?: Id | null; cursor?: string | null; direction?: 'older'; limit?: number },
     runner: CommandRunner = this.runner
   ): Promise<NodeDetails> {
     const runId = options?.runId ?? null;
-    const cacheKey = `${projectId}::${runId ?? 'default'}::${nodeId}::${options?.cursor ?? ''}::${options?.limit ?? 100}`;
+      const cacheKey = `${projectId}::${runId ?? 'default'}::${nodeId}::${options?.cursor ?? ''}::${options?.limit ?? 100}::${options?.direction ?? 'newer'}`;
     const cached = this.nodeOutputCache.get(cacheKey);
     const now = Date.now();
 

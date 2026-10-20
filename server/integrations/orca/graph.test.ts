@@ -199,6 +199,7 @@ describe('server/orca/graph', () => {
   });
 
   test('collectGraph joins agents, terminals, runs, tasks, and preserves worker evidence', async () => {
+    let currentCoordinator = 'term_coord';
     // Setup project in globalSourceMaps
     const projApiId = hashId('proj', 'test-proj');
     globalSourceMaps.projectSourceMap.set(projApiId, {
@@ -297,7 +298,7 @@ describe('server/orca/graph', () => {
                 {
                   id: 'run_1',
                   objective: 'Associated run',
-                  coordinator_handle: 'term_coord',
+                  coordinator_handle: currentCoordinator,
                 },
                 {
                   id: 'run_older_shared_coordinator',
@@ -436,6 +437,15 @@ describe('server/orca/graph', () => {
     const olderRunId = hashId('run', 'run_older_shared_coordinator');
     const older = await collectGraph(projApiId, olderRunId, fakeRunner);
     assert.equal(older.graph.nodes.find((n) => n.id === coordNode.id)?.runId, olderRunId);
+
+    // A live coordinator rebind must replace a cached association without promoting historical coordinators.
+    currentCoordinator = 'term_worker';
+    const rebound = await collectGraph(projApiId, null, fakeRunner);
+    assert.equal(rebound.graph.runs[0].coordinatorNodeId, workerNode.id);
+    assert.deepEqual(rebound.graph.nodes.filter((n) => n.kind === 'orchestrator').map((n) => n.id), [workerNode.id]);
+    assert.equal(rebound.graph.nodes.find((n) => n.id === coordNode.id)?.kind, 'agent');
+    const selectedOlder = await collectGraph(projApiId, olderRunId, fakeRunner);
+    assert.deepEqual(selectedOlder.graph.nodes.filter((n) => n.kind === 'orchestrator').map((n) => n.id), [coordNode.id]);
 
     // R4: requesting an unknown run ID must reject with RUN_NOT_FOUND
     await assert.rejects(

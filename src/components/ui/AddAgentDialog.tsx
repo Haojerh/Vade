@@ -5,6 +5,7 @@ import { DialogActions, DialogError } from './DialogActions';
 import { Modal } from './Modal';
 import { RefreshIcon } from './RefreshIcon';
 import { Disclosure } from './Disclosure';
+import { OverlayCloseButton } from './OverlayCloseButton';
 
 export interface AddAgentDialogProps {
   isOpen: boolean;
@@ -37,7 +38,7 @@ export function AddAgentDialog({ isOpen, isClosing, worktreeName, isCreating = f
   };
   const submit = () => { if (!isCreating && command.trim()) void onCreate(command.trim(), title.trim() || undefined); };
   return <Modal isOpen={isOpen} isClosing={isClosing} busy={isCreating} onClose={onClose} className="confirmation-dialog add-agent-dialog" aria-labelledby="add-agent-dialog-title">
-    <div className="worktree-dialog-heading"><div><h2 id="add-agent-dialog-title">Add New Agent</h2><p className="text-sm text-muted">Start a new agent session in worktree <strong>{worktreeName}</strong>.</p></div><button type="button" className="btn-icon" onClick={() => void refresh()} disabled={loading || isCreating} aria-label="Refresh detected agents"><RefreshIcon busy={loading} size={14} /></button></div>
+    <div className="worktree-dialog-heading"><div><h2 id="add-agent-dialog-title">Add New Agent</h2><p className="text-sm text-muted">Start a new agent session in worktree <strong>{worktreeName}</strong>.</p></div><div className="overlay-heading-actions"><button type="button" className="btn-icon" onClick={() => void refresh()} disabled={loading || isCreating} aria-label="Refresh detected agents"><RefreshIcon busy={loading} size={14} /></button><OverlayCloseButton onClick={onClose} disabled={isCreating} aria-label="Close add agent" /></div></div>
     <div className="add-agent-dialog-scroll">
       <AgentPicker agents={catalog?.installed ?? []} value={agentId} onChange={select} disabled={isCreating} loading={loading || (!catalog && !catalogError)} error={catalogError} onRetry={() => void refresh()} />
       <form onSubmit={e => { e.preventDefault(); submit(); }} style={{ marginTop: 18 }}>

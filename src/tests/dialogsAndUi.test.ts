@@ -15,6 +15,38 @@ import { Disclosure } from '../components/ui/Disclosure';
 import { Icon } from '../components/ui/Icon';
 import { useConfirmationState } from '../hooks/useConfirmationState';
 import type { PrerequisitesStatus } from '../../shared/contracts';
+import { useDashboardLayoutPrefs } from '../app/useDashboardLayoutPrefs';
+
+test('mobile starts with closed drawers while preserving saved desktop sidebar preferences', () => {
+  const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const storageDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+  const saved = new Map([['orca-sidebar-left-open', 'true'], ['orca-sidebar-right-open', 'true']]);
+  const viewport = { innerWidth: 350, innerHeight: 740, matchMedia: () => ({ matches: false }) };
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: viewport });
+  Object.defineProperty(globalThis, 'localStorage', { configurable: true, value: {
+    getItem: (key: string) => saved.get(key) ?? null, setItem: (key: string, value: string) => saved.set(key, value),
+  } });
+  function LayoutProbe() {
+    const prefs = useDashboardLayoutPrefs();
+    return createElement('div', { 'data-left': prefs.leftSidebarOpen, 'data-right': prefs.rightSidebarOpen });
+  }
+  try {
+    const mobile = renderToStaticMarkup(createElement(LayoutProbe));
+    assert.match(mobile, /data-left="false"/);
+    assert.match(mobile, /data-right="false"/);
+    assert.equal(saved.get('orca-sidebar-left-open'), 'true');
+    assert.equal(saved.get('orca-sidebar-right-open'), 'true');
+    viewport.innerWidth = 1400;
+    const desktop = renderToStaticMarkup(createElement(LayoutProbe));
+    assert.match(desktop, /data-left="true"/);
+    assert.match(desktop, /data-right="true"/);
+  } finally {
+    if (windowDescriptor) Object.defineProperty(globalThis, 'window', windowDescriptor);
+    else Reflect.deleteProperty(globalThis, 'window');
+    if (storageDescriptor) Object.defineProperty(globalThis, 'localStorage', storageDescriptor);
+    else Reflect.deleteProperty(globalThis, 'localStorage');
+  }
+});
 
 test('provider icons distinguish Gemini and Antigravity and cover Orca’s bundled catalog', () => {
   assert.equal(normalizeProvider('gemini').id, 'gemini');
@@ -457,6 +489,8 @@ test('AddAgentDialog waits for detected agents instead of fabricating installed 
   );
 
   assert.ok(html.includes('Add New Agent'));
+  assert.ok(html.includes('aria-label="Close add agent"'));
+  assert.ok(html.includes('overlay-close-button'));
   assert.ok(html.includes('feature-branch'));
   assert.ok(html.includes('Detecting agents'));
   assert.ok(!html.includes('Codex'));

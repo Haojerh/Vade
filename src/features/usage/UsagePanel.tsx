@@ -4,8 +4,8 @@ import type { Section, UsageData, UsageWindow } from '../../../shared/contracts'
 import { fetchUsage } from '../../api/client';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
-import { Icon } from '../../components/ui/Icon';
 import { usePopoverState } from '../../hooks/usePopoverState';
+import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 
 function resetLabel(at: string | null): string | null {
   if (!at) return null;
@@ -112,10 +112,7 @@ export function UsagePanel() {
         <span className="font-semibold">Usage</span>
         <span className="usage-display-label">all agents · % used</span>
         {refreshButton}
-        <button type="button" className="btn-icon usage-refresh" aria-label="Close usage details"
-          onClick={() => { close(); triggerRef.current?.focus(); }}>
-          <Icon name="close" size={13} />
-        </button>
+        <OverlayCloseButton aria-label="Close usage details" onClick={() => { close(); triggerRef.current?.focus(); }} />
       </div>
       {loading && !section && <p className="usage-note" role="status">Reading Orca usage…</p>}
       {issue && <p className="usage-note" role="status">{issue}{section?.data ? ' · Showing last known usage.' : ''}</p>}

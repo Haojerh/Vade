@@ -13,6 +13,7 @@ import { useWorktreeMemberOrder } from './useWorktreeMemberOrder';
 import { useWorkflowOverlays, WorkflowOverlays } from './WorkflowOverlays';
 import { useLiveGraphActivity } from './useLiveGraphActivity';
 import { ToolActivityOverlay } from './ToolActivityOverlay';
+import { buildCardPrompt, KANBAN_DRAG_TYPE, type KanbanCard } from '../kanban/kanban';
 
 interface WorkflowGraphProps {
   projectId: string | null;
@@ -27,6 +28,8 @@ interface WorkflowGraphProps {
   toolActivityEnabled?: boolean;
   project?: Project | null;
   onRefresh?: () => void;
+  onDropKanbanCard?: (cardId: string, node: Node) => KanbanCard | undefined;
+  onSendKanbanCard?: (cardId: string, node: Node, message: string, files: File[]) => Promise<{ ok: boolean; message?: string }>;
 }
 
 export interface DraggedGitHubItem {
@@ -91,6 +94,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   toolActivityEnabled = true,
   project,
   onRefresh,
+  onDropKanbanCard,
+  onSendKanbanCard,
 }) => {
   const prefersReducedMotion = usePrefersReducedMotion();
   const { tools, packets, holdTool } = useLiveGraphActivity(`${projectId}:${runId}`, nodes, edges, toolActivityEnabled && !isLocallyStale);
@@ -105,8 +110,10 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   const [chatOpenNodeId, setChatOpenNodeId] = useState<string | null>(null);
   const [chatMessages, setChatMessages] = useState<Record<string, string>>({});
   const [chatFiles, setChatFiles] = useState<Record<string, File[]>>({});
+  const [chatKanbanIds, setChatKanbanIds] = useState<Record<string, string | undefined>>({});
   useEffect(() => {
     setChatFiles({});
+    setChatKanbanIds({});
   }, [projectId]);
   const [chatSending, setChatSending] = useState<Record<string, boolean>>({});
   const [chatStatuses, setChatStatuses] = useState<Record<string, { type: 'success' | 'error'; text: string } | null>>(
@@ -295,6 +302,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       setIsDraggingGitHubItem(false);
       setDraggedItem(null);
       setDropHoverNodeId(null);
+
       setDraggingMember(null);
       setDropTargetMember(null);
     };
@@ -326,11 +334,16 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       setChatStatuses((prev) => ({ ...prev, [nodeId]: null }));
 
       try {
-        const res = await sendNodeMessage(projectId, nodeId, text, undefined, chatFiles[nodeId] || []);
+        const cardId = chatKanbanIds[nodeId];
+        const node = nodes.find(node => node.id === nodeId);
+        const res = cardId
+          ? node && onSendKanbanCard ? await onSendKanbanCard(cardId, node, text, chatFiles[nodeId] || []) : { ok: false, message: 'The assigned agent is no longer available.' }
+          : await sendNodeMessage(projectId, nodeId, text, undefined, chatFiles[nodeId] || []);
         if (res.ok) {
           setChatStatuses((prev) => ({ ...prev, [nodeId]: { type: 'success', text: 'Sent!' } }));
           setChatMessages((prev) => ({ ...prev, [nodeId]: '' }));
           setChatFiles((prev) => ({ ...prev, [nodeId]: [] }));
+          setChatKanbanIds(prev => ({ ...prev, [nodeId]: undefined }));
           setTimeout(() => {
             setChatOpenNodeId((curr) => (curr === nodeId ? null : curr));
             setChatStatuses((prev) => ({ ...prev, [nodeId]: null }));
@@ -348,12 +361,13 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         setChatSending((prev) => ({ ...prev, [nodeId]: false }));
       }
     },
-    [projectId, chatMessages, chatFiles, chatSending]
+    [projectId, chatMessages, chatFiles, chatSending, chatKanbanIds, nodes, onSendKanbanCard]
   );
 
   const handleDragOver = useCallback(
     (e: React.DragEvent, nodeId: string) => {
       if (
+        e.dataTransfer.types.includes(KANBAN_DRAG_TYPE) ||
         isDraggingGitHubItem ||
         e.dataTransfer.types.includes('application/json') ||
         e.dataTransfer.types.includes('Files')
@@ -385,6 +399,23 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       setIsDraggingGitHubItem(false);
       setDropHoverNodeId(null);
 
+      const cardId = e.dataTransfer.getData(KANBAN_DRAG_TYPE);
+      if (cardId) {
+        e.stopPropagation();
+        closePreview();
+        if (chatSending[nodeId]) return;
+        const node = nodes.find(node => node.id === nodeId);
+        const card = node ? onDropKanbanCard?.(cardId, node) : undefined;
+        if (card) {
+          setChatKanbanIds(prev => ({ ...prev, [nodeId]: card.id }));
+          setChatMessages(prev => ({ ...prev, [nodeId]: buildCardPrompt(card) }));
+          setChatFiles(prev => ({ ...prev, [nodeId]: card.files }));
+          setChatStatuses(prev => ({ ...prev, [nodeId]: null }));
+          setChatOpenNodeId(nodeId);
+        }
+        return;
+      }
+
       if (e.dataTransfer.files.length) {
         if (chatSending[nodeId]) return;
         const files = [...(chatFiles[nodeId] || []), ...Array.from(e.dataTransfer.files)];
@@ -410,12 +441,13 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
       if (item) {
         const prompt = buildGitHubPrompt(item);
+        setChatKanbanIds(prev => ({ ...prev, [nodeId]: undefined }));
         closePreview();
         setChatOpenNodeId(nodeId);
         setChatMessages((prev) => ({ ...prev, [nodeId]: prompt }));
       }
     },
-    [draggedItem, closePreview, chatFiles, chatSending]
+    [draggedItem, closePreview, chatFiles, chatSending, nodes, onDropKanbanCard]
   );
 
   const previewEvents = (node: Node) => ({

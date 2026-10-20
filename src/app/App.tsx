@@ -10,8 +10,16 @@ import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
 import { TopBar } from './TopBar';
 import { BottomPanel } from './BottomPanel';
 import { fetchPrerequisites } from '../api/client';
-import type { PrerequisitesStatus } from '../../shared/contracts';
+import type { InboxItem, PrerequisitesStatus } from '../../shared/contracts';
 import '../styles/activity.css';
+import '../styles/inbox.css';
+import { useInbox } from '../features/inbox/useInbox';
+import { InboxPanel } from '../features/inbox/InboxPanel';
+import { useConfirmationState } from '../hooks/useConfirmationState';
+import { useKanban } from '../features/kanban/useKanban';
+import { KanbanBoard } from '../features/kanban/KanbanBoard';
+import '../styles/kanban.css';
+import { Modal } from '../components/ui/Modal';
 
 export const App: React.FC = () => {
   const {
@@ -20,6 +28,7 @@ export const App: React.FC = () => {
     projectsError,
     selectedProjectId,
     setSelectedProjectId,
+    openInboxNode,
 
     selectedRunId,
     setSelectedRunId,
@@ -51,6 +60,21 @@ export const App: React.FC = () => {
   const [isCheckingPrerequisites, setIsCheckingPrerequisites] = useState<boolean>(false);
   const prerequisitesRequestRef = useRef(false);
   const prerequisitesReadyRef = useRef(false);
+  const inbox = useInbox(Boolean(prerequisites?.ready));
+  const kanban = useKanban(Boolean(prerequisites?.ready));
+  const pendingKanbanAgent = useRef<{ projectId: string; nodeId: string; runId: string | null } | null>(null);
+  const kanbanOverlay = useConfirmationState({ onClosed: () => {
+    const target = pendingKanbanAgent.current;
+    pendingKanbanAgent.current = null;
+    if (target) openInboxNode(target.projectId, target.nodeId, target.runId);
+  } });
+  const [draggingKanban, setDraggingKanban] = useState(false);
+  const pendingInboxItem = useRef<InboxItem | null>(null);
+  const inboxModal = useConfirmationState({ onClosed: () => {
+    const item = pendingInboxItem.current;
+    pendingInboxItem.current = null;
+    if (item?.nodeId) openInboxNode(item.projectId, item.nodeId, item.runId);
+  } });
 
   // Stable reference for refreshAll so prerequisites check does not recreate on node/run selection
   const refreshAllRef = useRef(refreshAll);
@@ -117,6 +141,7 @@ export const App: React.FC = () => {
     handleResetVisibleSections,
     leftSidebarOpen,
     rightSidebarOpen,
+    isNarrow,
     setLeftWidth,
     setRightWidth,
     handleToggleLeft,
@@ -136,7 +161,7 @@ export const App: React.FC = () => {
     handleBottomPointerUp,
     handleBottomKeyDown,
     handleToggleBottomExpand,
-  } = useDashboardLayoutPrefs();
+  } = useDashboardLayoutPrefs(Boolean(prerequisites?.ready));
 
   const projects = inventorySection?.data?.projects ?? [];
   const currentProject = projects.find((p) => p.id === selectedProjectId);
@@ -183,8 +208,15 @@ export const App: React.FC = () => {
       style={{ '--topbar-height': `${topbarHeight}px` } as React.CSSProperties}
     >
       {/* 1. Left Project Navigation (Resizable Sidebar) */}
+      {isNarrow && (leftSidebarOpen || rightSidebarOpen) && (
+        <button className="sidebar-backdrop" aria-label="Close sidebar" onClick={() => {
+          handleToggleLeft(false);
+          handleToggleRight(false);
+        }} />
+      )}
       <ResizableSidebar
         side="left"
+        isOverlay={isNarrow}
         defaultWidth={248}
         minWidth={200}
         maxWidth={360}
@@ -196,11 +228,15 @@ export const App: React.FC = () => {
         ariaLabel="Projects Navigation Sidebar"
       >
         <ProjectSelector
+          failedProjectIds={inbox.failedProjectIds}
           inventorySection={inventorySection}
           loading={projectsLoading}
           error={projectsError}
           selectedProjectId={selectedProjectId}
-          onSelectProject={setSelectedProjectId}
+          onSelectProject={(id) => {
+            setSelectedProjectId(id);
+            if (isNarrow) handleToggleLeft(false);
+          }}
           snapshot={snapshot}
           isLocallyStale={isLocallyStale}
           connectionMode={connectionMode}
@@ -225,6 +261,10 @@ export const App: React.FC = () => {
       <main className="dashboard-main-stage" role="main">
         {/* Top Header Bar */}
         <TopBar
+          kanbanOpen={kanbanOverlay.present}
+          onToggleKanban={() => kanbanOverlay.present ? kanbanOverlay.close() : kanbanOverlay.open()}
+          onOpenInbox={() => { inboxModal.open(); void inbox.refresh(); }}
+          inboxUnreadCount={inbox.unreadCount}
           topbarRef={topbarRef}
           leftSidebarOpen={leftSidebarOpen}
           onToggleLeft={handleToggleLeft}
@@ -234,10 +274,6 @@ export const App: React.FC = () => {
           runs={runs}
           selectedRunId={selectedRunId}
           onSelectRun={setSelectedRunId}
-          isLocallyStale={isLocallyStale}
-          graphMeta={graphMeta}
-          connectionMode={connectionMode}
-          generatedAt={snapshot?.generatedAt}
           snapshotLoading={snapshotLoading}
           projectsLoading={projectsLoading}
           onRefreshAll={refreshAll}
@@ -276,7 +312,24 @@ export const App: React.FC = () => {
         <div className="stage-workspace-split">
           {/* Graph Viewport (Self-contained scrollable canvas) */}
           <div className="stage-graph-container">
+            <Modal isOpen={kanbanOverlay.present} isClosing={kanbanOverlay.closing} onClose={kanbanOverlay.close}
+              nonModal={draggingKanban} className={`kanban-dialog ${draggingKanban ? 'kanban-dragging' : ''}`} aria-label="Project Kanban board">
+              <KanbanBoard board={kanban} projectId={selectedProjectId} onClose={kanbanOverlay.close} onDragStateChange={setDraggingKanban}
+                onOpenAgent={card => {
+                  if (!card.assignment) return;
+                  pendingKanbanAgent.current = { projectId: card.projectId, nodeId: card.assignment.nodeId, runId: card.assignment.runId };
+                  kanbanOverlay.close();
+                }} />
+            </Modal>
             <WorkflowGraph
+              onDropKanbanCard={cardId => {
+                const card = kanban.cards.find(card => card.id === cardId && card.projectId === selectedProjectId && (card.status === 'todo' || card.status === 'failed'));
+                if (card) { setDraggingKanban(false); kanbanOverlay.reset(); }
+                return card;
+              }}
+              onSendKanbanCard={(cardId, node, message, files) => selectedProjectId
+                ? kanban.assign(cardId, selectedProjectId, node, selectedRunId, message, files)
+                : Promise.resolve({ ok: false, message: 'No active project.' })}
               project={currentProject}
               onRefresh={refreshAll}
               projectId={selectedProjectId}
@@ -317,6 +370,7 @@ export const App: React.FC = () => {
       {/* 3. Right Persistent GitHub Panel (Resizable Sidebar) */}
       <ResizableSidebar
         side="right"
+        isOverlay={isNarrow}
         defaultWidth={340}
         minWidth={280}
         maxWidth={520}
@@ -341,7 +395,16 @@ export const App: React.FC = () => {
       </ResizableSidebar>
 
       {/* 4. Native Dialog Modal for Node Inspection */}
+      <InboxPanel isOpen={inboxModal.present} isClosing={inboxModal.closing} onClose={inboxModal.close}
+        items={inbox.items} handled={inbox.handled} onHandle={inbox.markHandled} loading={inbox.loading}
+        issue={inbox.error || inbox.section?.meta.issue?.message || null} partial={Boolean(inbox.section?.meta.partial)}
+        onRefresh={() => { void inbox.refresh(); }} onOpenAgent={item => {
+          if (!item.nodeId) return;
+          pendingInboxItem.current = item;
+          inboxModal.close();
+        }} />
       <NodeDetails
+        selectedRunId={selectedRunId}
         projectId={selectedProjectId}
         details={nodeDetails}
         loading={nodeDetailsLoading}

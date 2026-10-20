@@ -218,6 +218,7 @@ export interface NodeDetails {
 }
 
 export interface NodeDetailsQuery {
+  direction?: 'older';
   runId?: Id | null;
   cursor?: string | null;
   limit?: number;
@@ -386,3 +387,18 @@ export interface AgentCatalogResponse {
   available: AgentCatalogEntry[];
   defaultAgentId?: string | null;
 }
+/** Bounded cross-project observations; handling is browser-local. */
+export interface InboxItem {
+  id: Id;
+  nodeId: Id | null;
+  runId: Id | null;
+  projectId: Id;
+  projectName: string;
+  entityId: string;
+  title: string;
+  outcome: 'succeeded' | 'failed';
+  at: ISO;
+  source: 'agent' | 'task';
+}
+
+export interface InboxData { items: InboxItem[] }

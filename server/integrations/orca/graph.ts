@@ -121,21 +121,14 @@ async function discoverAssociatedRuns(
     let association: 'coordinator-terminal' | 'worker-workspace' | null = null;
     let coordinatorNodeId: Id | null = null;
 
-    if (cachedAssoc) {
-      if (cachedAssoc.associated) {
-        association = cachedAssoc.association!;
-        coordinatorNodeId =
-          cachedAssoc.coordinatorNodeId ??
-          (r.coordinator_handle ? terminalHandleToNodeId.get(r.coordinator_handle) || null : null);
-      }
-    } else if (r.coordinator_handle && terminalHandleToNodeId.has(r.coordinator_handle)) {
+    if (r.coordinator_handle && terminalHandleToNodeId.has(r.coordinator_handle)) {
       association = 'coordinator-terminal';
       coordinatorNodeId = terminalHandleToNodeId.get(r.coordinator_handle)!;
-      globalSourceMaps.runAssociationCache.set(cacheKey, {
-        associated: true,
-        association,
-        coordinatorNodeId,
-      });
+      globalSourceMaps.runAssociationCache.set(cacheKey, { associated: true, association, coordinatorNodeId });
+    } else if (cachedAssoc && cachedAssoc.association !== 'coordinator-terminal') {
+      if (cachedAssoc.associated) {
+        association = cachedAssoc.association!;
+      }
     } else if (inspectedWorkersCount < MAX_WORKER_INSPECTIONS) {
       inspectedWorkersCount++;
       try {
@@ -173,13 +166,6 @@ async function discoverAssociatedRuns(
       association,
     });
 
-    if (coordinatorNodeId) {
-      const coordNode = nodeMap.get(coordinatorNodeId);
-      if (coordNode) {
-        coordNode.kind = 'orchestrator';
-        enrichCoordinatorFromLastStatus(coordNode, r.coordinator_handle);
-      }
-    }
   }
 
   return { associatedRuns, partial };
@@ -399,6 +385,13 @@ export async function collectGraph(
     if (runResult.partial) partial = true;
 
     const activeRun = resolveActiveRun(selectedRunId, runResult.associatedRuns, projectId);
+    if (activeRun?.coordinatorNodeId) {
+      const coordinator = nodeMap.get(activeRun.coordinatorNodeId);
+      if (coordinator) {
+        coordinator.kind = 'orchestrator';
+        enrichCoordinatorFromLastStatus(coordinator, globalSourceMaps.nodeSourceMap.get(coordinator.id)?.handle);
+      }
+    }
 
     const workerResult = await bindActiveRunWorkers(
       projectId,

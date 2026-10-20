@@ -164,6 +164,12 @@ button {
 .btn-close:active {
   transform: scale(0.97);
 }
+.btn-close.overlay-close-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; width: 26px; height: 26px; min-height: 26px; padding: 0; }
+.overlay-close-button svg { width: 18px; height: 18px; }
+.overlay-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.overlay-heading h2 { flex: 1; min-width: 0; }
+.overlay-heading-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.add-agent-dialog .worktree-dialog-heading { align-items: flex-start; gap: 16px; }
 
 .spin {
   animation: spinAnimation 1s linear infinite;

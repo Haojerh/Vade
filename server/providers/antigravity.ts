@@ -21,6 +21,7 @@ import {
   getAllowedTranscriptRoots,
   isPathInsideRoots,
   readBoundedTranscriptLines,
+  readOlderTranscriptLines,
   BoundedTranscriptReadResult,
   toIsoOrNull,
 } from '../integrations/orca/utils.js';
@@ -397,7 +398,7 @@ export async function resolveAntigravityConversation(
   projectId: Id,
   node: Node,
   activeRun: Run | null,
-  options?: { cursor?: string | null; limit?: number }
+  options?: { cursor?: string | null; direction?: 'older'; limit?: number }
 ): Promise<Section<ConversationPage>> {
   if (node.runId && activeRun?.id && node.runId !== activeRun.id) {
     return unsupportedSection(`Node runId ${node.runId} does not match active run ${activeRun.id}`);
@@ -481,13 +482,13 @@ export async function resolveAntigravityConversation(
     loopCount++;
     let readResult: BoundedTranscriptReadResult;
     try {
-      readResult = await readBoundedTranscriptLines(
+      readResult = await (options?.direction === 'older' ? readOlderTranscriptLines : readBoundedTranscriptLines)(
         transcriptPath,
         currentOffset,
-        limit,
+        options?.direction === 'older' ? limit - normalizedMessages.length : limit,
         8 * 1024 * 1024,
         currentSeeking,
-        isAntigravityChatRecord
+        options?.direction === 'older' ? line => Boolean(parseAntigravityTranscriptLine(line, opaqueSourceIdentity).message) : isAntigravityChatRecord
       );
     } catch (err: any) {
       if (loopCount === 1) {
@@ -514,6 +515,7 @@ export async function resolveAntigravityConversation(
     currentOffset = readResult.nextByteOffset;
     currentSeeking = Boolean(readResult.seekingNewline);
 
+    const previousCount = normalizedMessages.length;
     for (const line of readResult.lines) {
       const { message, omitted } = parseAntigravityTranscriptLine(line, opaqueSourceIdentity);
       if (omitted) omittedContent = true;
@@ -522,6 +524,8 @@ export async function resolveAntigravityConversation(
         if (normalizedMessages.length >= limit) break;
       }
     }
+
+    if (options?.direction === 'older' && previousCount) normalizedMessages.unshift(...normalizedMessages.splice(previousCount));
 
     if (normalizedMessages.length >= limit || !readResult.hasMore) {
       break;
@@ -533,9 +537,10 @@ export async function resolveAntigravityConversation(
   const limited = Boolean(finalReadResult?.limited) || (loopCount >= MAX_PAGE_ITERATIONS && normalizedMessages.length < limit);
 
   let publicNextCursor: string | null = null;
-  if (finalReadResult && !(options?.cursor && normalizedMessages.length === 0 && !hasMore)) {
+  if (finalReadResult && (options?.direction === 'older' ? hasMore : !(options?.cursor && normalizedMessages.length === 0 && !hasMore))) {
     publicNextCursor = issueStoredCursor({
       upstreamCursor: String(finalReadResult.nextByteOffset),
+      direction: options?.direction,
       projectId,
       nodeId: node.id,
       runId: activeRun?.id ?? null,

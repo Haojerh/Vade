@@ -211,6 +211,30 @@ test('OpenCode reads exact session model, effort and public parts; cursors check
   } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('OpenCode older pages walk full exact-session history 20 turns at a time', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-opencode-older-'));
+  const file = path.join(dir, 'history.db');
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('CREATE TABLE message(id TEXT,session_id TEXT,time_created INTEGER,data TEXT); CREATE TABLE part(message_id TEXT,session_id TEXT,data TEXT);');
+    for (let index = 1; index <= 45; index++) {
+      db.prepare('INSERT INTO message VALUES(?,?,?,?)').run(String(index), 'exact', index, JSON.stringify({ role: 'assistant' }));
+      db.prepare('INSERT INTO part VALUES(?,?,?)').run(String(index), 'exact', JSON.stringify({ type: 'text', text: `Turn ${index}` }));
+    }
+    let offset: number | null = null;
+    let all: string[] = [];
+    for (let index = 0; index < 3; index++) {
+      const page = readOpenCodePage(file, 'exact', offset, 20, 'older');
+      assert.equal(page.lines.length, index === 2 ? 5 : 20);
+      all = [...page.lines.map(line => JSON.parse(line).payload.content[0].text), ...all];
+      offset = page.nextByteOffset;
+      assert.equal(page.hasMore, index < 2);
+    }
+    assert.deepEqual(all, Array.from({ length: 45 }, (_, index) => `Turn ${index + 1}`));
+    assert.equal(readOpenCodePage(file, 'unrelated', null, 20, 'older').lines.length, 0);
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('OpenCode scan directions skip private parts and enforce the same part limit', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-opencode-scan-'));
   const file = path.join(dir, 'opencode.db');

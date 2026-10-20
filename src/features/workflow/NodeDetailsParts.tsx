@@ -14,6 +14,7 @@ import {
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
 import { RenameDialog } from '../../components/ui/RenameDialog';
 import { AddAgentDialog } from '../../components/ui/AddAgentDialog';
+import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 
 export function TaskCard({ task }: { task: Task }) {
@@ -381,15 +382,7 @@ export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
         >
           <RefreshIcon busy={loading} />
         </button>
-        <button
-          type="button"
-          className="btn-close"
-          onClick={onClose}
-          aria-label="Close dialog"
-          title="Close dialog"
-        >
-          ✕
-        </button>
+        <OverlayCloseButton onClick={onClose} />
       </div>
     </header>
   );

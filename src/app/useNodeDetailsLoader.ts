@@ -58,6 +58,7 @@ export function useNodeDetailsLoader({
         {
           runId: selectedRunId,
           limit: 20,
+          direction: 'older',
         },
         abort.signal,
       );

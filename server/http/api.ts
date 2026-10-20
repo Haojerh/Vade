@@ -4,6 +4,7 @@ import crypto from 'node:crypto';
 import { CommandRunner, defaultCommandRunner, CliError } from '../integrations/cli.js';
 import { SnapshotManager, defaultSnapshotManager } from '../services/snapshot.js';
 import { UsageCollector } from '../integrations/usage.js';
+import { InboxCollector } from '../services/inbox.js';
 import { createResponseHelpers, parseSearchQuery, serveStaticFile } from './httpUtils.js';
 import { handleReadRoute } from './readRoutes.js';
 import { handleActionRoute, isMethodAllowedForRoute, matchActionRoutes } from './actionRoutes.js';
@@ -25,6 +26,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
   const runner = options.runner ?? defaultCommandRunner;
   const snapshotManager = options.snapshotManager ?? defaultSnapshotManager;
   const usageCollector = options.usageCollector ?? new UsageCollector();
+  const inboxCollector = new InboxCollector(runner);
   const distDir = options.distDir ?? path.resolve(process.cwd(), 'dist');
   const allowedOrigins = new Set(
     options.allowedOrigins ?? [
@@ -110,6 +112,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
           runner,
           snapshotManager,
           usageCollector,
+          inboxCollector,
           prereqOptions: {
             checkAppInstallation: options.checkAppInstallation,
             checkAppOpen: options.checkAppOpen,

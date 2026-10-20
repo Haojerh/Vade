@@ -12,6 +12,7 @@ import { checkPrerequisites, type CheckPrerequisitesOptions } from '../integrati
 import { collectGitHubData } from '../integrations/github.js';
 import type { SnapshotManager } from '../services/snapshot.js';
 import type { UsageCollector } from '../integrations/usage.js';
+import type { InboxCollector } from '../services/inbox.js';
 import { getAgentCatalog } from '../integrations/agents.js';
 import { collectCommitGraph } from '../integrations/commitGraph.js';
 
@@ -24,6 +25,7 @@ export interface ReadRouteContext {
   runner: CommandRunner;
   snapshotManager: SnapshotManager;
   usageCollector: UsageCollector;
+  inboxCollector: InboxCollector;
   prereqOptions: CheckPrerequisitesOptions;
   sendJson: (statusCode: number, data: any) => void;
   sendError: (statusCode: number, code: ErrorCode, message: string, retryable?: boolean) => void;
@@ -45,6 +47,12 @@ export async function handleReadRoute(ctx: ReadRouteContext): Promise<boolean> {
   } = ctx;
 
   // GET /api/health
+  if (pathname === '/api/inbox') {
+    if (Object.keys(query).length) sendError(400, 'INVALID_ARGUMENT', 'Inbox endpoint does not accept query parameters');
+    else sendJson(200, await ctx.inboxCollector.get());
+    return true;
+  }
+
   if (pathname === '/api/health') {
     if (Object.keys(query).length > 0) {
       sendError(400, 'INVALID_ARGUMENT', 'No query parameters allowed on /api/health');
@@ -179,7 +187,7 @@ export async function handleReadRoute(ctx: ReadRouteContext): Promise<boolean> {
     const nodeId = decodeURIComponent(nodeMatch[2]);
 
     for (const k of Object.keys(query)) {
-      if (k !== 'cursor' && k !== 'limit' && k !== 'runId') {
+      if (k !== 'cursor' && k !== 'limit' && k !== 'runId' && k !== 'direction') {
         sendError(400, 'INVALID_ARGUMENT', `Unexpected query parameter '${k}'`);
         return true;
       }
@@ -217,7 +225,11 @@ export async function handleReadRoute(ctx: ReadRouteContext): Promise<boolean> {
       runId = query.runId;
     }
 
-    const details = await snapshotManager.getNodeDetails(projectId, nodeId, { runId, cursor, limit }, runner);
+    if (query.direction !== undefined && query.direction !== 'older') {
+      sendError(400, 'INVALID_ARGUMENT', 'Conversation direction must be older');
+      return true;
+    }
+    const details = await snapshotManager.getNodeDetails(projectId, nodeId, { runId, cursor, limit, direction: query.direction as 'older' | undefined }, runner);
     sendJson(200, details);
     return true;
   }

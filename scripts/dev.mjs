@@ -9,7 +9,14 @@ const viteEntry = path.resolve(path.dirname(vitePackagePath), require(vitePackag
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 const serverArgs = ['--import', 'tsx', '--watch', 'server/index.ts'];
-const clientArgs = [viteEntry, '--host', '127.0.0.1', '--port', '5173', '--strictPort'];
+const hostArgIdx = process.argv.indexOf('--host');
+const host =
+  process.env.HOST ||
+  (hostArgIdx !== -1 && process.argv[hostArgIdx + 1] && !process.argv[hostArgIdx + 1].startsWith('-')
+    ? process.argv[hostArgIdx + 1]
+    : '0.0.0.0');
+
+const clientArgs = [viteEntry, '--host', host, '--port', '5173', '--strictPort'];
 
 const serverProc = spawn(process.execPath, serverArgs, {
   cwd: rootDir,

@@ -46,6 +46,7 @@ export type CursorSourceMode =
   | 'terminal';
 
 export interface StoredCursor {
+  direction?: 'older';
   upstreamCursor: string;
   projectId: Id;
   nodeId: Id;

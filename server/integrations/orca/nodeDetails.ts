@@ -24,6 +24,7 @@ import {
   getAllowedTranscriptRoots,
   isPathInsideRoots,
   readBoundedTranscriptLines,
+  readOlderTranscriptLines,
   BoundedTranscriptReadResult,
   toIsoOrNull,
 } from './utils.js';
@@ -227,7 +228,7 @@ export async function resolveCoordinatorConversation(
   projectId: Id,
   node: Node,
   activeRun: Run | null,
-  options?: { cursor?: string | null; limit?: number },
+  options?: { cursor?: string | null; direction?: 'older'; limit?: number },
   standaloneAgent = false
 ): Promise<Section<ConversationPage>> {
   if (!activeRun && !standaloneAgent) {
@@ -416,15 +417,16 @@ export async function resolveCoordinatorConversation(
     let readResult: BoundedTranscriptReadResult;
     try {
       readResult = databaseProvider
-        ? readOpenCodePage(transcriptPath, providerSessionId!, currentOffset, limit)
-        : await readBoundedTranscriptLines(
+        ? readOpenCodePage(transcriptPath, providerSessionId!, currentOffset, options?.direction === 'older' ? limit - normalizedMessages.length : limit, options?.direction)
+        : await (options?.direction === 'older' ? readOlderTranscriptLines : readBoundedTranscriptLines)(
             transcriptPath,
             currentOffset,
-            limit,
+            options?.direction === 'older' ? limit - normalizedMessages.length : limit,
             8 * 1024 * 1024,
             currentSeeking,
             (line) => {
               try {
+                if (options?.direction === 'older') return Boolean(parseCoordinatorTranscriptLine(line, provider || 'codex', opaqueSourceIdentity).message);
                 const record = publicTranscriptRecord(line, provider || 'codex');
                 return record && isCodexChatRecord(JSON.stringify(record));
               } catch {
@@ -447,6 +449,7 @@ export async function resolveCoordinatorConversation(
     currentOffset = readResult.nextByteOffset;
     currentSeeking = Boolean(readResult.seekingNewline);
 
+    const previousCount = normalizedMessages.length;
     for (const line of readResult.lines) {
       const { message, omitted } = parseCoordinatorTranscriptLine(line, provider || 'codex', opaqueSourceIdentity);
       if (omitted) omittedContent = true;
@@ -455,6 +458,8 @@ export async function resolveCoordinatorConversation(
         if (normalizedMessages.length >= limit) break;
       }
     }
+
+    if (options?.direction === 'older' && previousCount) normalizedMessages.unshift(...normalizedMessages.splice(previousCount));
 
     if (normalizedMessages.length >= limit || !readResult.hasMore) {
       break;
@@ -466,9 +471,10 @@ export async function resolveCoordinatorConversation(
   const limited = Boolean(finalReadResult?.limited) || (loopCount >= MAX_PAGE_ITERATIONS && normalizedMessages.length < limit);
 
   let publicNextCursor: string | null = null;
-  if (finalReadResult && !(options?.cursor && normalizedMessages.length === 0 && !hasMore)) {
+  if (finalReadResult && (options?.direction === 'older' ? hasMore : !(options?.cursor && normalizedMessages.length === 0 && !hasMore))) {
     publicNextCursor = issueStoredCursor({
       upstreamCursor: String(finalReadResult.nextByteOffset),
+      direction: options?.direction,
       projectId,
       nodeId: node.id,
       runId: activeRun?.id ?? null,
@@ -563,7 +569,7 @@ async function resolveWorkerDispatchConversation(
   dispatchId: string,
   upstreamCursor: string | undefined,
   expectedSourceIdentity: string | undefined,
-  options: { cursor?: string | null; limit?: number } | undefined,
+  options: { cursor?: string | null; direction?: 'older'; limit?: number } | undefined,
   limit: number,
   runner: CommandRunner
 ): Promise<Section<ConversationPage>> {
@@ -818,7 +824,7 @@ async function resolveWorkerDispatchConversation(
 export async function collectNodeDetails(
   projectId: Id,
   nodeId: Id,
-  options?: { runId?: Id | null; cursor?: string | null; limit?: number; preloadedGraph?: Graph },
+  options?: { runId?: Id | null; cursor?: string | null; direction?: 'older'; limit?: number; preloadedGraph?: Graph },
   runner: CommandRunner = defaultCommandRunner
 ): Promise<NodeDetails> {
   const limit = Math.min(Math.max(options?.limit ?? 100, 1), 200);
@@ -864,12 +870,14 @@ export async function collectNodeDetails(
       dispatchId: binding?.dispatchId,
     });
     storedCursorObj = stored;
+    if (stored.direction !== options.direction) throw new CliError('INVALID_ARGUMENT', 'Cursor direction does not match request');
     upstreamCursor = stored.upstreamCursor;
     expectedSourceIdentity = stored.sourceIdentity;
   }
 
   if (
-    isCoordinator ||
+    (isCoordinator && !(options?.direction === 'older' && node.agentType === 'antigravity')) ||
+    (options?.direction === 'older' && localTranscriptProviders.includes(node.agentType || '')) ||
     storedCursorObj?.sourceMode === 'coordinator-transcript' ||
     (localTranscriptProviders.includes(node.agentType || '') && !binding?.ambiguous && !binding?.dispatchId)
   ) {
@@ -884,7 +892,7 @@ export async function collectNodeDetails(
 
   if (
     storedCursorObj?.sourceMode === 'antigravity-transcript' ||
-    (node.agentType === 'antigravity' && (!binding || !binding.dispatchId || binding.ambiguous))
+    (node.agentType === 'antigravity' && (options?.direction === 'older' || !binding || !binding.dispatchId || binding.ambiguous))
   ) {
     return {
       node,

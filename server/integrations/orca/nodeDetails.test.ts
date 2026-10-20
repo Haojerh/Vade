@@ -54,6 +54,7 @@ describe('server/orca/nodeDetails', () => {
             ok: true,
             result: {
               terminals: [
+                { handle: 'term_coord', tabId: 'tab-1', leafId: 'leaf-1', connected: true, agentIdentity: 'codex' },
                 {
                   handle: 'term_worker',
                   tabId: 'tab-2',
@@ -76,7 +77,7 @@ describe('server/orca/nodeDetails', () => {
                 {
                   id: 'run_1',
                   objective: 'Run 1',
-                  coordinator_handle: 'term_worker',
+                  coordinator_handle: 'term_coord',
                 },
               ],
             },

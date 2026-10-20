@@ -80,7 +80,9 @@ describe('server/orca/coordinatorDetails', () => {
     fs.writeFileSync(path.join(hooksDir, 'last-status.json'), JSON.stringify(lastStatus));
 
     const oldAppData = process.env.ORCA_APPDATA_DIR;
+    const previousCodexHome = process.env.CODEX_HOME;
     process.env.ORCA_APPDATA_DIR = tempDir;
+    process.env.CODEX_HOME = path.join(tempDir, 'isolated-codex-home');
 
     try {
       const projId = hashId('proj', 'proj-coord');
@@ -191,10 +193,20 @@ describe('server/orca/coordinatorDetails', () => {
       });
       assert.equal(continuation.conversation.data?.messages.length, 0);
 
+      const recent = await collectNodeDetails(projId, coordNodeId, { preloadedGraph: standaloneGraph, direction: 'older', limit: 2 });
+      assert.deepEqual(recent.conversation.data?.messages.map(message => message.text), ['Second user message', 'New user message']);
+      assert.ok(recent.conversation.data?.nextCursor);
+      const older = await collectNodeDetails(projId, coordNodeId, { preloadedGraph: standaloneGraph, direction: 'older', limit: 2, cursor: recent.conversation.data!.nextCursor });
+      assert.deepEqual(older.conversation.data?.messages.map(message => message.text), ['Hello from user', 'Hello back from agent']);
+      assert.equal(older.conversation.data?.nextCursor, null);
+      await assert.rejects(() => collectNodeDetails(projId, coordNodeId, { preloadedGraph: standaloneGraph, cursor: recent.conversation.data!.nextCursor }), /direction/);
+
       globalSourceMaps.nodeSourceMap.set(coordNodeId, { paneKey: 'different-pane' });
       const unbound = await collectNodeDetails(projId, coordNodeId, { preloadedGraph: standaloneGraph });
       assert.equal(unbound.conversation.meta.availability, 'unsupported');
     } finally {
+      if (previousCodexHome === undefined) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = previousCodexHome;
       if (oldAppData !== undefined) {
         process.env.ORCA_APPDATA_DIR = oldAppData;
       } else {

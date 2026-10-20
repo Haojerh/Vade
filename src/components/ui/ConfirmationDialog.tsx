@@ -1,6 +1,7 @@
 import { Modal } from './Modal';
 import { DialogActions, DialogError } from './DialogActions';
 import React from 'react';
+import { OverlayCloseButton } from './OverlayCloseButton';
 
 export interface ConfirmationDialogProps {
   isOpen: boolean;
@@ -37,7 +38,7 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
       className="confirmation-dialog"
       aria-labelledby="confirmation-dialog-title"
       aria-describedby="confirmation-dialog-desc">
-      <h2 id="confirmation-dialog-title">{title}</h2>
+      <div className="overlay-heading"><h2 id="confirmation-dialog-title">{title}</h2><OverlayCloseButton onClick={onClose} disabled={isConfirming} /></div>
       <div id="confirmation-dialog-desc" className="confirmation-dialog-desc">
         {description}
       </div>

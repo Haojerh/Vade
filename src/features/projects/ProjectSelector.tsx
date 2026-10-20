@@ -9,8 +9,10 @@ import {
   DEFAULT_VISIBLE_SECTIONS,
 } from '../workflow/NodeDetails';
 import { Icon } from '../../components/ui/Icon';
+import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 
 export interface ProjectSelectorProps {
+  failedProjectIds?: ReadonlySet<string>;
   inventorySection: Section<Inventory> | null;
   loading: boolean;
   error: string | null;
@@ -36,6 +38,7 @@ export interface ProjectSelectorProps {
 }
 
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
+  failedProjectIds,
   inventorySection,
   loading,
   error,
@@ -261,10 +264,10 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                   <div className="project-item-inner">
                     <button
                       type="button"
-                      className={`project-button ${isSelected ? 'active' : ''}`}
+                      className={`project-button ${isSelected ? 'active' : ''} ${failedProjectIds?.has(proj.id) ? 'has-recent-failure' : ''}`}
                       onClick={() => onSelectProject(proj.id)}
                       aria-pressed={isSelected}
-                      aria-label={`Select project ${proj.name}, kind: ${proj.kind}`}
+                      aria-label={`Select project ${proj.name}, kind: ${proj.kind}${failedProjectIds?.has(proj.id) ? ', recent unhandled failure' : ''}`}
                       tabIndex={isHidden ? -1 : 0}
                     >
                       <div className="project-button-main">
@@ -311,14 +314,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             className="footer-settings-popover" aria-label="Dashboard settings">
               <div className="settings-popover-header">
                 <span className="font-bold text-sm">Settings</span>
-                <button
-                  type="button"
-                  className="btn-close"
-                  onClick={closeSettings}
-                  aria-label="Close settings"
-                >
-                  ✕
-                </button>
+                <OverlayCloseButton onClick={closeSettings} aria-label="Close settings" />
               </div>
               <div className="settings-popover-body">
                 <label className="settings-option-row"><div className="settings-option-text"><span className="settings-option-label font-semibold">Live Tool Nodes</span><span className="settings-option-desc text-xs text-muted">Show observed tool calls near their agent.</span></div><input type="checkbox" className="settings-checkbox" checked={toolActivityEnabled ?? true} onChange={e => onToggleToolActivity?.(e.target.checked)} /></label>
@@ -401,42 +397,6 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                     Toggle visible sections in node details:
                   </span>
                   <div className="settings-checkboxes-list">
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        className="settings-checkbox"
-                        checked={activeVisibleSections.status}
-                        onChange={() => onToggleVisibleSection?.('status')}
-                      />
-                      <span>Status &amp; Workspace</span>
-                    </label>
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        className="settings-checkbox"
-                        checked={activeVisibleSections.tasks}
-                        onChange={() => onToggleVisibleSection?.('tasks')}
-                      />
-                      <span>Assigned Tasks</span>
-                    </label>
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        className="settings-checkbox"
-                        checked={activeVisibleSections.latest}
-                        onChange={() => onToggleVisibleSection?.('latest')}
-                      />
-                      <span>Latest Agent Message</span>
-                    </label>
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        className="settings-checkbox"
-                        checked={activeVisibleSections.tool}
-                        onChange={() => onToggleVisibleSection?.('tool')}
-                      />
-                      <span>Current Tool Activity</span>
-                    </label>
                     <label className="settings-checkbox-item">
                       <input
                         type="checkbox"

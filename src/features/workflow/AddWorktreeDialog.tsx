@@ -4,6 +4,7 @@ import { createProjectWorktree } from '../../api/client';
 import { Icon } from '../../components/ui/Icon';
 import { AgentPicker } from '../../components/ui/AgentPicker';
 import { Modal } from '../../components/ui/Modal';
+import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 import { Select } from '../../components/ui/Select';
 import { DialogError } from '../../components/ui/DialogActions';
 import { useAgentCatalog } from '../../hooks/useAgentCatalog';
@@ -44,7 +45,7 @@ export function AddWorktreeDialog({ project, isClosing = false, onClose, onCreat
   };
   return <Modal isOpen isClosing={isClosing} busy={busy} onClose={onClose} className="confirmation-dialog add-worktree-dialog" aria-labelledby="add-worktree-title">
     <form onSubmit={submit} onKeyDown={e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { e.preventDefault(); if (!busy) e.currentTarget.requestSubmit(); } }}>
-      <div className="worktree-dialog-heading"><h2 id="add-worktree-title">Create worktree</h2><button type="button" className="btn-icon" aria-label="Close" disabled={busy} onClick={onClose}><Icon name="close" size={18} /></button></div>
+      <div className="worktree-dialog-heading"><h2 id="add-worktree-title">Create worktree</h2><OverlayCloseButton disabled={busy} onClick={onClose} aria-label="Close create worktree" /></div>
       <label className="worktree-field">Project<input value={project.name} readOnly /></label>
       <label className="worktree-field">Run on<input value={`Local ${navigator.platform.includes('Win') ? 'Windows' : 'host'}${project.paths[0] ? ` · ${project.paths[0]}` : ''}`} readOnly /></label>
       <fieldset disabled={busy} className="worktree-create-fields">

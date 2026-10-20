@@ -1,6 +1,6 @@
 import { Select } from '../components/ui/Select';
 import React from 'react';
-import type { Project, Run, SourceMeta } from '../../shared/contracts';
+import type { Project, Run } from '../../shared/contracts';
 import { RefreshIcon } from '../components/ui/RefreshIcon';
 import { Icon } from '../components/ui/Icon';
 
@@ -14,24 +14,13 @@ export interface TopBarProps {
   runs: Run[];
   selectedRunId: string | null;
   onSelectRun: (runId: string | null) => void;
-  isLocallyStale: boolean;
-  graphMeta: SourceMeta | undefined;
-  connectionMode: 'sse' | 'polling' | 'disconnected';
-  generatedAt: string | undefined;
   snapshotLoading: boolean;
   projectsLoading: boolean;
   onRefreshAll: () => void;
-}
-
-function formatIso(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  try {
-    const d = new Date(iso);
-    if (isNaN(d.getTime())) return iso;
-    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-  } catch {
-    return iso;
-  }
+  onOpenInbox: () => void;
+  inboxUnreadCount: number;
+  onToggleKanban?: () => void;
+  kanbanOpen?: boolean;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
@@ -44,13 +33,13 @@ export const TopBar: React.FC<TopBarProps> = ({
   runs,
   selectedRunId,
   onSelectRun,
-  isLocallyStale,
-  graphMeta,
-  connectionMode,
-  generatedAt,
   snapshotLoading,
   projectsLoading,
   onRefreshAll,
+  onOpenInbox,
+  inboxUnreadCount,
+  onToggleKanban,
+  kanbanOpen,
 }) => {
   return (
     <header ref={topbarRef} className="dashboard-topbar">
@@ -107,31 +96,12 @@ export const TopBar: React.FC<TopBarProps> = ({
       </div>
 
       <div className="topbar-meta-controls">
-        <div className="freshness-indicator">
-          <span
-            className={`sync-dot ${
-              isLocallyStale || graphMeta?.stale || (graphMeta && graphMeta.availability !== 'ready')
-                ? 'sync-stale'
-                : connectionMode === 'sse'
-                ? 'sync-live'
-                : 'sync-warn'
-            }`}
-            aria-hidden="true"
-          />
-          <span className="sync-text font-mono text-xs">
-            {isLocallyStale || graphMeta?.stale || (graphMeta && graphMeta.availability !== 'ready') ? (
-              <span className="text-warning font-semibold">
-                {graphMeta?.availability === 'unavailable'
-                  ? 'Source Unavailable'
-                  : graphMeta?.availability === 'unsupported'
-                  ? 'Source Unsupported'
-                  : 'Stale Snapshot'}
-              </span>
-            ) : (
-              <span>Observed: {formatIso(graphMeta?.observedAt || generatedAt)}</span>
-            )}
-          </span>
-        </div>
+        <button type="button" className="btn btn-secondary btn-sm" onClick={onToggleKanban} aria-expanded={Boolean(kanbanOpen)} aria-haspopup="dialog" aria-label="Toggle Kanban board" title="Kanban board">
+          <Icon name="layers" size={14} /><span className="btn-label">Kanban</span>
+        </button>
+        <button type="button" className="btn btn-secondary btn-sm inbox-trigger" onClick={onOpenInbox} aria-label={`Open inbox, ${inboxUnreadCount} unread results`}>
+          <Icon name="bell" size={14} /><span className="btn-label">Inbox</span>{inboxUnreadCount > 0 && <span className="inbox-count">{inboxUnreadCount}</span>}
+        </button>
 
         <button
           type="button"

@@ -1,0 +1,63 @@
+.inbox-trigger { white-space: nowrap; }
+.inbox-trigger > .inbox-count { align-self: center; line-height: 16px; padding-top: 0; padding-bottom: 0; }
+.inbox-count { display: inline-flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 10px; line-height: 1; min-width: 14px; height: 16px; box-sizing: border-box; padding: 1px 4px; border-radius: 3px; color: var(--notification-text); background: var(--notification-bg); }
+.project-button.has-recent-failure { box-shadow: inset 3px 0 0 var(--state-failed-text); }
+.node-modal-dialog.inbox-dialog {
+  width: min(600px, calc(100vw - 24px)); min-height: 0; max-height: 80vh; max-height: 80dvh;
+  padding: 0; overflow: hidden; display: flex; flex-direction: column;
+}
+.inbox-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px; }
+.inbox-header h2 { margin: 0; font-size: 18px; }
+.inbox-header p { margin: 4px 0 0; color: var(--text-secondary); font-size: 12px; }
+.inbox-actions { display: flex; gap: 8px; }
+.inbox-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 20px; border-bottom: 1px solid var(--border-main); }
+.inbox-filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); position: relative; width: 180px; max-width: 55%; }
+.inbox-filters button, .inbox-handle-all { background: none; border: 0; padding: 12px 0; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 12px; }
+.inbox-filters button { display: flex; align-items: center; text-align: center; justify-content: center; }
+.inbox-tab-indicator { position: absolute; bottom: -1px; left: 0; width: 50%; height: 2px; pointer-events: none; transform: translateX(0); transition: transform 200ms var(--ease-out); }
+.inbox-tab-indicator::after { content: ''; position: absolute; inset: 0 8px; background: var(--text-main); border-radius: 1px; }
+.show-handled .inbox-tab-indicator { transform: translateX(100%); }
+.inbox-filters button[aria-pressed="true"] { color: var(--text-main); font-weight: 600; }
+.inbox-filters button > span { margin-left: 5px; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.inbox-filters button > .inbox-count { color: var(--notification-text); background: var(--notification-bg); }
+.inbox-handle-all { color: var(--state-working-text); white-space: nowrap; border-radius: 5px; padding: 7px 8px; margin-right: -8px; transition: background-color 150ms ease, color 150ms ease; }
+.inbox-handle-all:hover:not(:disabled) { background: var(--state-working-bg); color: var(--text-main); }
+.inbox-handle-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.inbox-handle-all:disabled { opacity: .45; cursor: default; }
+.inbox-results { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+.inbox-results ul { list-style: none; margin: 0; padding: 0; }
+.inbox-results li { display: flex; border-bottom: 1px solid var(--border-subtle); transition: background-color 120ms ease; }
+.inbox-results li:hover { background: var(--surface-hover); }
+.inbox-results li:last-child { border-bottom: 0; }
+.inbox-result { display: flex; align-items: flex-start; gap: 12px; text-align: left; flex: 1; min-width: 0; padding: 18px 12px 18px 20px; border: 0; color: var(--text-main); background: transparent; cursor: pointer; font: inherit; }
+.inbox-unread-dot { box-sizing: border-box; flex: 0 0 7px; width: 7px; height: 7px; margin-top: calc((14px * 1.45 - 7px) / 2); border-radius: 50%; background: var(--state-completed-text); }
+.result-failed .inbox-unread-dot { background: var(--state-failed-text); }
+.is-handled .inbox-unread-dot { background: transparent; border: 1px solid var(--border-strong); }
+.inbox-result-content { display: flex; flex-direction: column; gap: 8px; min-width: 0; width: 100%; }
+.inbox-result-content strong { font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.is-handled .inbox-result-content strong { color: var(--text-secondary); }
+.inbox-project { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
+.inbox-project > svg { flex-shrink: 0; }
+.inbox-source { color: var(--text-muted); font-size: 11px; padding-left: 6px; border-left: 1px solid var(--border-strong); }
+.inbox-result-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.inbox-outcome { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+.outcome-succeeded { color: var(--state-completed-text); background: var(--state-completed-bg); }
+.outcome-failed { color: var(--state-failed-text); background: var(--state-failed-bg); }
+.inbox-result time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.inbox-open-project { display: grid; place-items: center; align-self: center; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); flex: 0 0 36px; height: 36px; margin-right: 12px; cursor: pointer; }
+.inbox-open-project:hover { background: var(--surface-active); color: var(--text-main); }
+.inbox-open-project:disabled { opacity: .35; cursor: default; background: transparent; }
+.inbox-notice { padding: 10px 20px; margin: 0; color: var(--text-secondary); font-size: 12px; background: var(--surface-2); }
+.inbox-empty { text-align: center; padding: 48px 20px; color: var(--text-secondary); }
+.inbox-empty h3 { color: var(--text-main); font-size: 14px; margin: 12px 0 8px; }
+.inbox-empty p { font-size: 12px; margin: 0; }
+@media (max-width: 600px) {
+  .inbox-header { padding: 16px; }
+  .inbox-toolbar { padding-left: 16px; padding-right: 16px; gap: 8px; }
+  .inbox-filters button, .inbox-handle-all { min-height: 44px; }
+  .inbox-result { padding-left: 16px; }
+  .inbox-open-project { flex-basis: 44px; height: 44px; margin-right: 4px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inbox-tab-indicator, .inbox-results li, .inbox-handle-all { transition: none; }
+}

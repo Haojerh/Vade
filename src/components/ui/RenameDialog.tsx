@@ -1,6 +1,7 @@
 import { Modal } from './Modal';
 import { DialogActions, DialogError } from './DialogActions';
 import React, { useEffect, useState } from 'react';
+import { OverlayCloseButton } from './OverlayCloseButton';
 
 export interface RenameDialogProps {
   isOpen: boolean;
@@ -44,7 +45,7 @@ export const RenameDialog: React.FC<RenameDialogProps> = ({
     <Modal isOpen={isOpen} isClosing={isClosing} busy={isRenaming} onClose={onClose}
       className="confirmation-dialog rename-dialog"
       aria-labelledby="rename-dialog-title">
-      <h2 id="rename-dialog-title">{subject === 'worktree' ? 'Rename Worktree' : 'Rename Tab Title'}</h2>
+      <div className="overlay-heading"><h2 id="rename-dialog-title">{subject === 'worktree' ? 'Rename Worktree' : 'Rename Tab Title'}</h2><OverlayCloseButton onClick={onClose} disabled={isRenaming} /></div>
       <div className="confirmation-dialog-desc">
         <p className="text-sm text-muted mb-2">
           {subject === 'worktree' ? 'Update the worktree display name. Leave empty to reset to the default name.' : 'Update the terminal tab title. Leave empty to reset to the default title.'}

@@ -8,6 +8,7 @@
   background: var(--canvas-bg);
   overflow: hidden;
 }
+.graph-canvas-container { touch-action: none; }
 
 .graph-toolbar {
   display: flex;
@@ -42,6 +43,14 @@
   display: flex;
   align-items: center;
   gap: 14px;
+}
+@media (max-width: 600px) {
+  .graph-toolbar { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; }
+  .toolbar-title-group { width: 100%; gap: 4px; }
+  .graph-title { white-space: nowrap; }
+  .graph-toolbar-actions { flex-wrap: wrap; gap: 8px; width: 100%; }
+  .graph-toolbar-actions > .btn { flex: 0 0 auto; white-space: nowrap; min-height: 30px; }
+  .graph-legend { gap: 10px; margin-left: auto; flex-wrap: wrap; font-size: 10px; }
 }
 .btn-reset-layout {
   display: inline-flex;

@@ -13,6 +13,19 @@ describe('server/api', () => {
   let baseUrl: string;
   let graphGate: Promise<void> | null = null;
 
+
+  test('inbox rejects arbitrary query input and write requests', async () => {
+    const query = await fetch(`${baseUrl}/api/inbox?command=anything`);
+    assert.equal(query.status, 400);
+    const write = await fetch(`${baseUrl}/api/inbox`, { method: 'POST' });
+    assert.equal(write.status, 405);
+    const response = await fetch(`${baseUrl}/api/inbox`);
+    assert.equal(response.status, 200);
+    const body = await response.json();
+    assert.ok(body.meta);
+    assert.ok(body.data === null || Array.isArray(body.data.items));
+  });
+
   const projApiId = hashId('proj', 'github:testowner/testrepo');
   const nodeApiId = hashId('node', 'wt-api-1');
 

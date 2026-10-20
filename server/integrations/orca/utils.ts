@@ -168,6 +168,41 @@ function scanBeyondWindowForNewline(fd: number, startOffset: number, fileSize: n
   return { endOffset: giantEnd, foundNl };
 }
 
+/** Read public records backwards, with a byte offset before the oldest returned record. */
+export async function readOlderTranscriptLines(
+  filePath: string, before: number | null | undefined, recordLimit = 20, maxBytes = 8 * 1024 * 1024,
+  _seeking = false, includeRecord?: (line: string) => boolean
+): Promise<BoundedTranscriptReadResult> {
+  const fd = fs.openSync(filePath, 'r');
+  try {
+    const end = Math.min(before ?? fs.fstatSync(fd).size, fs.fstatSync(fd).size);
+    const start = Math.max(0, end - maxBytes);
+    const buffer = Buffer.alloc(end - start);
+    const size = fs.readSync(fd, buffer, 0, buffer.length, start);
+    const first = start ? buffer.indexOf(10) + 1 : 0;
+    if (start && !first) return { lines: [], nextByteOffset: start, hasMore: start > 0, limited: true, totalScanned: 0 };
+    const rows: { line: string; offset: number }[] = [];
+    let position = first;
+    while (position < size) {
+      const newline = buffer.indexOf(10, position);
+      const stop = newline < 0 ? size : newline;
+      rows.push({ line: buffer.subarray(position, stop).toString('utf8').trim(), offset: start + position });
+      position = stop + 1;
+    }
+    const lines: string[] = [];
+    let offset = start + first;
+    let scanned = 0;
+    for (let index = rows.length - 1; index >= 0; index--) {
+      const row = rows[index];
+      offset = row.offset;
+      scanned++;
+      if (row.line && (!includeRecord || includeRecord(row.line))) lines.unshift(row.line);
+      if (lines.length >= Math.min(200, Math.max(1, recordLimit))) break;
+    }
+    return { lines, nextByteOffset: offset, hasMore: offset > 0, limited: start > 0 && lines.length < recordLimit, totalScanned: scanned };
+  } finally { fs.closeSync(fd); }
+}
+
 export async function readBoundedTranscriptLines(
   filePath: string,
   startByteOffset?: number | null,

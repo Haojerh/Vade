@@ -4,7 +4,7 @@ import {
   type NodeDetailsVisibleSections,
 } from '../features/workflow/NodeDetails';
 
-export function useDashboardLayoutPrefs() {
+export function useDashboardLayoutPrefs(dashboardReady = true) {
   const [toolActivityEnabled, setToolActivityEnabled] = useState(() => {
     try { return localStorage.getItem('orca-tool-activity') !== 'false'; } catch { return true; }
   });
@@ -237,6 +237,7 @@ export function useDashboardLayoutPrefs() {
   const [topbarHeight, setTopbarHeight] = useState<number>(50);
 
   useEffect(() => {
+    if (!dashboardReady) return;
     const el = topbarRef.current;
     if (!el) return;
     const updateHeight = () => {
@@ -252,7 +253,7 @@ export function useDashboardLayoutPrefs() {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [dashboardReady]);
 
   useEffect(() => {
     const handleResize = () => {
@@ -264,27 +265,17 @@ export function useDashboardLayoutPrefs() {
   }, []);
 
   const isNarrow = windowWidth <= 900;
+  const [mobileSidebar, setMobileSidebar] = useState<'left' | 'right' | null>(null);
 
-  // On narrow screens, enforce one sidebar at a time
+  // Mobile drawers are transient; preserve desktop visibility preferences.
   useEffect(() => {
-    if (isNarrow && leftSidebarOpen && rightSidebarOpen) {
-      setRightSidebarOpen(false);
-      try {
-        localStorage.setItem('orca-sidebar-right-open', 'false');
-      } catch {
-        // Storage unavailable
-      }
-    }
-  }, [isNarrow, leftSidebarOpen, rightSidebarOpen]);
+    setMobileSidebar(null);
+  }, [isNarrow]);
 
   const handleToggleLeft = useCallback((open: boolean) => {
-    if (open && window.innerWidth <= 900) {
-      setRightSidebarOpen(false);
-      try {
-        localStorage.setItem('orca-sidebar-right-open', 'false');
-      } catch {
-        // Storage unavailable
-      }
+    if (window.innerWidth <= 900) {
+      setMobileSidebar(open ? 'left' : null);
+      return;
     }
     setLeftSidebarOpen(open);
     try {
@@ -295,13 +286,9 @@ export function useDashboardLayoutPrefs() {
   }, []);
 
   const handleToggleRight = useCallback((open: boolean) => {
-    if (open && window.innerWidth <= 900) {
-      setLeftSidebarOpen(false);
-      try {
-        localStorage.setItem('orca-sidebar-left-open', 'false');
-      } catch {
-        // Storage unavailable
-      }
+    if (window.innerWidth <= 900) {
+      setMobileSidebar(open ? 'right' : null);
+      return;
     }
     setRightSidebarOpen(open);
     try {
@@ -416,8 +403,9 @@ export function useDashboardLayoutPrefs() {
     visibleSections,
     handleToggleVisibleSection,
     handleResetVisibleSections,
-    leftSidebarOpen,
-    rightSidebarOpen,
+    leftSidebarOpen: isNarrow ? mobileSidebar === 'left' : leftSidebarOpen,
+    rightSidebarOpen: isNarrow ? mobileSidebar === 'right' : rightSidebarOpen,
+    isNarrow,
     setLeftWidth,
     setRightWidth,
     handleToggleLeft,

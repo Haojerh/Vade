@@ -19,6 +19,7 @@ export interface UseDashboardReturn {
   projectsError: string | null;
   selectedProjectId: string | null;
   setSelectedProjectId: (id: string) => void;
+  openInboxNode: (projectId: string, nodeId: string, runId: string | null) => void;
 
   // Selected Run
   selectedRunId: string | null;
@@ -157,6 +158,7 @@ export function useDashboard(): UseDashboardReturn {
 
   // Mutator for changing selected project
   const setSelectedProjectId = useCallback((id: string) => {
+    if (id === selectedProjectId) return;
     selectionGeneration.current += 1;
     nodeGeneration.current += 1;
     githubGeneration.current += 1;
@@ -188,7 +190,7 @@ export function useDashboard(): UseDashboardReturn {
     }
 
     syncUrl(id, null, null);
-  }, [selectionGeneration, nodeGeneration, githubGeneration, setSelectedProjectIdState, setSelectedRunIdState, setSelectedNodeIdState, setSnapshot, setSnapshotLoading, setSnapshotError, setGitHubData, setGitHubLoading, setGitHubError, setNodeDetails, setNodeDetailsLoading, setNodeDetailsError, lastGraphObservedAtRef, setIsLocallyStale, githubAbortRef, nodeAbortRef, syncUrl]);
+  }, [selectedProjectId, selectionGeneration, nodeGeneration, githubGeneration, setSelectedProjectIdState, setSelectedRunIdState, setSelectedNodeIdState, setSnapshot, setSnapshotLoading, setSnapshotError, setGitHubData, setGitHubLoading, setGitHubError, setNodeDetails, setNodeDetailsLoading, setNodeDetailsError, lastGraphObservedAtRef, setIsLocallyStale, githubAbortRef, nodeAbortRef, syncUrl]);
 
   // Mutator for changing selected run
   const setSelectedRunId = useCallback((id: string | null) => {
@@ -232,6 +234,20 @@ export function useDashboard(): UseDashboardReturn {
   }, [nodeGeneration, nodeAbortRef, setSelectedNodeIdState, setNodeDetails, setNodeDetailsError, setNodeDetailsLoading, syncUrl, selectedProjectId, selectedRunId]);
 
   // Load Inventory
+  const openInboxNode = useCallback((projectId: string, nodeId: string, runId: string | null) => {
+    if (projectId === selectedProjectId && runId === selectedRunId && nodeId === selectedNodeId) return;
+    if (projectId !== selectedProjectId) setSelectedProjectId(projectId);
+    else if (runId !== selectedRunId) setSelectedRunId(runId);
+    nodeGeneration.current += 1;
+    nodeAbortRef.current?.abort();
+    setSelectedRunIdState(runId);
+    setSelectedNodeIdState(nodeId);
+    setNodeDetails(null);
+    setNodeDetailsError(null);
+    setNodeDetailsLoading(true);
+    syncUrl(projectId, runId, nodeId);
+  }, [selectedProjectId, selectedRunId, selectedNodeId, setSelectedProjectId, setSelectedRunId, nodeGeneration, nodeAbortRef, setSelectedRunIdState, setSelectedNodeIdState, setNodeDetails, setNodeDetailsError, setNodeDetailsLoading, syncUrl]);
+
   const loadProjects = useCallback(async () => {
     setProjectsLoading(true);
     setProjectsError(null);
@@ -288,6 +304,7 @@ export function useDashboard(): UseDashboardReturn {
     projectsError,
     selectedProjectId,
     setSelectedProjectId,
+    openInboxNode,
 
     selectedRunId,
     setSelectedRunId,

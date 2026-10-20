@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useDismissLayer } from '../../hooks/useDismissLayer';
 
 interface ResizableSidebarProps {
   side: 'left' | 'right';
@@ -9,6 +10,7 @@ interface ResizableSidebarProps {
   onWidthChange?: (width: number) => void;
   storageKey: string;
   isOpen: boolean;
+  isOverlay?: boolean;
   onToggle: (open: boolean) => void;
   ariaLabel: string;
   children: React.ReactNode;
@@ -23,10 +25,13 @@ export const ResizableSidebar: React.FC<ResizableSidebarProps> = ({
   onWidthChange,
   storageKey,
   isOpen,
+  isOverlay = false,
   onToggle: _onToggle,
   ariaLabel,
   children,
 }) => {
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  useDismissLayer(isOverlay && isOpen, sidebarRef, () => _onToggle(false));
   // Load initial width from localStorage safely
   const [width, setWidth] = useState<number>(() => {
     try {
@@ -161,6 +166,7 @@ export const ResizableSidebar: React.FC<ResizableSidebarProps> = ({
 
   return (
     <div
+      ref={sidebarRef}
       className={`resizable-sidebar sidebar-${side} ${isDragging ? 'is-dragging' : ''} ${
         !isOpen ? 'is-collapsed' : 'is-open'
       }`}

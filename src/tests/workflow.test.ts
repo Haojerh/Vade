@@ -4,12 +4,28 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { latestAgentMessage } from '../features/workflow/conversation';
 import { LatestMessageCard } from '../features/workflow/LatestMessageCard';
+import { ConversationHistory, mergeConversationMessages } from '../features/workflow/ConversationHistory';
+import { bindWorkflowPinch } from '../features/workflow/workflowTouch';
 import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
 import { separateWorkflowBoxes } from '../features/workflow/workflowCollision';
 import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/NodeDetails';
 import { WorkflowGraph } from '../features/workflow/WorkflowGraph';
 import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
 import type { Node, Edge, NodeDetails as NodeDetailsType } from '../../shared/contracts';
+import type { ConversationMessage } from '../../shared/contracts';
+
+test('conversation history prepends older turns, deduplicates boundaries and exposes older paging', () => {
+  const older: ConversationMessage = { id: 'old', role: 'user', text: 'Older message', at: null };
+  const latest: ConversationMessage = { id: 'new', role: 'agent', text: 'Latest message', at: null };
+  assert.deepEqual(mergeConversationMessages([older, latest], [latest]).map(message => message.id), ['old', 'new']);
+  const html = renderToStaticMarkup(createElement(ConversationHistory, { projectId: 'project', nodeId: 'node', runId: 'run', page: {
+    messages: [older, latest], source: 'transcript', sourceIdentity: 'exact-session', provider: 'codex', cursor: null, nextCursor: 'cur_older', limited: true, truncated: false, warnings: [],
+  } }));
+  assert.ok(html.includes('Load more'));
+  assert.ok(html.includes('conversation-history-content'));
+  assert.ok(!html.includes('conversation-history-scroll'));
+  assert.ok(html.indexOf('Older message') < html.indexOf('Latest message'));
+});
 import { WorkflowEdgesSvg } from '../features/workflow/WorkflowEdgesSvg';
 import { ToolActivityOverlay } from '../features/workflow/ToolActivityOverlay';
 import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts, toolCardConnectionPath, roundedToolPath } from '../features/workflow/toolActivityLayout';
@@ -242,10 +258,6 @@ test('latest message card formats Markdown and keeps local file references inert
 });
 
 test('DEFAULT_VISIBLE_SECTIONS has all sections visible by default', () => {
-  assert.equal(DEFAULT_VISIBLE_SECTIONS.status, true);
-  assert.equal(DEFAULT_VISIBLE_SECTIONS.tasks, true);
-  assert.equal(DEFAULT_VISIBLE_SECTIONS.latest, true);
-  assert.equal(DEFAULT_VISIBLE_SECTIONS.tool, true);
   assert.equal(DEFAULT_VISIBLE_SECTIONS.conversation, true);
   assert.equal(DEFAULT_VISIBLE_SECTIONS.chatbox, true);
 });
@@ -270,7 +282,11 @@ test('NodeDetails does not render settings button and respects visibleSections',
   }));
   assert.equal(html.includes('node-details-settings-container'), false);
   assert.equal(html.includes('Node details section visibility settings'), false);
-  assert.ok(html.includes('Status &amp; Workspace'));
+  assert.equal(html.includes('Status &amp; Workspace'), false);
+  assert.equal(html.includes('Latest Agent Message'), false);
+  assert.equal(html.includes('Message Agent</h3>'), false);
+  assert.equal(html.includes('Conversation History'), false);
+  assert.ok(html.includes('aria-label="Conversation"'));
 
   const htmlHidden = renderToStaticMarkup(createElement(NodeDetails, {
     projectId: 'proj_1',
@@ -280,9 +296,12 @@ test('NodeDetails does not render settings button and respects visibleSections',
     selectedNodeId: 'agent-1',
     onClose: () => {},
     onRefresh: () => {},
-    visibleSections: { ...DEFAULT_VISIBLE_SECTIONS, status: false },
+    visibleSections: { ...DEFAULT_VISIBLE_SECTIONS, conversation: false },
   }));
   assert.equal(htmlHidden.includes('Status &amp; Workspace'), false);
+  assert.equal(htmlHidden.includes('Conversation History'), false);
+  assert.ok(htmlHidden.includes('composer-only-dialog'));
+  assert.equal(htmlHidden.includes('section-header-row'), false);
 });
 
 test('NodeDetails renders Close Agent Tab button for agent nodes', () => {
@@ -326,7 +345,51 @@ test('NodeDetails renders Delete Worktree button for worktree nodes', () => {
     visibleSections: DEFAULT_VISIBLE_SECTIONS,
   }));
   assert.ok(html.includes('Delete Worktree'));
+  assert.ok(html.includes('Status &amp; Workspace'));
   assert.equal(html.includes('Close Agent Tab'), false);
+});
+
+test('two-finger canvas pinch cancels dragging, anchors zoom at the midpoint and preserves later taps', () => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const events = new EventTarget();
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: events });
+  const captures = new Set<number>();
+  const container = Object.assign(new EventTarget(), {
+    getBoundingClientRect: () => ({ left: 10, top: 20 }),
+    setPointerCapture: (id: number) => captures.add(id),
+    hasPointerCapture: (id: number) => captures.has(id),
+    releasePointerCapture: (id: number) => captures.delete(id),
+  });
+  const pointer = (target: EventTarget, type: string, id: number, x: number, pointerType = 'touch') => {
+    const event = Object.assign(new Event(type, { cancelable: true }), { pointerId: id, pointerType, clientX: x, clientY: 100 });
+    target.dispatchEvent(event); return event;
+  };
+  let zoom = 1;
+  let cancelled = 0;
+  const anchors: { x: number; y: number }[] = [];
+  const cleanup = bindWorkflowPinch(container as unknown as HTMLElement, () => zoom, (value, point) => { zoom = value; anchors.push(point); }, () => { cancelled++; });
+  try {
+    pointer(container, 'pointerdown', 1, 100);
+    assert.equal(cancelled, 0);
+    pointer(container, 'pointerdown', 2, 200);
+    assert.equal(cancelled, 1);
+    assert.ok(pointer(events, 'pointermove', 2, 300).defaultPrevented);
+    assert.equal(zoom, 2);
+    assert.deepEqual(anchors[0], { x: 190, y: 80 });
+    pointer(events, 'pointermove', 2, 200);
+    assert.equal(zoom, 1);
+    pointer(events, 'pointerup', 1, 100);
+    pointer(events, 'pointerup', 2, 200);
+    assert.equal(captures.size, 0);
+    const ghost = new Event('click', { cancelable: true }); container.dispatchEvent(ghost);
+    assert.ok(ghost.defaultPrevented);
+    pointer(container, 'pointerdown', 3, 100, 'mouse');
+    const deliberate = new Event('click', { cancelable: true }); container.dispatchEvent(deliberate);
+    assert.equal(deliberate.defaultPrevented, false);
+  } finally {
+    cleanup();
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow); else Reflect.deleteProperty(globalThis, 'window');
+  }
 });
 
 test('NodeDetails displays loading state and avoids rendering stale data when details.node.id does not match selectedNodeId', () => {

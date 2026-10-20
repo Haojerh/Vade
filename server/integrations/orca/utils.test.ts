@@ -12,6 +12,7 @@ import {
   stripAnsi,
   toIsoOrNull,
   readBoundedTranscriptLines,
+  readOlderTranscriptLines,
   getAllowedTranscriptRoots,
   isPathInsideRoots,
 } from './utils.js';
@@ -409,4 +410,30 @@ describe('server/orca/utils', () => {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
+});
+
+test('older transcript pages traverse all public turns in batches without duplicates or private records', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-older-pages-'));
+  const file = path.join(dir, 'turns.jsonl');
+  try {
+    fs.writeFileSync(file, Array.from({ length: 45 }, (_, index) => [
+      JSON.stringify({ kind: 'public', text: `Message ${index} — hello` }),
+      JSON.stringify({ kind: 'thinking', text: 'Private' }),
+    ]).flat().join('\n'));
+    let cursor: number | null = null;
+    let all: number[] = [];
+    let pages = 0;
+    do {
+      const page = await readOlderTranscriptLines(file, cursor, 20, 8 * 1024 * 1024, false, line => JSON.parse(line).kind === 'public');
+      assert.ok(page.lines.length <= 20);
+      all = [...page.lines.map(line => Number(JSON.parse(line).text.match(/Message (\d+)/)[1])), ...all];
+      if (cursor !== null) assert.ok(page.nextByteOffset < cursor);
+      cursor = page.nextByteOffset;
+      pages++;
+      if (!page.hasMore) break;
+      assert.ok(pages < 5);
+    } while (true);
+    assert.equal(pages, 3);
+    assert.deepEqual(all, Array.from({ length: 45 }, (_, index) => index));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
