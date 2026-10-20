@@ -169,7 +169,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       <div className="rail-brand">
         <div className="brand-title-row">
           <div className="brand-title-main">
-            <Icon name="layers" size={20} className="brand-icon" />
+            <img src={new URL('../../assets/brand/orca.png', import.meta.url).href} width={24} height={24} className="brand-icon" alt="" />
             <span className="brand-name font-bold">Orca Live</span>
           </div>
 

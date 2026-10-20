@@ -203,6 +203,8 @@
 }
 .brand-icon {
   color: var(--text-main);
+  flex-shrink: 0;
+  object-fit: contain;
 }
 .brand-name {
   font-size: 15px;
