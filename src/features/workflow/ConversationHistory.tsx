@@ -12,6 +12,12 @@ export function mergeConversationMessages(older: ConversationMessage[], current:
   });
 }
 
+export function mergeLiveConversation(current: ConversationMessage[], incoming: ConversationMessage[]): ConversationMessage[] {
+  const messages = new Map(current.map(message => [message.id, message]));
+  for (const message of incoming) messages.set(message.id, message);
+  return [...messages.values()];
+}
+
 export function ConversationHistory({ projectId, nodeId, runId, page, scrollContainerRef }: {
   projectId: string; nodeId: string; runId: string | null; page: ConversationPage;
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
@@ -30,7 +36,13 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
     setMessages(page.messages); setCursor(page.nextCursor); setError(null); setBusy(false);
     setExpanded(new Set()); anchor.current = null; resetScroll.current = true;
     return () => { request.current?.abort(); request.current = null; };
-  }, [page, projectId, nodeId, runId]);
+  }, [page.sourceIdentity, projectId, nodeId, runId]);
+
+  useLayoutEffect(() => {
+    const element = scrollContainerRef?.current;
+    if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 100) resetScroll.current = true;
+    setMessages(current => mergeLiveConversation(current, page.messages));
+  }, [page]);
 
   useLayoutEffect(() => {
     const element = scrollContainerRef?.current;

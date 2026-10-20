@@ -1,4 +1,7 @@
 import type {
+  AgentChatOptions,
+  ConversationPage,
+  SetAgentChatOptionRequest,
   InboxData,
   DashboardSnapshot,
   GitHubData,
@@ -18,6 +21,17 @@ import type {
   CreateWorktreeResponse,
   CommitGraphData,
 } from '../../shared/contracts';
+
+export async function fetchAgentChatOptions(projectId: string, nodeId: string, runId: string | null, signal?: AbortSignal): Promise<Section<AgentChatOptions>> {
+  const query = runId ? `?runId=${encodeURIComponent(runId)}` : '';
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/chat-options${query}`, { signal }));
+}
+export async function setAgentChatOption(projectId: string, nodeId: string, runId: string | null, option: SetAgentChatOptionRequest, signal?: AbortSignal): Promise<AgentChatOptions> {
+  const query = runId ? `?runId=${encodeURIComponent(runId)}` : '';
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/chat-options${query}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(option), signal,
+  }));
+}
 
 export async function fetchInbox(signal?: AbortSignal): Promise<Section<InboxData>> {
   return handleResponse<Section<InboxData>>(await fetch('/api/inbox', {
@@ -149,6 +163,51 @@ export async function fetchGitHub(
     signal,
   });
   return handleResponse<GitHubData>(res);
+}
+
+export function subscribeConversationEvents(
+  projectId: string, nodeId: string, runId: string | null,
+  onConversation: (section: Section<ConversationPage>) => void,
+  onConnection: (connected: boolean) => void,
+  onReset: () => void,
+): () => void {
+  let source: EventSource | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let closed = false;
+  let cursor: string | null = null;
+  const connect = () => {
+    if (closed || document.hidden) return;
+    const query = new URLSearchParams();
+    if (runId) query.set('runId', runId);
+    if (cursor) query.set('cursor', cursor);
+    source = new EventSource(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/events?${query}`);
+    source.onopen = () => { if (!closed) onConnection(true); };
+    source.addEventListener('conversation', (event) => {
+      if (closed) return;
+      try {
+        const section = JSON.parse((event as MessageEvent).data) as Section<ConversationPage>;
+        if (section.data?.nextCursor) cursor = section.data.nextCursor;
+        onConversation(section);
+      } catch { /* A malformed event never replaces the loaded history. */ }
+    });
+    source.addEventListener('stream-reset', () => {
+      source?.close();
+      cursor = null;
+      if (!closed) { onReset(); timer = setTimeout(connect, 2000); }
+    });
+    source.onerror = () => {
+      source?.close();
+      if (!closed) { onConnection(false); timer = setTimeout(connect, 2000); }
+    };
+  };
+  const visibility = () => {
+    clearTimeout(timer);
+    source?.close();
+    if (!document.hidden) connect();
+  };
+  document.addEventListener('visibilitychange', visibility);
+  connect();
+  return () => { closed = true; clearTimeout(timer); source?.close(); document.removeEventListener('visibilitychange', visibility); };
 }
 
 export function subscribeProjectEvents(

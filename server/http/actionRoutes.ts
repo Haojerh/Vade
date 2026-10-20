@@ -7,6 +7,7 @@ import type {
 } from '../../shared/contracts.js';
 import { CliError, runOrca, type CommandRunner } from '../integrations/cli.js';
 import { globalSourceMaps } from '../integrations/orca/state.js';
+import { readAgentChatOptions, setAgentChatOption } from '../integrations/orca/chat/options.js';
 import {
   sendAgentMessage,
   deleteWorktree,
@@ -20,6 +21,7 @@ import { createProjectWorktree, renameWorktree } from '../integrations/worktrees
 import { parseJsonBody } from './httpUtils.js';
 
 export interface ActionRouteMatches {
+  isChatOptions: RegExpMatchArray | null;
   isMessagePost: RegExpMatchArray | null;
   isCloseTabPost: RegExpMatchArray | null;
   isRenamePost: RegExpMatchArray | null;
@@ -32,6 +34,7 @@ export interface ActionRouteMatches {
 
 export function matchActionRoutes(pathname: string): ActionRouteMatches {
   return {
+    isChatOptions: pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/chat-options$/),
     isMessagePost: pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/message$/),
     isCloseTabPost: pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/close-tab$/),
     isRenamePost: pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/rename$/),
@@ -50,6 +53,7 @@ export function isMethodAllowedForRoute(
   if (reqMethod === 'POST') {
     return Boolean(
       matches.isMessagePost ||
+        matches.isChatOptions ||
         matches.isCloseTabPost ||
         matches.isRenamePost ||
         matches.isRenameWorktreePost ||
@@ -77,6 +81,43 @@ export interface ActionRouteContext {
 
 export async function handleActionRoute(ctx: ActionRouteContext): Promise<boolean> {
   const { req, reqMethod, query, matches, runner, snapshotManager, sendJson, sendError } = ctx;
+  if (matches.isChatOptions) {
+    const projectId = matches.isChatOptions[1];
+    const nodeId = matches.isChatOptions[2];
+    if (Object.keys(query).some(key => key !== 'runId') || (query.runId && !/^[a-zA-Z0-9_.-]{1,200}$/.test(query.runId))) {
+      throw new CliError('INVALID_ARGUMENT', 'Chat settings accept only a discovered runId');
+    }
+    let pick: any;
+    if (reqMethod === 'POST') {
+      if (!req.headers['content-type']?.startsWith('application/json')) throw new CliError('INVALID_ARGUMENT', 'Chat settings require application/json');
+      pick = await parseJsonBody<any>(req, 4096);
+      if (!pick || Object.keys(pick).some(key => key !== 'key' && key !== 'value') ||
+        !['model', 'effort', 'fastMode', 'serviceTier', 'providerPicker', 'fastToggle'].includes(pick.key) || typeof pick.value !== 'string' || pick.value.length > 200) {
+        throw new CliError('INVALID_ARGUMENT', 'Choose a supported chat setting');
+      }
+    }
+    const cached = reqMethod === 'GET' ? snapshotManager.getCachedSnapshot(projectId, query.runId || null) : null;
+    const snapshot = cached && !cached.graph.meta.stale && Date.now() - Date.parse(cached.generatedAt) < 15000
+      ? cached : await snapshotManager.getSnapshot(projectId, query.runId || null, runner);
+    const node = snapshot.graph.data?.nodes.find(node => node.id === nodeId);
+    const source = globalSourceMaps.nodeSourceMap.get(nodeId);
+    if (!node || !source) throw new CliError('NODE_NOT_FOUND', 'Agent not found in this project');
+    if (!['agent', 'orchestrator'].includes(node.kind)) throw new CliError('INVALID_ARGUMENT', 'Chat settings are only available for agents');
+    if (reqMethod === 'POST') {
+      if (snapshot.graph.meta.stale || snapshot.graph.meta.availability !== 'ready') throw new CliError('INVALID_ARGUMENT', 'Refresh this agent before changing its settings');
+      sendJson(200, await setAgentChatOption(node, source, pick, runner));
+    } else {
+      const at = new Date().toISOString();
+      try {
+        const data = await readAgentChatOptions(node, source, runner);
+        sendJson(200, { data, meta: { availability: 'ready', observedAt: at, attemptedAt: at, stale: snapshot.graph.meta.stale, partial: false, issue: null } });
+      } catch {
+        sendJson(200, { data: null, meta: { availability: 'unavailable', observedAt: null, attemptedAt: at, stale: false, partial: false,
+          issue: { code: 'RUNTIME_UNAVAILABLE', message: 'Chat settings are unavailable for this session or Orca version.', retryable: true } } });
+      }
+    }
+    return true;
+  }
   const {
     isMessagePost,
     isCloseTabPost,

@@ -40,7 +40,7 @@ npm install
 npm run dev
 ```
 
-Open **http://127.0.0.1:5173** and select an Orca project. For GitHub activity, install the GitHub CLI and run `gh auth login` first. GitHub authentication is separate from Orca's provider accounts.
+Open **https://127.0.0.1:5173** and select an Orca project. For GitHub activity, install the GitHub CLI and run `gh auth login` first. GitHub authentication is separate from Orca's provider accounts.
 
 ## Prerequisites
 
@@ -58,7 +58,7 @@ The prerequisite gate verifies that the Orca desktop application is installed an
 ## Ports & Localhost Topology
 
 - **Backend API & Production Server**: `http://127.0.0.1:4317`
-- **Vite Development Server**: `http://127.0.0.1:5173` (configured with `strictPort: true` and proxies `/api` requests to port `4317`)
+- **Vite Development Server**: `https://127.0.0.1:5173` (configured with `strictPort: true` and proxies `/api` requests to port `4317`)
 
 ## Installation & Commands
 
@@ -82,7 +82,7 @@ Or run each service separately:
 # Start backend API server with watch mode (http://127.0.0.1:4317)
 npm run dev:server
 
-# Start Vite frontend dev server (http://127.0.0.1:5173)
+# Start Vite frontend dev server (https://127.0.0.1:5173)
 npm run dev:client
 ```
 
@@ -127,6 +127,8 @@ npm test
 - **Polling is not instantaneous**: Displayed nodes, states, and activity represent periodically sampled evidence from the underlying CLI, marked with explicit source collection timestamps (`observedAt` / `attemptedAt`) and stale indicators.
 
 ### Graph & Node Details
+- **Agent chat metadata**: The agent-details composer displays the observed model and effort as read-only text. There are no model, effort, or speed pickers and no settings requests when the composer opens. Unknown values are omitted.
+- **Live conversation**: The agent overlay receives public transcript turns through SSE, backed by bounded two-second source reads. Reconnects resume with a forward cursor and deduplicate stable message IDs, while older history keeps its separate Load more cursor. Reading earlier messages preserves the scroll position; viewers near the bottom follow new turns. Hidden pages pause the stream. This observes recorded turns rather than guaranteeing token-by-token output.
 - **Kanban**: Open Kanban in the topbar to manage a project-specific centered modal: To-do (blue), Pending (orange), Completed (green), and Failed (red). Escape, the close button, or a backdrop click dismisses it without resizing the topology. During a card drag, the modal temporarily reveals the topology for dropping onto an agent. Add a title, prompt, and optional pasted/uploaded attachments, then drag a To-do or Failed card onto an agent to open its composer with the prompt and attachments. Review or edit them, then click Send to dispatch; dropping alone never sends or changes the card status. Click any card (or press Enter/Space) to view its complete task details, attachment previews, status and assignment. Assigned tasks offer an Open agent action. Failed tasks can be reassigned for a fix. Cards and attachment bytes persist in this browser's IndexedDB, separately from Orca tasks; removing cards or clearing the board does not cancel agents.
 - **Board outcomes**: Dispatch moves cards to Pending. The board observes an agent working and then explicitly completing/failing, or a fresh timestamped Inbox agent result after dispatch (including work completed between polls). Old results, stale sources, tool failures and message text do not count. One board task may be active per agent. Status checks run while the app is visible and resume after reload; unavailable evidence leaves a card pending. Delivery uncertainty is shown without automatically resending.
 - **Mobile controls**: The topbar separates project/actions from the full-width run picker, with compact icon controls and touch-sized targets. Pinch with two fingers anywhere on the Project topology to zoom around their midpoint; starting a pinch cancels node/background dragging and suppresses the gesture's accidental tap. Mouse wheel/touchpad zoom and existing one-finger dragging remain available.
@@ -136,6 +138,7 @@ npm test
 - **Status & Liveness**: Distinguishes agent state (`working`, `waiting`, `blocked`, `completed`, `failed`, `idle`, `unknown`) from raw workspace statuses and terminal process liveness (`live`, `exited`, `unverifiable`).
 - **Node Details**: Selecting an agent opens a conversation-focused animated modal with provider identity and a message composer. Agent/user turns appear left/right with Read More for long messages. Worktrees show Status & Workspace facts and branch history. On mobile, the close button stays in the header's top-right corner.
 - **Conversation Sources**: Codex, Claude, Pi/OMP and Antigravity history uses read-only provider logs resolved through exact Orca session metadata. OpenCode and Kilo-compatible SQLite readers require an exact provider session ID; they never guess sessions by recency. The view opens at the newest messages and loads 20 older public turns at a time when scrolling to the top or selecting **Load more**. Older pages prepend without shifting the reading position, are deduplicated by message ID, and remain bound to project/node/run/source. Refresh starts again at the newest window. Reads remain bounded; tool/thinking records are excluded before the chat limit. Missing provider logs remain explicitly unsupported.
+- **Dictation**: The agent-details composer has a Dictate/Stop microphone control using the browser's Web Speech recognition service, not Orca's local speech models. Audio may be processed by the browser vendor. Final speech appends to the existing draft without sending; interim words remain a preview. Recording stops on close, node/run changes, page hiding, or after 60 seconds. Use a supporting browser on HTTPS or localhost; insecure mobile LAN URLs cannot enable dictation. Microphone permission, unavailable-service, and network errors keep the draft intact.
 - **Model and Effort**: Cards show known effective launch/session values, including proven original launches for reused workers. Claude reads recorded model/effort from real assistant turns; Codex searches a bounded larger window when long tool output pushes turn settings outside the small tail. Unavailable values are omitted rather than inferred from requested defaults.
 - **Latest message**: Hovering an agent previews its latest public message; node details provide paginated, formatted conversation history.
 - **Progress**: The bar measures completed tasks divided by all tasks recorded for the selected run. Failed tasks do not count as completed. It does not estimate agent work or time remaining; incomplete coverage, unknown task states, or no recorded tasks leave the percentage unavailable.

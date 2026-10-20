@@ -8,6 +8,9 @@ import { ConversationHistory } from './ConversationHistory';
 import { sendNodeMessage } from '../../api/client';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
+import { AgentChatMetadata } from './AgentChatMetadata';
+import { DictationButton } from './DictationButton';
+import { appendDictation } from './dictation';
 import {
   NodeDetailsHeader,
   NodeDetailsActionDialogs,
@@ -61,7 +64,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
       if (body) body.scrollTop = body.scrollHeight;
     });
     return () => cancelAnimationFrame(frame);
-  }, [projectId, selectedNodeId, selectedRunId, details?.conversation]);
+  }, [projectId, selectedNodeId, selectedRunId, details?.conversation.data?.sourceIdentity]);
   const detailsOverlay = useConfirmationState({ onClosed: onClose });
   const isClosing = detailsOverlay.closing;
 
@@ -72,6 +75,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
     setChatMessage('');
   }, [projectId, selectedNodeId]);
   const [chatSending, setChatSending] = useState<boolean>(false);
+  const [dictating, setDictating] = useState(false);
   const [chatStatus, setChatStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
 
   useEffect(() => {
@@ -91,7 +95,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const activeVisibleSections = visibleSections ?? DEFAULT_VISIBLE_SECTIONS;
 
   const handleSendMessage = async () => {
-    if (!projectId || !details?.node || (!chatMessage.trim() && !chatFiles.length) || chatSending) return;
+    if (!projectId || !details?.node || (!chatMessage.trim() && !chatFiles.length) || chatSending || dictating) return;
     setChatSending(true);
     setChatStatus(null);
     try {
@@ -260,10 +264,13 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                                 {attachButton}
                                 <span className="text-xs text-muted">Paste or drop files - 5 MiB each</span>
                               </div>
+                              <AgentChatMetadata model={node.model} effort={node.effort} />
+                              <DictationButton key={`dictation:${projectId}:${node.id}:${selectedRunId ?? ''}`} disabled={chatSending || isClosing}
+                                onText={(text) => setChatMessage((draft) => appendDictation(draft, text))} onActiveChange={setDictating} />
                               <button
                                 type="submit"
                                 className="btn btn-primary btn-sm btn-chat-send"
-                                disabled={chatSending || (!chatMessage.trim() && !chatFiles.length)}
+                                disabled={chatSending || dictating || (!chatMessage.trim() && !chatFiles.length)}
                               >
                                 {chatSending ? (
                                   <span>Sending...</span>

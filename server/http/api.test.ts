@@ -29,6 +29,16 @@ describe('server/api', () => {
   const projApiId = hashId('proj', 'github:testowner/testrepo');
   const nodeApiId = hashId('node', 'wt-api-1');
 
+  test('chat settings reject arbitrary methods, selectors and option fields before runtime access', async () => {
+    const url = `${baseUrl}/api/projects/${projApiId}/nodes/${nodeApiId}/chat-options`;
+    assert.equal((await fetch(`${url}?method=anything`)).status, 400);
+    assert.equal((await fetch(url, { method: 'DELETE' })).status, 405);
+    for (const body of [{ key: 'command', value: 'anything' }, { key: 'model', value: 'safe', sessionId: 'injected' }, { key: 'effort', value: '\n', method: 'anything' }]) {
+      const response = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      assert.equal(response.status, 400);
+    }
+  });
+
   before(async () => {
     globalSourceMaps.projectSourceMap.set(projApiId, {
       sourceId: 'github:testowner/testrepo',

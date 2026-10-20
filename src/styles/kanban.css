@@ -6,6 +6,15 @@ dialog.kanban-dialog.kanban-dragging { opacity: 0; pointer-events: none; animati
 .kanban-heading > strong { display: inline-flex; align-items: center; gap: 8px; font-size: 18px; line-height: 1.4; white-space: nowrap; }
 .kanban-total-count { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 18px; padding: 0 6px; border-radius: 5px; background: var(--surface-active); color: var(--text-secondary); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
 .kanban-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.kanban-actions .btn-danger {
+  color: var(--state-failed-text);
+  background: var(--state-failed-bg);
+  border-color: var(--state-failed-text);
+}
+.kanban-actions .btn-danger:hover:not(:disabled) {
+  background: var(--state-failed-text);
+  color: var(--surface-1);
+}
 .kanban-columns { display: grid; grid-template-columns: repeat(4, minmax(220px, 1fr)); align-items: stretch; flex: 1; gap: 12px; overflow: auto; padding: 0 20px 20px; min-height: 0; }
 .kanban-column { --kanban-color: var(--state-working-text); display: flex; flex-direction: column; min-height: 110px; border: 1px solid var(--border-main); border-top-color: var(--kanban-color); background: var(--canvas-bg); border-radius: 8px; overflow: hidden; }
 .kanban-pending { --kanban-color: var(--state-waiting-text); }

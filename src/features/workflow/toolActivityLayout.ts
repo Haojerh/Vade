@@ -7,7 +7,7 @@ export function boxesOverlap(a: AnchorBox, b: AnchorBox, gap = GAP): boolean {
   return a.x < b.x + b.width + gap && a.x + a.width + gap > b.x && a.y < b.y + b.height + gap && a.y + a.height + gap > b.y;
 }
 
-export function placeToolCard(anchor: AnchorBox, obstacles: AnchorBox[], canvasWidth: number): AnchorBox {
+export function placeToolCard(anchor: AnchorBox, obstacles: AnchorBox[], canvasWidth: number, routingObstacles = obstacles.filter(box => box !== anchor)): AnchorBox {
   const right = anchor.x + anchor.width + 64;
   const left = anchor.x - TOOL_CARD_WIDTH - 64;
   const candidates: AnchorBox[] = [];
@@ -19,26 +19,69 @@ export function placeToolCard(anchor: AnchorBox, obstacles: AnchorBox[], canvasW
     const box = { x, y, width: TOOL_CARD_WIDTH, height: TOOL_CARD_HEIGHT };
     if (x >= 8 && y >= 8 && !boxesOverlap(box, anchor, 64) && !obstacles.some((obstacle) => boxesOverlap(box, obstacle))) candidates.push(box);
   }
-  const score = (box: AnchorBox) => {
+  const lowerBound = (box: AnchorBox) => {
     const { start, end } = toolPorts(anchor, box);
-    const direct = start.x === end.x || start.y === end.y;
-    const blocked = obstacles.filter((obstacle) => obstacle !== anchor).some((obstacle) =>
-      crosses(start, { x: end.x, y: start.y }, obstacle) || crosses({ x: end.x, y: start.y }, end, obstacle));
-    return Math.abs(start.x - end.x) + Math.abs(start.y - end.y)
-      + (direct ? 0 : 80) + (blocked ? 600 : 0) + (box.x + box.width > canvasWidth ? 60 : 0);
+    return Math.hypot(start.x - end.x, start.y - end.y) + overflowCost(box);
   };
-  candidates.sort((a, b) => score(a) - score(b));
+  const overflowCost = (box: AnchorBox) => box.x + box.width > canvasWidth ? 60 + (box.x + box.width - canvasWidth) / 4 : 0;
+  candidates.sort((a, b) => lowerBound(a) - lowerBound(b));
+  let best: AnchorBox | null = null;
+  let bestCost = Infinity;
+  const seen = new Set<string>();
+  let evaluated = 0;
+  for (const box of candidates) {
+    if (lowerBound(box) >= bestCost) break;
+    const key = `${box.x}:${box.y}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    // Bound expensive routing independently of the number of candidate coordinates.
+    if (evaluated++ >= 24) break;
+    const path = toolCardConnectionPath(anchor, box, routingObstacles);
+    if (!path) continue;
+    const cost = toolPathCost(path) + overflowCost(box);
+    if (cost < bestCost) { best = box; bestCost = cost; }
+  }
+  if (best) return best;
   if (candidates.length) return candidates[0];
   // Crowded canvas: extend its right edge instead of covering another worktree.
   return { x: Math.max(right, ...obstacles.map((box) => box.x + box.width + GAP)), y: Math.max(8, anchor.y), width: TOOL_CARD_WIDTH, height: TOOL_CARD_HEIGHT };
 }
 
 type Point = { x: number; y: number };
+
+// Compare the rendered routes, including long Bezier detours, rather than endpoint distance alone.
+function toolPathCost(path: string): number {
+  const tokens = path.match(/[MLQC]|-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi)!;
+  let point = { x: 0, y: 0 }, length = 0, turns = 0;
+  let index = 0;
+  const read = () => ({ x: Number(tokens[index++]), y: Number(tokens[index++]) });
+  while (index < tokens.length) {
+    const command = tokens[index++];
+    if (command === 'M') { point = read(); continue; }
+    if (command === 'L') {
+      const next = read(); length += Math.hypot(next.x - point.x, next.y - point.y); point = next; continue;
+    }
+    const start = point, first = read(), second = command === 'C' ? read() : first, end = read();
+    turns += command === 'C' ? 2 : 1;
+    for (let sample = 1; sample <= 12; sample++) {
+      const t = sample / 12, u = 1 - t;
+      const next = command === 'C'
+        ? { x: u ** 3 * start.x + 3 * u * u * t * first.x + 3 * u * t * t * second.x + t ** 3 * end.x,
+          y: u ** 3 * start.y + 3 * u * u * t * first.y + 3 * u * t * t * second.y + t ** 3 * end.y }
+        : { x: u * u * start.x + 2 * u * t * first.x + t * t * end.x,
+          y: u * u * start.y + 2 * u * t * first.y + t * t * end.y };
+      length += Math.hypot(next.x - point.x, next.y - point.y); point = next;
+    }
+  }
+  return length + turns * 32;
+}
 /** Try another exit when a nearby sibling's clearance margin traps the facing port. */
 export function toolCardConnectionPath(anchor: AnchorBox, card: AnchorBox, obstacles: AnchorBox[]): string | null {
   const { start, end, cardPort } = toolPorts(anchor, card);
   const direct = toolConnectionPath(start, end, obstacles);
-  if (direct && !direct.includes(' Q ')) return direct;
+  if (direct && !direct.includes(' Q ') && !direct.includes(' C ')) return direct;
+  let best = direct;
+  let bestCost = direct ? toolPathCost(direct) : Infinity;
   const cx = anchor.x + anchor.width / 2, cy = anchor.y + anchor.height / 2;
   const exits = [
     { point: { x: anchor.x + anchor.width, y: cy }, dx: 12, dy: 0 },
@@ -60,11 +103,13 @@ export function toolCardConnectionPath(anchor: AnchorBox, card: AnchorBox, obsta
         { x: 0, y: -extent, width: extent, height: extent },
       ];
       if (curveAvoidsBoxes(curve, [...obstacles, anchor, ...outsideCanvas])) {
-        return `M ${point.x} ${point.y} C ${first.x} ${first.y}, ${second.x} ${second.y}, ${end.x} ${end.y}`;
+        const path = `M ${point.x} ${point.y} C ${first.x} ${first.y}, ${second.x} ${second.y}, ${end.x} ${end.y}`;
+        const cost = toolPathCost(path);
+        if (cost < bestCost) { best = path; bestCost = cost; }
       }
     }
   }
-  if (direct) return direct;
+  if (best) return best;
   for (const { point, dx, dy } of exits) {
     const exit = { x: point.x + dx, y: point.y + dy };
     if (exit.x < 0 || exit.y < 0 || obstacles.some((box) => crosses(point, exit, box))) continue;

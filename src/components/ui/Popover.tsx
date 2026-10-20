@@ -2,6 +2,11 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useDismissLayer } from '../../hooks/useDismissLayer';
 
+export function popoverPortalHost(trigger: HTMLElement | null, fallback: HTMLElement): Element {
+  // A body-level portal is inert while its trigger's native modal is open.
+  return trigger?.closest('dialog[open]') ?? fallback;
+}
+
 interface PopoverProps extends React.HTMLAttributes<HTMLDivElement> {
   isOpen: boolean;
   isClosing?: boolean;
@@ -11,8 +16,9 @@ interface PopoverProps extends React.HTMLAttributes<HTMLDivElement> {
   portal?: boolean;
   focusOnOpen?: boolean;
   floating?: boolean;
+  floatingWidth?: number;
 }
-export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, portal = false, focusOnOpen = false, floating = false, className = '', children, style, ...props }: PopoverProps) {
+export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, portal = false, focusOnOpen = false, floating = false, floatingWidth, className = '', children, style, ...props }: PopoverProps) {
   const fallbackRef = useRef<HTMLDivElement>(null);
   const ref = contentRef ?? fallbackRef;
   const [position, setPosition] = useState<React.CSSProperties>({});
@@ -23,7 +29,7 @@ export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, po
     const place = () => {
       const anchor = triggerRef.current?.getBoundingClientRect();
       if (!anchor) return;
-      const width = Math.min(anchor.width, window.innerWidth - 24);
+      const width = Math.min(floatingWidth ?? anchor.width, window.innerWidth - 24);
       const height = Math.min(content.scrollHeight, window.innerHeight - 24);
       const below = window.innerHeight - anchor.bottom - 12;
       const above = anchor.top - 12;
@@ -37,7 +43,7 @@ export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, po
     window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
     const resize = new ResizeObserver(place); resize.observe(content);
     return () => { resize.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); content.hidePopover(); };
-  }, [isOpen, floating, ref, triggerRef]);
+  }, [isOpen, floating, floatingWidth, ref, triggerRef]);
   useDismissLayer(isOpen, ref, onClose, triggerRef);
   useEffect(() => {
     if (!isOpen) return;
@@ -47,5 +53,5 @@ export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, po
   }, [isOpen, focusOnOpen, ref, triggerRef]);
   if (!isOpen) return null;
   const content = <div {...props} ref={ref} popover={floating ? 'manual' : undefined} role="dialog" tabIndex={-1} className={`${className} ${isClosing ? 'is-closing' : ''}`} style={{ ...style, ...(floating ? position : {}) }}>{children}</div>;
-  return portal ? createPortal(content, document.body) : content;
+  return portal ? createPortal(content, popoverPortalHost(triggerRef.current, document.body)) : content;
 }

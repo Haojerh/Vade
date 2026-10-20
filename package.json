@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "build": "npm run typecheck && vite build",
     "start": "tsx server/index.ts",
-    "test": "node --import tsx --test src/tests/kanban.test.ts src/tests/inbox.test.ts server/services/inbox.test.ts src/tests/github.test.ts src/tests/notifications.test.ts src/tests/workflow.test.ts src/tests/dialogsAndUi.test.ts server/http/api.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/githubAccounts.test.ts server/integrations/orca/utils.test.ts server/integrations/orca/inventory.test.ts server/integrations/orca/graph.test.ts server/integrations/orca/graphWorkers.test.ts server/integrations/orca/nodeDetails.test.ts server/integrations/orca/coordinatorDetails.test.ts server/integrations/orca/actions.test.ts server/integrations/orca/prerequisites.test.ts server/providers/transcripts.test.ts server/services/snapshot.test.ts server/services/progress.test.ts server/services/attachments.test.ts server/integrations/usage.test.ts server/integrations/worktrees.test.ts src/tests/commitGraph.test.ts server/integrations/agents.test.ts"
+    "test": "node --import tsx --test src/tests/conversationEvents.test.ts server/http/conversationEvents.test.ts src/tests/dictation.test.ts server/integrations/orca/chat/options.test.ts src/tests/kanban.test.ts src/tests/inbox.test.ts server/services/inbox.test.ts src/tests/github.test.ts src/tests/notifications.test.ts src/tests/workflow.test.ts src/tests/dialogsAndUi.test.ts server/http/api.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/githubAccounts.test.ts server/integrations/orca/utils.test.ts server/integrations/orca/inventory.test.ts server/integrations/orca/graph.test.ts server/integrations/orca/graphWorkers.test.ts server/integrations/orca/nodeDetails.test.ts server/integrations/orca/coordinatorDetails.test.ts server/integrations/orca/actions.test.ts server/integrations/orca/prerequisites.test.ts server/providers/transcripts.test.ts server/services/snapshot.test.ts server/services/progress.test.ts server/services/attachments.test.ts server/integrations/usage.test.ts server/integrations/worktrees.test.ts src/tests/commitGraph.test.ts server/integrations/agents.test.ts"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -23,6 +23,7 @@
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
     "exceljs": "^4.4.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import type { NodeDetails } from '../../shared/contracts';
-import { fetchNodeDetails } from '../api/client';
+import { fetchNodeDetails, subscribeConversationEvents } from '../api/client';
 
 export interface UseNodeDetailsLoaderProps {
   selectedProjectId: string | null;
@@ -89,6 +89,27 @@ export function useNodeDetailsLoader({
       }
     };
   }, [loadNodeDetails, selectedNodeId]);
+
+  const streamKind = nodeDetails?.node.id === selectedNodeId ? nodeDetails.node.kind : null;
+  const streamIdentity = nodeDetails?.conversation.data?.sourceIdentity;
+  useEffect(() => {
+    if (!selectedProjectId || !selectedNodeId || !streamKind || !['agent', 'orchestrator'].includes(streamKind)) return;
+    return subscribeConversationEvents(selectedProjectId, selectedNodeId, selectedRunId, (conversation) => {
+        if (conversation.data && conversation.data.sourceIdentity !== streamIdentity) { void loadNodeDetails(); return; }
+        setNodeDetails(current => {
+          if (current?.node.id !== selectedNodeId) return current;
+          const previous = current.conversation.data;
+          if (!previous || !conversation.data) return { ...current, conversation: { ...conversation, data: previous } };
+          const messages = new Map(previous.messages.map(message => [message.id, message]));
+          for (const message of conversation.data.messages) messages.set(message.id, message);
+          // Keep the older-history cursor; streamed cursors are forward-only and belong to the SSE client.
+          return { ...current, conversation: { ...conversation, data: { ...previous, messages: [...messages.values()] } } };
+        });
+        setNodeDetailsError(null);
+      }, (connected) => {
+        setNodeDetailsError(connected ? null : 'Live conversation disconnected. Reconnecting…');
+      }, () => { void loadNodeDetails(); });
+  }, [selectedProjectId, selectedNodeId, selectedRunId, streamKind, streamIdentity, loadNodeDetails]);
 
   const refreshNodeDetails = useCallback(() => {
     loadNodeDetails();

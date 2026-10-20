@@ -198,6 +198,7 @@ export interface ConversationMessage {
 }
 
 export interface ConversationPage {
+  // Node conversation SSE emits Section<ConversationPage> forward deltas; its cursors must never be used for older pagination.
   messages: ConversationMessage[];
   source: 'transcript';
   sourceIdentity: string; // opaque server hash; never a local transcript path
@@ -294,6 +295,27 @@ export interface HealthResponse {
 export interface SendMessageRequest {
   message: string;
   attachments?: MessageAttachment[];
+}
+
+export interface AgentChatModel {
+  id: string;
+  label: string;
+  description?: string;
+  efforts: { value: string; label: string }[];
+  supportsFastMode?: boolean;
+  serviceTiers?: { value: string; label: string }[];
+}
+export interface AgentChatOptions {
+  provider: string;
+  transport: 'native' | 'terminal';
+  models: AgentChatModel[];
+  current: { model?: string; effort?: string; fastMode?: boolean; serviceTier?: string };
+  controls: { model: boolean; effort: boolean; fastMode: boolean; fastToggle: boolean; serviceTier: boolean; providerPicker: boolean };
+  unconfirmed?: boolean;
+}
+export interface SetAgentChatOptionRequest {
+  key: 'model' | 'effort' | 'fastMode' | 'serviceTier' | 'providerPicker' | 'fastToggle';
+  value: string;
 }
 
 export const MAX_MESSAGE_ATTACHMENTS = 8;

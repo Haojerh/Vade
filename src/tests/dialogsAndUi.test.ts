@@ -13,9 +13,28 @@ import { AddAgentDialog } from '../components/ui/AddAgentDialog';
 import { AgentPicker } from '../components/ui/AgentPicker';
 import { Disclosure } from '../components/ui/Disclosure';
 import { Icon } from '../components/ui/Icon';
+import { popoverPortalHost } from '../components/ui/Popover';
+import { AgentChatMetadata } from '../features/workflow/AgentChatMetadata';
 import { useConfirmationState } from '../hooks/useConfirmationState';
 import type { PrerequisitesStatus } from '../../shared/contracts';
 import { useDashboardLayoutPrefs } from '../app/useDashboardLayoutPrefs';
+
+test('composer model and effort are observed text with no picker or button', () => {
+  const html = renderToStaticMarkup(createElement(AgentChatMetadata, { model: 'gpt-5.6-sol', effort: 'high' }));
+  assert.match(html, /gpt-5.6-sol/);
+  assert.match(html, /high/);
+  assert.doesNotMatch(html, /<button|<select|aria-haspopup/);
+  assert.equal(renderToStaticMarkup(createElement(AgentChatMetadata, { model: 'unknown' })), '');
+});
+
+test('portaled pickers remain inside their native modal so search and actions are not inert', () => {
+  const body = {} as HTMLElement;
+  const dialog = {} as Element;
+  const trigger = { closest: (selector: string) => { assert.equal(selector, 'dialog[open]'); return dialog; } } as unknown as HTMLElement;
+  assert.equal(popoverPortalHost(trigger, body), dialog);
+  assert.equal(popoverPortalHost({ closest: () => null } as unknown as HTMLElement, body), body);
+  assert.equal(popoverPortalHost(null, body), body);
+});
 
 test('mobile starts with closed drawers while preserving saved desktop sidebar preferences', () => {
   const windowDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'window');

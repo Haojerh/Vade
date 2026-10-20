@@ -15,6 +15,7 @@ import type { UsageCollector } from '../integrations/usage.js';
 import type { InboxCollector } from '../services/inbox.js';
 import { getAgentCatalog } from '../integrations/agents.js';
 import { collectCommitGraph } from '../integrations/commitGraph.js';
+import { handleConversationEvents } from './conversationEvents.js';
 
 export interface ReadRouteContext {
   req: http.IncomingMessage;
@@ -45,6 +46,8 @@ export async function handleReadRoute(ctx: ReadRouteContext): Promise<boolean> {
     sendJson,
     sendError,
   } = ctx;
+
+  if (await handleConversationEvents(ctx)) return true;
 
   // GET /api/health
   if (pathname === '/api/inbox') {

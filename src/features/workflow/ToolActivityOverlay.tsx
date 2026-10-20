@@ -31,7 +31,7 @@ export function ToolActivityOverlay({ tools, positions, reducedMotion, canvasWid
       const anchorKey = `${anchor.x}:${anchor.y}:${anchor.width}:${anchor.height}`;
       const previous = placements.current.get(tool.id);
       const box = previous?.anchor === anchorKey && !blockers.some((blocker) => boxesOverlap(previous.box, blocker))
-        ? previous.box : placeToolCard(anchor, blockers, canvasWidth);
+        ? previous.box : placeToolCard(anchor, blockers, canvasWidth, [...obstacles, ...placed]);
       const { end, cardPort } = toolPorts(anchor, box);
       const routeKey = `${anchorKey}:${box.x}:${box.y}:${JSON.stringify([...obstacles, ...placed])}`;
       const path = previous?.routeKey === routeKey ? previous.path : toolCardConnectionPath(anchor, box, [...obstacles, ...placed]);

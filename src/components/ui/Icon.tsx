@@ -26,6 +26,7 @@ export type IconName =
   | 'moon'
   | 'bell'
   | 'send'
+  | 'mic'
   | 'trash'
   | 'x-square'
   | 'terminal'
@@ -58,6 +59,8 @@ export const Icon: React.FC<IconProps> = ({
 }) => {
   const renderPaths = () => {
     switch (name) {
+      case 'mic':
+        return <><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" /></>;
       case 'terminal':
         return <><polyline points="4 5 10 11 4 17" /><line x1="13" y1="17" x2="20" y2="17" /></>;
       case 'chevron-down':

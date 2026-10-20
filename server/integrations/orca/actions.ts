@@ -8,7 +8,7 @@ import { attachmentPaste, attachmentReference, usesNativeImageAttachment } from 
 import { hashId } from './utils.js';
 import { globalSourceMaps, NodeSourceEntry } from './state.js';
 
-const sendingTerminals = new Set<string>();
+export const sendingTerminals = new Set<string>();
 const VALID_TERMINAL_HANDLE_RE = /^term_[a-zA-Z0-9_-]+$/;
 
 async function resolveWorktreeSource(

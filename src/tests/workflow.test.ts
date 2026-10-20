@@ -4,7 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { latestAgentMessage } from '../features/workflow/conversation';
 import { LatestMessageCard } from '../features/workflow/LatestMessageCard';
-import { ConversationHistory, mergeConversationMessages } from '../features/workflow/ConversationHistory';
+import { ConversationHistory, mergeConversationMessages, mergeLiveConversation } from '../features/workflow/ConversationHistory';
 import { bindWorkflowPinch } from '../features/workflow/workflowTouch';
 import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
 import { separateWorkflowBoxes } from '../features/workflow/workflowCollision';
@@ -25,6 +25,15 @@ test('conversation history prepends older turns, deduplicates boundaries and exp
   assert.ok(html.includes('conversation-history-content'));
   assert.ok(!html.includes('conversation-history-scroll'));
   assert.ok(html.indexOf('Older message') < html.indexOf('Latest message'));
+});
+
+test('live conversation updates replace matching IDs, retain loaded history and deduplicate reconnects', () => {
+  const old: ConversationMessage = { id: 'old', role: 'user', text: 'Earlier', at: null };
+  const first: ConversationMessage = { id: 'new', role: 'agent', text: 'First', at: null };
+  const updated = { ...first, text: 'Updated' };
+  const result = mergeLiveConversation([old, first], [updated, updated]);
+  assert.deepEqual(result, [old, updated]);
+  assert.deepEqual(mergeLiveConversation(result, [updated]), result);
 });
 import { WorkflowEdgesSvg } from '../features/workflow/WorkflowEdgesSvg';
 import { ToolActivityOverlay } from '../features/workflow/ToolActivityOverlay';
@@ -174,14 +183,33 @@ test('tool placement favors a clean direct connection and leaves room for the pa
   assert.equal(smooth.includes(' Q '), false);
 });
 
-test('tool detours prefer one smooth curve and round the complete exit path', () => {
+test('tool detours favor a compact rounded route over a longer sweeping curve', () => {
   const path = toolCardConnectionPath({ x: 400, y: 80, width: 260, height: 100 },
     { x: 400, y: 400, width: 280, height: 56 }, [{ x: 400, y: 190, width: 260, height: 100 }]);
   assert.ok(path);
-  assert.match(path, / C /);
-  assert.equal(path.includes(' L '), false);
+  assert.match(path, / Q /);
+  assert.equal([...path.matchAll(/ Q /g)].length, 2);
+  assert.ok(path.endsWith('L 530 392'));
   assert.equal(roundedToolPath([{ x: 0, y: 0 }, { x: 100, y: 0 }, { x: 100, y: 100 }]),
     'M 0 0 L 60 0 Q 100 0 100 40 L 100 100');
+});
+
+test('tool placement uses the nearby gap between worktrees instead of routing below the entire graph', () => {
+  const anchor = { x: 127, y: 84, width: 325, height: 116 };
+  const containingWorktree = { x: 12, y: 14, width: 553, height: 330 };
+  const rightWorktree = { x: 595, y: 58, width: 620, height: 203 };
+  const lowerWorktree = { x: 5, y: 366, width: 620, height: 204 };
+  const sibling = { x: 127, y: 212, width: 325, height: 116 };
+  const routingObstacles = [rightWorktree, lowerWorktree, sibling];
+  const occupied = [containingWorktree, ...routingObstacles, anchor];
+  const card = placeToolCard(anchor, occupied, 1223, routingObstacles);
+  for (const obstacle of occupied) assert.equal(boxesOverlap(card, obstacle), false);
+  assert.ok(card.x >= containingWorktree.x + containingWorktree.width);
+  assert.ok(card.y >= rightWorktree.y + rightWorktree.height);
+  assert.ok(card.y + card.height < lowerWorktree.y);
+  const path = toolCardConnectionPath(anchor, card, routingObstacles)!;
+  assert.match(path, /^M 452 142 C /);
+  assert.equal(path.includes(' Q '), false);
 });
 
 test('workflow collision layout separates dragged boxes and only moves later boxes on chat expansion', () => {
