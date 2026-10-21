@@ -1197,11 +1197,10 @@ dialog.add-agent-dialog {
 .add-agent-dialog-scroll {
   flex: 1 1 auto;
   overflow-y: auto;
-  margin: 12px 0;
-  padding-right: 4px;
+  margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 22px;
 }
 
 .confirmation-dialog input[type="text"]:focus,
