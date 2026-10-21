@@ -878,3 +878,20 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     await new Promise<void>(resolve => server.close(() => resolve())); f.close();
   }
 });
+
+test('terminal launches pass the chosen fixed shell, persist it for reopen and reject shells on agents', async () => {
+  const f = fixture();
+  const seen: Array<string | undefined> = [];
+  const sessions = new AdeSessions(f.runtime.store, (_provider, shell) => { seen.push(shell); return { executable: process.execPath, args: ['-e', 'setInterval(()=>{},1000)', '--'] }; }, async () => '11234567-1234-1234-1234-123456789abc', () => {}, () => {});
+  try {
+    const project = await f.runtime.git.register(f.repo), tree = (await f.runtime.git.worktrees(project))[0];
+    const record = await sessions.launch(project.id, tree.id, tree.path, 'terminal', 'Shell', 'cmd');
+    assert.equal(record.shell, 'cmd');
+    assert.equal(f.runtime.store.sessions(project.id).find(item => item.id === record.id)?.shell, 'cmd');
+    await assert.rejects(() => sessions.launch(project.id, tree.id, tree.path, 'claude', undefined, 'cmd'), /only to Terminal/);
+    await assert.rejects(() => sessions.launch(project.id, tree.id, tree.path, 'terminal', undefined, 'zsh' as never), /only to Terminal/);
+    assert.deepEqual(seen, ['cmd']);
+    sessions.closeSession(project.id, record.id);
+    await new Promise(resolve => setTimeout(resolve, 500));
+  } finally { sessions.close(); f.close(); }
+});

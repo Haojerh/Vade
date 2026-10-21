@@ -69,3 +69,13 @@
   .usage-deep-panel.is-closing .usage-deep-card { transform: none; }
   @starting-style { .usage-deep-panel[data-motion="true"] .usage-deep-card { opacity: 1; transform: none; } }
 }
+
+/* Keep usage text, icons and bars on one optical center line. */
+.usage-track { vertical-align: middle; align-self: center; margin: 0; }
+.usage-status-provider, .usage-summary-window, .usage-inline-window, .usage-inline-values, .usage-inline-group, .usage-provider-heading, .usage-deep-heading { align-items: center; }
+.usage-status-provider > *, .usage-summary-window > *, .usage-inline-window > *, .usage-inline-values > *, .usage-provider-heading > strong, .usage-provider-heading > .usage-note, .usage-percent, .usage-window-label { line-height: 1.2; }
+.usage-status-provider > svg, .usage-provider-heading > svg { flex-shrink: 0; display: block; }
+.usage-meter { align-items: center; }
+/* Numerals sit slightly below the line-box center, so nudge inline bars to the glyph center. */
+.usage-status-provider > .usage-track, .usage-meter > .usage-track, .usage-mini-track { transform: translateY(1px); }
+.usage-summary-window > .usage-track { transform: translateY(1.5px); }

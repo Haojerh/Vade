@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import type { AdeProvider, Project } from '../../shared/contracts.js';
+import type { AdeProvider, Project, TerminalShell } from '../../shared/contracts.js';
 import { CliError } from '../integrations/cli.js';
 
 export interface SessionRecord {
@@ -18,6 +18,7 @@ export interface SessionRecord {
   providerThreadId?: string;
   bindingToken?: string;
   statusToken?: string;
+  shell?: TerminalShell;
 }
 
 export function adeDataDirectory(): string {

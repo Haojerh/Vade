@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fork, type ChildProcess } from 'node:child_process';
-import type { AdeProvider, AgentCatalogResponse, AgentStatus, Section, SendMessageRequest, TerminalPage } from '../../shared/contracts.js';
+import type { AdeProvider, AgentCatalogResponse, AgentStatus, Section, SendMessageRequest, TerminalPage, TerminalShell } from '../../shared/contracts.js';
 import { CliError } from '../integrations/cli.js';
 import { AdeStore, type SessionRecord } from './store.js';
 import { codexThread, validCodexThreadId } from './codexThread.js';
@@ -31,10 +31,33 @@ export function executableOnPath(name: string): string | null {
   return null;
 }
 
-export function resolveAgent(provider: AdeProvider): { executable: string; args: string[] } | null {
+export const TERMINAL_SHELLS: TerminalShell[] = ['powershell', 'cmd', 'bash'];
+const POWERSHELL_PROMPT = "function global:prompt { $h = Get-History -Count 1; if ($h) { $b = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($h.CommandLine)); [Console]::Write([char]27 + ']7502;' + $env:ADE_STATUS_TOKEN + ';' + $b + [char]7) }; 'PS ' + $executionContext.SessionState.Path.CurrentLocation + '> ' }";
+
+function resolveTerminalShell(shell: TerminalShell): { executable: string; args: string[] } | null {
+  const win = process.platform === 'win32';
+  const system32 = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32');
+  let executable: string | null = null, args: string[] = [];
+  if (shell === 'powershell') {
+    executable = win ? executableOnPath('pwsh') || path.join(system32, 'WindowsPowerShell', 'v1.0', 'powershell.exe') : executableOnPath('pwsh');
+    args = ['-NoLogo', '-NoExit', '-Command', POWERSHELL_PROMPT];
+  } else if (shell === 'cmd') {
+    executable = win ? path.join(system32, 'cmd.exe') : null;
+  } else {
+    // Prefer Git Bash on Windows; System32\bash.exe is the WSL launcher and would not start in the worktree cwd.
+    const git = win ? [process.env.ProgramFiles, process.env['ProgramFiles(x86)'], process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs')]
+      .filter((dir): dir is string => Boolean(dir)).map(dir => path.join(dir, 'Git', 'bin', 'bash.exe')).find(file => fs.existsSync(file)) : undefined;
+    const found = executableOnPath('bash');
+    executable = git ?? (found && !(win && found.toLowerCase().startsWith(system32.toLowerCase())) ? found : null);
+    args = ['--noprofile', '--norc', '-i'];
+  }
+  return executable && fs.existsSync(executable) ? { executable, args } : null;
+}
+
+export function resolveAgent(provider: AdeProvider, shell?: TerminalShell): { executable: string; args: string[] } | null {
   if (provider === 'terminal') {
-    const executable = process.platform === 'win32' ? executableOnPath('pwsh') || path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : executableOnPath('bash');
-    return executable && fs.existsSync(executable) ? { executable, args: process.platform === 'win32' ? ['-NoLogo', '-NoExit', '-Command', "function global:prompt { $h = Get-History -Count 1; if ($h) { $b = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($h.CommandLine)); [Console]::Write([char]27 + ']7502;' + $env:ADE_STATUS_TOKEN + ';' + $b + [char]7) }; 'PS ' + $executionContext.SessionState.Path.CurrentLocation + '> ' }"] : ['--noprofile', '--norc', '-i'] } : null;
+    if (shell) return resolveTerminalShell(shell);
+    return resolveTerminalShell('powershell') ?? resolveTerminalShell('bash');
   }
   const definition = PROVIDERS.find(item => item.id === provider);
   if (!definition) return null;
@@ -115,14 +138,16 @@ export class AdeSessions {
     return hook;
   }
 
-  async launch(projectId: string, worktreeId: string, cwd: string, command: string, title?: string): Promise<SessionRecord> {
+  async launch(projectId: string, worktreeId: string, cwd: string, command: string, title?: string, shell?: TerminalShell): Promise<SessionRecord> {
     const definition = PROVIDERS.find(provider => provider.command === command || provider.id === command);
     if (!definition) throw new CliError('INVALID_ARGUMENT', 'Select Codex, Claude Code or Antigravity; custom commands and flags are not accepted');
-    const resolved = this.resolve(definition.id);
+    if (shell !== undefined && (definition.id !== 'terminal' || !TERMINAL_SHELLS.includes(shell))) throw new CliError('INVALID_ARGUMENT', 'Shell selection applies only to Terminal and must be PowerShell, Command Prompt or Bash');
+    const resolved = this.resolve(definition.id, shell);
+    if (!resolved && shell) throw new CliError('CLI_MISSING', `The selected shell (${({ powershell: 'PowerShell', cmd: 'Command Prompt', bash: 'Bash' })[shell]}) is not available on this machine. Change it in Settings > General.`);
     if (!resolved) throw new CliError('CLI_MISSING', `${definition.name} is not installed or its executable is not available`);
     if (this.store.sessions(projectId).length >= 200) throw new CliError('RATE_LIMITED', 'Project session history has reached the 200 session limit');
     const record: SessionRecord = { id: crypto.randomUUID(), projectId, worktreeId, cwd, provider: definition.id,
-      title: title || definition.name, createdAt: new Date().toISOString(), closed: false };
+      title: title || definition.name, createdAt: new Date().toISOString(), closed: false, ...(shell ? { shell } : {}) };
     return this.start(record, resolved);
   }
 
@@ -131,7 +156,7 @@ export class AdeSessions {
     if (record.provider !== 'terminal' && !validCodexThreadId(record.providerThreadId)) throw new CliError('INVALID_ARGUMENT', 'This session has no exact provider recovery binding');
     if (record.provider === 'antigravity' && !this.savedAgy(record)) throw new CliError('RUNTIME_UNAVAILABLE', 'Antigravity has not saved this conversation yet. Empty sessions cannot be resumed; start a new agent.');
     if (this.live.get(id)?.live) throw new CliError('INVALID_ARGUMENT', 'This terminal is already running');
-    const resolved = this.resolve(record.provider);
+    const resolved = this.resolve(record.provider, record.shell);
     if (!resolved) throw new CliError('CLI_MISSING', 'This agent is not installed');
     return this.start(record, resolved);
   }
@@ -198,7 +223,7 @@ export class AdeSessions {
     env.ADE_STATUS_PROVIDER = record.provider;
     env.ADE_STATUS_CWD = record.cwd;
     env.ADE_STATUS_SESSION = record.providerThreadId ?? '';
-    if (record.provider === 'terminal' && process.platform !== 'win32') env.PROMPT_COMMAND = 'printf "\\033]7502;%s;%s\\007" "$ADE_STATUS_TOKEN" "$(history 1 | sed "s/^ *[0-9]* *//" | base64 | tr -d "\\n")"';
+    if (record.provider === 'terminal' && (record.shell === 'bash' || (!record.shell && process.platform !== 'win32'))) env.PROMPT_COMMAND = 'printf "\\033]7502;%s;%s\\007" "$ADE_STATUS_TOKEN" "$(history 1 | sed "s/^ *[0-9]* *//" | base64 | tr -d "\\n")"';
     if (record.provider === 'antigravity' && record.bindingToken) {
       env.ADE_BINDING_FILE = agyBindingFile(this.store.directory, record);
       env.ADE_BINDING_TOKEN = record.bindingToken;

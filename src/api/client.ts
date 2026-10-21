@@ -1,3 +1,4 @@
+import { readTerminalShell } from '../app/terminalShellPreference';
 import type {
   AgentChatOptions,
   ConversationPage,
@@ -394,7 +395,7 @@ export async function createWorktreeAgent(
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ command, title }),
+      body: JSON.stringify({ command, title, ...(command === 'terminal' ? { shell: readTerminalShell() } : {}) }),
       signal,
     },
   );

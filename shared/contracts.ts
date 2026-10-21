@@ -406,9 +406,13 @@ export interface RenameNodeTitleResponse {
   message?: string;
 }
 
+export type TerminalShell = 'powershell' | 'cmd' | 'bash';
+
 export interface CreateAgentRequest {
   command: string;
   title?: string;
+  /** Fixed shell choice; only applies when command is "terminal". */
+  shell?: TerminalShell;
 }
 
 export interface CreateWorktreeRequest {

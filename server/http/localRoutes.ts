@@ -1,5 +1,5 @@
 import type http from 'node:http';
-import type { CreateWorktreeRequest, GitHubQuery, RegisterProjectRequest, SendMessageRequest } from '../../shared/contracts.js';
+import type { CreateWorktreeRequest, GitHubQuery, RegisterProjectRequest, SendMessageRequest, TerminalShell } from '../../shared/contracts.js';
 import { CliError } from '../integrations/cli.js';
 import { collectGitHubData } from '../integrations/github.js';
 import { LocalRuntime, section } from '../runtime/localRuntime.js';
@@ -198,8 +198,8 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     else if (action === 'terminal-resize') { const request = await body<{ cols: number; rows: number }>(['cols', 'rows']); await runtime.sessions.resize(projectId, nodeId, request.cols, request.rows); }
     else if (action === 'create-agent') {
       const tree = await runtime.git.requireWorktree(project, nodeId);
-      const request = await body<{ command: string; title?: string }>(['command', 'title']);
-      const session = await runtime.sessions.launch(projectId, tree.id, tree.path, text(request.command, 'agent', 32), request.title === undefined ? undefined : text(request.title, 'title'));
+      const request = await body<{ command: string; title?: string; shell?: TerminalShell }>(['command', 'title', 'shell']);
+      const session = await runtime.sessions.launch(projectId, tree.id, tree.path, text(request.command, 'agent', 32), request.title === undefined ? undefined : text(request.title, 'title'), request.shell === undefined ? undefined : text(request.shell, 'shell', 16) as TerminalShell);
       sendJson(200, { ok: true, handle: session.id, title: session.title }); return;
     } else if (action === 'close-tab') { runtime.sessions.closeSession(projectId, nodeId); }
     else if (action === 'rename' || action === 'rename-worktree') {

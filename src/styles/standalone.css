@@ -106,7 +106,7 @@ dialog.add-agent-dialog { width: min(560px, calc(100vw - 32px)); }
 /* Consistent form inset, with independently scrolling details content. */
 dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-account-dialog { padding: 24px; }
 .modal-dialog-header, .modal-dialog-body { padding: 24px; }
-.session-view-toolbar { padding: 18px 24px 4px; }
+.session-view-toolbar { padding: 18px 24px 12px; }
 .agent-details-container { height: min(720px, 85vh); min-height: 0; }
 .agent-details-container .modal-dialog-body { min-height: 0; }
 .agent-details-container .conversation-section { flex: 1 0 auto; }
@@ -133,3 +133,6 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .conversation-tool-call .tool-edit-path { margin: 4px 0 2px; color: var(--text-secondary); }
 .conversation-tool-call .tool-edit-location { background: none; padding: 0; color: var(--text-muted); }
 .conversation-tool-call .tool-edit-caption { margin-top: 4px; color: var(--text-muted); }
+.settings-page-row .custom-select-control { width: 190px; flex-shrink: 0; }
+.settings-page-row .custom-select-native { font-size: 13px; padding: 9px 34px 9px 12px; }
+.settings-page-row .custom-select-native option { white-space: nowrap; }
