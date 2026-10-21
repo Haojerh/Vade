@@ -1,7 +1,7 @@
 export type Id = string; // opaque server-issued ID, 1..256 chars
 export type ISO = string; // validated UTC ISO-8601 timestamp
 export type State = 'working' | 'waiting' | 'blocked' | 'completed' | 'failed'
-  | 'idle' | 'unknown';
+  | 'interrupted' | 'idle' | 'unknown';
 export type Availability = 'ready' | 'empty' | 'unavailable' | 'unsupported';
 export type ErrorCode = 'INVALID_ARGUMENT' | 'PROJECT_NOT_FOUND' | 'RUN_NOT_FOUND'
   | 'NODE_NOT_FOUND' | 'METHOD_NOT_ALLOWED' | 'FORBIDDEN_ORIGIN'
@@ -77,6 +77,7 @@ export interface Run {
 }
 
 export interface Node {
+  agentStatus?: Section<AgentStatus>;
   id: Id;
   kind: 'orchestrator' | 'worktree' | 'agent' | 'terminal';
   label: string;
@@ -96,10 +97,13 @@ export interface Node {
   taskIds: Id[];
   preview: string | null;
   outputAvailable: boolean;
+  chatAvailable?: boolean;
   model?: string | null;
   effort?: string | null;
   toolActivity?: Section<ToolActivity[]>;
 }
+
+export interface AgentStatus { state: State; source: 'provider-hook' | 'provider-terminal'; event: string }
 
 /** Observed tool calls, with bounded edit-input excerpts; never tool output or private reasoning. */
 export interface ToolEditPreview {
@@ -211,6 +215,7 @@ export interface ConversationPage {
 }
 
 export interface NodeDetails {
+  session?: { terminal: boolean; chat: boolean; history?: boolean; resumable: boolean; reason?: string };
   node: Node;
   tasks: Task[];
   activity: Activity[];
@@ -333,6 +338,8 @@ export interface SendMessageResponse {
 }
 
 export interface PrerequisitesStatus {
+  runtime?: 'ade' | 'orca';
+  git?: boolean;
   orcaApp: boolean;
   orcaAppOpen: boolean;
   orcaCli: boolean;
@@ -405,6 +412,7 @@ export interface AgentCatalogEntry {
 }
 
 export interface AgentCatalogResponse {
+  runtime?: 'ade' | 'orca';
   installed: AgentCatalogEntry[];
   available: AgentCatalogEntry[];
   defaultAgentId?: string | null;
@@ -424,3 +432,30 @@ export interface InboxItem {
 }
 
 export interface InboxData { items: InboxItem[] }
+
+export type RegisterProjectRequest =
+  | { mode?: 'existing'; path: string; name?: string }
+  | { mode: 'create'; path: string; name: string }
+  | { mode: 'clone'; path: string; name: string; url: string };
+export interface RegisterProjectResponse { project: Project }
+export interface DeleteProjectResponse { ok: true }
+export interface LocalFolders {
+  path: string;
+  parent: string | null;
+  home: string;
+  folders: { name: string; path: string }[];
+  limited: boolean;
+}
+export type AdeProvider = 'codex' | 'claude' | 'antigravity';
+export interface TerminalPage {
+  resumable?: boolean;
+  data: string;
+  cursor: number;
+  reset: boolean;
+  live: boolean;
+  exitCode: number | null;
+}
+export interface TerminalInputRequest { data: string }
+export interface TerminalResizeRequest { cols: number; rows: number }
+export type TerminalClientMessage = { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number } | { type: 'ack'; cursor: number };
+export type TerminalServerMessage = { type: 'output'; page: TerminalPage } | { type: 'error'; message: string };

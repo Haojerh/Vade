@@ -2,6 +2,8 @@
 
 Read the root AGENTS.md first.
 
+- Standalone runtime lives in `runtime/` and routes through `http/localRoutes.ts`. Never fall back to Orca from standalone routes. Preserve provider authentication; user-requested permission bypass flags apply to new and resumed terminals and stay fixed server-side.
+
 - Keep `index.ts` as the process entry; route/validate in `http/`, access fixed upstream sources in `integrations/`, decode provider formats in `providers/`, and manage snapshots in `services/`.
 - Keep tests beside their implementation. Include new suites in the root `npm test` command.
 - Collection endpoints remain GET/HEAD only with loopback origin restrictions. Explicit actions listed in root AGENTS.md permit POST, including creating worktrees and renaming display names. No arbitrary executable, flags, RPC method, transcript path, or SQL may come from HTTP input.

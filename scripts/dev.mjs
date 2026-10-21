@@ -14,7 +14,7 @@ const host =
   process.env.HOST ||
   (hostArgIdx !== -1 && process.argv[hostArgIdx + 1] && !process.argv[hostArgIdx + 1].startsWith('-')
     ? process.argv[hostArgIdx + 1]
-    : '0.0.0.0');
+    : '127.0.0.1');
 
 const clientArgs = [viteEntry, '--host', host, '--port', '5173', '--strictPort'];
 

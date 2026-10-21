@@ -25,6 +25,10 @@ test('conversation history prepends older turns, deduplicates boundaries and exp
   assert.ok(html.includes('conversation-history-content'));
   assert.ok(!html.includes('conversation-history-scroll'));
   assert.ok(html.indexOf('Older message') < html.indexOf('Latest message'));
+  const atStart = renderToStaticMarkup(createElement(ConversationHistory, { projectId: 'project', nodeId: 'node', runId: null, page: {
+    messages: [latest], source: 'transcript', sourceIdentity: 'exact-session', provider: 'codex', cursor: null, nextCursor: null, limited: false, truncated: false, warnings: [],
+  } }));
+  assert.ok(!atStart.includes('Start of conversation') && !atStart.includes('conversation-history-pagination'));
 });
 
 test('live conversation updates replace matching IDs, retain loaded history and deduplicate reconnects', () => {

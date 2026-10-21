@@ -33,6 +33,10 @@ export async function setAgentChatOption(projectId: string, nodeId: string, runI
   }));
 }
 
+export async function deleteProject(projectId: string): Promise<import('../../shared/contracts').DeleteProjectResponse> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' }));
+}
+
 export async function fetchInbox(signal?: AbortSignal): Promise<Section<InboxData>> {
   return handleResponse<Section<InboxData>>(await fetch('/api/inbox', {
     headers: { Accept: 'application/json' }, signal,
@@ -78,6 +82,36 @@ async function handleResponse<T>(res: Response): Promise<T> {
     throw new Error(errorMessage);
   }
   return res.json() as Promise<T>;
+}
+
+export async function registerProject(request: string | import('../../shared/contracts').RegisterProjectRequest, signal?: AbortSignal): Promise<import('../../shared/contracts').RegisterProjectResponse> {
+  return handleResponse(await fetch('/api/projects', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(typeof request === 'string' ? { path: request } : request), signal }));
+}
+
+export async function fetchProjectFolders(path?: string, signal?: AbortSignal): Promise<import('../../shared/contracts').LocalFolders> {
+  return handleResponse(await fetch('/api/projects/folders' + (path ? `?path=${encodeURIComponent(path)}` : ''), { signal }));
+}
+
+export async function fetchTerminal(projectId: string, nodeId: string, cursor: number, signal?: AbortSignal): Promise<import('../../shared/contracts').TerminalPage> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/terminal?cursor=${cursor}`, { signal }));
+}
+
+const pendingResumes = new Map<string, Promise<void>>();
+export function resumeTerminal(projectId: string, nodeId: string): Promise<void> {
+  const url = `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/resume`;
+  const pending = pendingResumes.get(url);
+  if (pending) return pending;
+  const operation = (async () => {
+    await handleResponse(await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }));
+  })().finally(() => pendingResumes.delete(url));
+  pendingResumes.set(url, operation);
+  return operation;
+}
+
+export async function updateTerminal(projectId: string, nodeId: string, action: 'input' | 'resize', data: import('../../shared/contracts').TerminalInputRequest | import('../../shared/contracts').TerminalResizeRequest, signal?: AbortSignal): Promise<void> {
+  await handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/terminal-${action}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), signal,
+  }));
 }
 
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {

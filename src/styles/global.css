@@ -7,3 +7,6 @@
 @import './workflow.css';
 @import './panels.css';
 @import './modals.css';
+@import './standalone.css';
+@import './settings.css';
+@import '@xterm/xterm/css/xterm.css';

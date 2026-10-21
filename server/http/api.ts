@@ -8,8 +8,12 @@ import { InboxCollector } from '../services/inbox.js';
 import { createResponseHelpers, parseSearchQuery, serveStaticFile } from './httpUtils.js';
 import { handleReadRoute } from './readRoutes.js';
 import { handleActionRoute, isMethodAllowedForRoute, matchActionRoutes } from './actionRoutes.js';
+import type { LocalRuntime } from '../runtime/localRuntime.js';
+import { handleLocalRoute } from './localRoutes.js';
+import { attachTerminalSockets } from './terminalSocket.js';
 
 export interface ApiServerOptions {
+  localRuntime?: LocalRuntime;
   runner?: CommandRunner;
   snapshotManager?: SnapshotManager;
   distDir?: string;
@@ -68,6 +72,10 @@ export function createApiHandler(options: ApiServerOptions = {}) {
 
     const reqUrl = new URL(req.url ?? '/', 'http://127.0.0.1');
     const pathname = reqUrl.pathname;
+    if (options.localRuntime && pathname.startsWith('/api/')) {
+      await handleLocalRoute(options.localRuntime, req, res, requestId, reqUrl);
+      return;
+    }
     const actionMatches = matchActionRoutes(pathname);
 
     if (!isMethodAllowedForRoute(reqMethod, actionMatches)) {
@@ -156,5 +164,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
 
 export function createServer(options: ApiServerOptions = {}): http.Server {
   const handler = createApiHandler(options);
-  return http.createServer(handler);
+  const server = http.createServer(handler);
+  if (options.localRuntime) attachTerminalSockets(server, options.localRuntime, options.allowedOrigins);
+  return server;
 }

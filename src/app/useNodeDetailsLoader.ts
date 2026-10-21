@@ -90,7 +90,7 @@ export function useNodeDetailsLoader({
     };
   }, [loadNodeDetails, selectedNodeId]);
 
-  const streamKind = nodeDetails?.node.id === selectedNodeId ? nodeDetails.node.kind : null;
+  const streamKind = nodeDetails?.node.id === selectedNodeId && (nodeDetails.session?.chat !== false || nodeDetails.session.history) ? nodeDetails.node.kind : null;
   const streamIdentity = nodeDetails?.conversation.data?.sourceIdentity;
   useEffect(() => {
     if (!selectedProjectId || !selectedNodeId || !streamKind || !['agent', 'orchestrator'].includes(streamKind)) return;

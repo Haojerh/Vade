@@ -559,7 +559,8 @@
   color: var(--state-working-text);
   border: 1px solid var(--state-working-border);
 }
-.node-badge-state.state-waiting {
+ .node-badge-state.state-waiting,
+ .node-badge-state.state-interrupted {
   background: var(--state-waiting-bg);
   color: var(--state-waiting-text);
   border: 1px solid var(--state-waiting-border);
@@ -592,6 +593,7 @@
 [data-card-colors="false"] .graph-node-card.state-completed,
 [data-card-colors="false"] .graph-node-card.state-idle,
 [data-card-colors="false"] .graph-node-card.state-waiting,
+[data-card-colors="false"] .graph-node-card.state-interrupted,
 [data-card-colors="false"] .graph-node-card.state-blocked,
 [data-card-colors="false"] .graph-node-card.state-failed,
 [data-card-colors="false"] .graph-node-card.state-unknown,
@@ -618,7 +620,8 @@
   background: var(--card-idle-bg);
   border-color: var(--card-idle-border);
 }
-[data-card-colors="true"] .graph-node-card.state-waiting {
+[data-card-colors="true"] .graph-node-card.state-waiting,
+[data-card-colors="true"] .graph-node-card.state-interrupted {
   background: var(--state-waiting-bg);
   border-color: var(--state-waiting-border);
 }

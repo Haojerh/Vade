@@ -527,110 +527,7 @@
   gap: 8px;
   width: 100%;
 }
-.footer-settings-popover {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: 100%;
-  min-width: 220px;
-  max-width: 100%;
-  max-height: 75vh;
-  overflow-y: auto;
-  box-sizing: border-box;
-  background: var(--surface-1);
-  border: 1px solid var(--border-main);
-  border-radius: 8px;
-  padding: 10px 12px;
-  box-shadow: var(--shadow-lg);
-  z-index: 60;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.footer-settings-popover .settings-popover-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding-bottom: 6px;
-  border-bottom: 1px solid var(--border-subtle);
-  color: var(--text-main);
-}
-.settings-option-desc {
-  padding-bottom: 6px;
-}
-.footer-settings-popover .settings-option-row {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--text-main);
-  cursor: pointer;
-  user-select: none;
-}
-.footer-settings-popover .settings-option-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.footer-settings-popover .settings-theme-row {
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-subtle);
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  cursor: default;
-}
-.settings-sections-group {
-  margin-top: 2px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border-subtle);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.settings-group-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  color: var(--text-main);
-}
-.settings-group-label {
-  font-size: 11px;
-  font-weight: 600;
-}
-.settings-checkboxes-list {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  margin-top: 2px;
-}
-.settings-checkbox-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 11px;
-  color: var(--text-main);
-  cursor: pointer;
-  user-select: none;
-  padding: 3px 4px;
-  border-radius: 4px;
-  transition: background 120ms ease;
-}
-.settings-checkbox-item:hover {
-  background: var(--surface-hover);
-}
-.settings-checkbox-item .settings-checkbox {
-  accent-color: var(--focus-ring);
-  cursor: pointer;
-  width: 13px;
-  height: 13px;
-  margin: 0;
-  flex-shrink: 0;
-}
-
 .usage-popover,
-.footer-settings-popover,
 .settings-popover {
   transform-origin: bottom left;
   animation: popoverEnter 180ms var(--ease-out);
@@ -645,8 +542,7 @@
 }
 @media (prefers-reduced-motion: reduce) {
   .usage-popover,
-  .footer-settings-popover,
-  .settings-popover,
+    .settings-popover,
   .usage-refresh .spin { animation: none; }
 }
 

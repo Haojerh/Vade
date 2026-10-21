@@ -166,7 +166,7 @@ function lookupJournalSessionById(
   return null;
 }
 
-function parseCoordinatorTranscriptLine(
+export function parseCoordinatorTranscriptLine(
   line: string,
   provider: string,
   opaqueSourceIdentity: string

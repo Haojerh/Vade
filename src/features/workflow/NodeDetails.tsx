@@ -1,7 +1,7 @@
 import { WorktreeHistory } from '../github/WorktreeHistory';
 import { Disclosure } from '../../components/ui/Disclosure';
 import { Modal } from '../../components/ui/Modal';
-import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Node, NodeDetails as NodeDetailsType } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
 import { ConversationHistory } from './ConversationHistory';
@@ -11,6 +11,7 @@ import { MessageAttachments } from './MessageAttachments';
 import { AgentChatMetadata } from './AgentChatMetadata';
 import { DictationButton } from './DictationButton';
 import { appendDictation } from './dictation';
+const AgentTerminal = lazy(() => import('./AgentTerminal').then(module => ({ default: module.AgentTerminal })));
 import {
   NodeDetailsHeader,
   NodeDetailsActionDialogs,
@@ -37,6 +38,7 @@ interface NodeDetailsProps {
   selectedNode?: Node | null;
   onClose: () => void;
   onRefresh: () => void;
+  onSessionChange?: () => void;
   visibleSections?: NodeDetailsVisibleSections;
   commitGraphEnabled?: boolean;
 }
@@ -51,11 +53,14 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   selectedNode,
   onClose,
   onRefresh,
+  onSessionChange,
   visibleSections,
   commitGraphEnabled = false,
 }) => {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [showBackToBottom, setShowBackToBottom] = useState(false);
+  const [sessionView, setSessionView] = useState<'chat' | 'terminal'>('terminal');
+  useEffect(() => { setSessionView('terminal'); }, [projectId, selectedNodeId]);
   useLayoutEffect(() => {
     setShowBackToBottom(false);
     if (details?.node.id !== selectedNodeId || details?.node.kind === 'worktree') return;
@@ -77,6 +82,12 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const [chatSending, setChatSending] = useState<boolean>(false);
   const [dictating, setDictating] = useState(false);
   const [chatStatus, setChatStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const chatRequest = useRef<AbortController | null>(null);
+  const chatTarget = useRef(''); chatTarget.current = `${projectId}:${selectedNodeId}`;
+  useEffect(() => {
+    setChatSending(false); setChatStatus(null);
+    return () => { chatRequest.current?.abort(); chatRequest.current = null; };
+  }, [projectId, selectedNodeId]);
 
   useEffect(() => {
     if (selectedNodeId) detailsOverlay.open();
@@ -98,17 +109,19 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
     if (!projectId || !details?.node || (!chatMessage.trim() && !chatFiles.length) || chatSending || dictating) return;
     setChatSending(true);
     setChatStatus(null);
+    const target = chatTarget.current, abort = new AbortController(); chatRequest.current = abort;
+    const current = () => !abort.signal.aborted && chatTarget.current === target;
     try {
-      await sendNodeMessage(projectId, details.node.id, chatMessage.trim(), undefined, chatFiles);
-      setChatStatus({ type: 'success', text: 'Message sent!' });
+      await sendNodeMessage(projectId, details.node.id, chatMessage.trim(), abort.signal, chatFiles);
+      if (!current()) return;
       setChatMessage('');
       setChatFiles([]);
-      setTimeout(() => setChatStatus(null), 3000);
       onRefresh();
     } catch (err: any) {
-      setChatStatus({ type: 'error', text: err?.message || 'Failed to send message' });
+      if (current()) setChatStatus({ type: 'error', text: err?.message || 'Failed to send message' });
     } finally {
-      setChatSending(false);
+      if (current()) setChatSending(false);
+      if (chatRequest.current === abort) chatRequest.current = null;
     }
   };
 
@@ -150,6 +163,14 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
             onRefresh={onRefresh}
             onClose={handleClose}
           />
+
+          {isMatchingDetails && !isWorktree && details?.session && projectId && <div className="session-view-toolbar">
+            <button type="button" className="session-view-switch" role="switch" aria-label="Terminal view" aria-checked={sessionView === 'terminal'} onClick={() => setSessionView(view => view === 'chat' ? 'terminal' : 'chat')}>
+              <span className={sessionView === 'chat' ? 'is-active' : ''}>Chat</span>
+              <span className="session-view-track" aria-hidden="true"><span /></span>
+              <span className={sessionView === 'terminal' ? 'is-active' : ''}>Terminal</span>
+            </button>
+          </div>}
 
           <div ref={bodyRef} className="modal-dialog-body" onScroll={event => {
             const body = event.currentTarget;
@@ -205,7 +226,11 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                   </Disclosure>
                 )}
 
-                {activeVisibleSections.conversation && !isWorktree && (
+                {!isWorktree && details?.session && projectId && <>
+                  {sessionView === 'terminal' && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} onStatusChange={onSessionChange} /></Suspense>}
+                </>}
+
+                {activeVisibleSections.conversation && !isWorktree && (!details?.session || (sessionView === 'chat' && details.session.history)) && (
                   <section className="conversation-section" aria-label="Conversation">
                     {convMeta?.issue && !isUnstartedAgentConvo && (
                       <div className="panel-alert alert-error mb-3" role="alert">
@@ -234,9 +259,9 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                   </section>
                 )}
 
-                {activeVisibleSections.chatbox && !isWorktree && (
+                {activeVisibleSections.chatbox && !isWorktree && (!details?.session || (sessionView === 'chat' && details.session.chat)) && (
                   <div className="modal-section agent-chatbox-section">
-                    {chatStatus && <div className="section-header-row">
+                    {chatStatus?.type === 'error' && <div className="section-header-row">
 
                       {chatStatus && (
                         <span
@@ -290,7 +315,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                             value={chatMessage}
                             onChange={(e) => setChatMessage(e.target.value)}
                             onKeyDown={(e) => {
-                              if (e.key === 'Enter' && !e.shiftKey) {
+                              if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                                 e.preventDefault();
                                 handleSendMessage();
                               }

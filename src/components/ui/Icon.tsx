@@ -15,6 +15,7 @@ export type IconName =
   | 'check'
   | 'alert-circle'
   | 'folder'
+  | 'globe'
   | 'git-branch'
   | 'git-pull-request'
   | 'git-commit'
@@ -59,6 +60,8 @@ export const Icon: React.FC<IconProps> = ({
 }) => {
   const renderPaths = () => {
     switch (name) {
+      case 'globe':
+        return <><circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" /></>;
       case 'mic':
         return <><rect x="9" y="2" width="6" height="12" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M8 22h8" /></>;
       case 'terminal':

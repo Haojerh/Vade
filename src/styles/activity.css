@@ -35,8 +35,7 @@
 .node-message-preview-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 6; overflow: hidden; margin-bottom: 8px; }
 .latest-message-text { max-height: 280px; overflow-y: auto; margin-bottom: 8px; }
 .refresh-icon.spin { transform-box: fill-box; transform-origin: center; }
-.usage-popover.is-closing,
-.footer-settings-popover.is-closing {
+.usage-popover.is-closing {
   animation: popoverExit 150ms var(--ease-in-out) forwards;
   pointer-events: none;
 }
@@ -135,6 +134,6 @@
 .latest-message-footer button { margin-left: auto; }
 @media (prefers-reduced-motion: reduce) {
   .node-message-preview, .refresh-icon.spin,
-  .usage-popover.is-closing, .footer-settings-popover.is-closing { animation: none !important; }
+  .usage-popover.is-closing { animation: none !important; }
   .github-tab-indicator { transition: none; }
 }

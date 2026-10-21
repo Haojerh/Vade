@@ -52,15 +52,15 @@ export function AddWorktreeDialog({ project, isClosing = false, onClose, onCreat
         <label className="worktree-field">Worktree name<input autoFocus required maxLength={100} pattern="[a-zA-Z0-9][a-zA-Z0-9._-]*" placeholder="e.g. fix-login" value={name} onChange={e => setName(e.target.value)} /></label>
         <div className="worktree-field"><span>Create from <span className="text-muted">(optional)</span></span>
           <div className="worktree-source-tabs" role="tablist" aria-label="Worktree source">
-            {(['name', 'branch', 'pr', 'issue'] as const).map(m => <button type="button" key={m} role="tab" aria-selected={mode === m} className={`btn btn-xs ${mode === m ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setMode(m); setSource(''); }}><Icon name={({ name: 'edit', branch: 'git-branch', pr: 'git-pull-request', issue: 'circle-dot' } as const)[m]} size={13} /><span>{({ name: 'Name', branch: 'Branch', pr: 'GitHub PR', issue: 'GitHub Issue' })[m]}</span></button>)}
+            {(['name', 'branch', 'pr', 'issue'] as const).filter(m => catalog?.runtime !== 'ade' || m === 'name' || m === 'branch').map(m => <button type="button" key={m} role="tab" aria-selected={mode === m} className={`btn btn-xs ${mode === m ? 'btn-primary' : 'btn-secondary'}`} onClick={() => { setMode(m); setSource(''); }}><Icon name={({ name: 'edit', branch: 'git-branch', pr: 'git-pull-request', issue: 'circle-dot' } as const)[m]} size={13} /><span>{({ name: 'Name', branch: 'Branch', pr: 'GitHub PR', issue: 'GitHub Issue' })[m]}</span></button>)}
           </div>
           {mode !== 'name' && <input aria-label={mode === 'branch' ? 'Source branch' : 'GitHub number'} required placeholder={mode === 'branch' ? 'Branch or ref, e.g. origin/main' : 'Number, e.g. 1234'} pattern={mode === 'branch' ? undefined : '[1-9][0-9]{0,8}'} value={source} onChange={e => setSource(e.target.value)} />}
-          {mode === 'name' && <span className="text-xs text-muted">Uses the repository’s default base branch.</span>}
+          {mode === 'name' && <span className="text-xs text-muted">{catalog?.runtime === 'ade' ? 'Creates a new branch from the current checkout’s HEAD.' : 'Uses the repository’s default base branch.'}</span>}
         </div>
         <div className="worktree-field"><span>Agent <span className="text-muted">(optional)</span></span><AgentPicker agents={catalog?.installed ?? []} value={agentId} onChange={id => { agentChosen.current = true; setAgentId(id); }} disabled={busy} loading={catalogLoading} error={catalogError} onRetry={() => void refreshCatalog()} optional /></div>
         <Disclosure title="Advanced" compact><div className="worktree-advanced">
           {mode !== 'branch' && <label className="worktree-field">Base branch<input maxLength={256} placeholder="Repository default" value={baseBranch} onChange={e => setBaseBranch(e.target.value)} /></label>}
-          <label className="worktree-field">Repository setup<Select value={setup} onChange={e => setSetup(e.target.value as CreateWorktreeRequest['setup'])}><option value="inherit">Use repository settings</option><option value="run">Run setup hooks</option><option value="skip">Skip setup hooks</option></Select></label>
+          {catalog?.runtime !== 'ade' && <label className="worktree-field">Repository setup<Select value={setup} onChange={e => setSetup(e.target.value as CreateWorktreeRequest['setup'])}><option value="inherit">Use repository settings</option><option value="run">Run setup hooks</option><option value="skip">Skip setup hooks</option></Select></label>}
         </div></Disclosure>
       </fieldset>
       <DialogError error={error} />

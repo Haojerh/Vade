@@ -1,5 +1,17 @@
 # AGENTS.md
 
+## Standalone ADE migration
+
+- Production `server/index.ts` creates `LocalRuntime` from `server/runtime/localRuntime.ts`. Orca adapters below remain legacy migration code and regression fixtures, not a standalone dependency.
+- Web and Electron (`desktop/main.cjs`) share the frontend, HTTP contracts and `~/.ade` registry (override with `ADE_DATA_DIR`).
+- `server/runtime/store.ts` owns SQLite; `git.ts` owns bounded Git; `sessions.ts` launches detected Codex, Claude Code and Antigravity in owned PTYs. No arbitrary launch commands or flags. Terminal input goes only to a selected owned process, never to a shell launcher.
+- `server/http/localRoutes.ts` handles standalone APIs, including `POST /api/projects` (`RegisterProjectRequest`) and node `GET terminal`, `POST terminal-input`, `POST terminal-resize`. Loopback and origin constraints apply.
+- Chat reads exact bound Codex, Claude Code and Antigravity history through `runtime/conversation.ts`. `sessions.send` stages validated attachments and a bracketed-paste prompt in the exact owned terminal, then submits once; guard readiness and serialize against terminal typing. Permissions stay in Terminal. Never retry uncertain sends or turn terminal bytes into chat. Bound terminals recover once when opened; never replay input or restart intentionally exited terminals in a loop.
+- `runtime/statusHooks.ts` observes exact-session provider events, with a fresh launch token after resume. `runtime/programStatus.ts` reads Codex/Claude root OSC 7501 reports from owned PTYs; ignore child/foreign reports. Native interruption confirmation requires a recent active-turn interruption request. Keep Completed/Failed/Interrupted until new activity; never turn process exit or input alone into an outcome. Status changes publish snapshots immediately; missing evidence stays unknown. Antigravity fully idle Stop ends its turn; ignore late bookkeeping until a new invocation. Turn-end events do not establish task outcomes. Preserve existing hooks and normal provider permissions/trust.
+- Worktree deletion refuses main/locked/dirty checkouts and open ADE sessions. Never force removal. Setup hooks and PR/issue sources remain unsupported.
+- `RegisterProject.tsx` owns onboarding; `AgentTerminal.tsx` owns terminal display, ordered input, cancellation and explicit reconnect. Never replay input on reconnect.
+- Include `server/runtime/localRuntime.test.ts` in `npm test`; run `npm test` and `npm run build:desktop` after migration changes. Startup must work without Orca calls.
+
 Conventions, architecture patterns, and interface contracts for agents contributing to the `orca-visualization` project.
 
 ## Project Scope & Conventions
@@ -23,6 +35,12 @@ Conventions, architecture patterns, and interface contracts for agents contribut
   - Conversation history contains public agent/user turns only, never tool output or internal thinking. Resolve exact provider/session provenance, bound file reads, and bind opaque cursors to project/node/run/source. Model/effort fields contain observed effective metadata only.
 
 ## HTTP Endpoints & API Contract
+
+Standalone ADE supports `DELETE /api/projects/:projectId` to remove registry metadata only. It rejects projects with open agent tabs and preserves all project files and worktrees.
+
+Standalone `POST /api/projects/:projectId/nodes/:nodeId/resume` accepts an empty JSON object only. Resume is limited to saved provider UUIDs and the exact discovered worktree. `server/runtime/codexThread.ts` owns bounded fixed-method Codex app-server binding; `agyBinding.ts` captures authenticated, workspace-checked Antigravity `conversationId` hook metadata. Claude uses an assigned `--session-id` and exact `--resume`. Never infer a thread from terminal text or the latest global history. Native Chat remains unsupported.
+
+`server/http/terminalSocket.ts` owns `/api/projects/:projectId/nodes/:nodeId/terminal-stream` upgrades, loopback origin checks, fixed input/resize messages, bounded output and renderer acknowledgement credit. Shared wire types live in `shared/contracts.ts`. Keep input ordered, never replay uncertain writes, and stop upgraded sockets during runtime shutdown. Secure local development permits `https://127.0.0.1:5173` and `https://localhost:5173` socket origins alongside the documented HTTP origins.
 
 
 - `GET /api/inbox` returns `Section<InboxData>` with up to 200 observed agent/task results across projects. Collection is cached for 30 seconds, shares in-flight reads, and checks at most 10 recent runs with two run jobs in flight. Never infer failure from message text, tool errors, or liveness. Attribute task results to their worker's discovered workspace. Browser handling persists separately; the 24-hour project failure edge uses the latest result per agent/run and excludes handled items.

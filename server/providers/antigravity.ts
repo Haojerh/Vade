@@ -326,7 +326,7 @@ export function isAntigravityChatRecord(line: string): boolean {
   }
 }
 
-function parseAntigravityTranscriptLine(
+export function parseAntigravityTranscriptLine(
   line: string,
   opaqueSourceIdentity: string
 ): { message: ConversationMessage | null; omitted: boolean } {

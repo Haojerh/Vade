@@ -5,6 +5,30 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { normalizeProvider, ProviderIcon } from '../components/providers/ProviderIcon';
 import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
+import { SettingsPage } from '../app/SettingsPage';
+
+test('Settings is a dedicated page with category navigation and existing preference values', () => {
+  const html = renderToStaticMarkup(createElement(SettingsPage, {
+    section: 'workflow', onBack: () => {}, theme: 'dark', onToggleTheme: () => {},
+    cardStateColors: true, onToggleCardStateColors: () => {},
+    toolActivityEnabled: false, onToggleToolActivity: () => {},
+  }));
+  assert.match(html, /Back to app/);
+  assert.match(html, /Search settings/);
+  assert.match(html, /href="#\/settings\/general"/);
+  assert.match(html, /aria-current="page"/);
+  assert.match(html, /Live tool nodes/);
+  assert.match(html, /Card state colors/);
+  assert.ok(!html.includes('Agent details'));
+  assert.ok(!html.includes('role="dialog"') && !html.includes('popover'));
+  const general = renderToStaticMarkup(createElement(SettingsPage, {
+    section: 'general', onBack: () => {}, theme: 'light', onToggleTheme: () => {},
+    cardStateColors: true, onToggleCardStateColors: () => {},
+  }));
+  assert.match(general, /Appearance/);
+  assert.match(general, /current theme is light/);
+  assert.ok(!general.includes('Live tool nodes'));
+});
 import { DEFAULT_VISIBLE_SECTIONS } from '../features/workflow/NodeDetails';
 import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
@@ -18,6 +42,28 @@ import { AgentChatMetadata } from '../features/workflow/AgentChatMetadata';
 import { useConfirmationState } from '../hooks/useConfirmationState';
 import type { PrerequisitesStatus } from '../../shared/contracts';
 import { useDashboardLayoutPrefs } from '../app/useDashboardLayoutPrefs';
+import { resumeTerminal } from '../api/client';
+
+test('concurrent terminal recovery shares one exact-session request and allows later explicit recovery', async () => {
+  const original = globalThis.fetch;
+  let calls = 0;
+  let release!: (response: Response) => void;
+  globalThis.fetch = async (url, options) => {
+    assert.equal(url, '/api/projects/project/nodes/agent/resume');
+    assert.equal(options?.method, 'POST'); assert.equal(options?.body, '{}');
+    calls++;
+    return new Promise<Response>(resolve => { release = resolve; });
+  };
+  try {
+    const first = resumeTerminal('project', 'agent');
+    const second = resumeTerminal('project', 'agent');
+    assert.equal(first, second); assert.equal(calls, 1);
+    release(new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    await Promise.all([first, second]);
+    const later = resumeTerminal('project', 'agent'); assert.equal(calls, 2);
+    release(new Response(JSON.stringify({ ok: true }), { status: 200 })); await later;
+  } finally { globalThis.fetch = original; }
+});
 
 test('composer model and effort are observed text with no picker or button', () => {
   const html = renderToStaticMarkup(createElement(AgentChatMetadata, { model: 'gpt-5.6-sol', effort: 'high' }));
@@ -359,7 +405,7 @@ test('PrerequisitesGate renders loading state when initially loading without dat
     onRecheck: () => {},
     isChecking: false,
   }));
-  assert.ok(html.includes('Checking Orca Environment...'));
+  assert.ok(html.includes('Connecting to ADE'));
   assert.ok(html.includes('prereq-spinner'));
 });
 

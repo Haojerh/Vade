@@ -285,7 +285,7 @@ export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
             )}
             {node && (
               <div className="modal-status-group">
-                <span className={`node-badge-state state-${node.state}`}>
+                <span className={`node-badge-state state-${node.state}`} title={node.agentStatus?.meta.issue?.message ?? (node.agentStatus?.data ? `Observed ${node.agentStatus.data.event}` : undefined)}>
                   {node.state}
                 </span>
                 <div className="modal-liveness-tag" title={`Liveness: ${node.liveness}`}>
@@ -350,7 +350,7 @@ export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
                 }}
                 disabled={actions.isDeletingWorktree}
                 aria-label="Delete worktree"
-                title="Delete this worktree from Orca and git"
+                title="Delete this Git worktree"
               >
                 <Icon name="trash" size={12} />
                 <span>Delete Worktree</span>
@@ -366,7 +366,7 @@ export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
               }}
               disabled={actions.isClosingAgentTab}
               aria-label="Close agent tab"
-              title="Close agent terminal tab in Orca"
+              title="Close agent terminal tab"
             >
               <Icon name="x-square" size={12} />
               <span>Close Agent Tab</span>
@@ -403,7 +403,7 @@ export const NodeDetailsActionDialogs: React.FC<{
         description={
           <>
             Are you sure you want to delete worktree <strong>{node?.label}</strong>? This will remove the worktree
-            from Orca and git.
+            from the local workspace.
           </>
         }
         confirmLabel="Delete Worktree"

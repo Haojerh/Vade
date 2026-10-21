@@ -1,17 +1,19 @@
-import { Popover } from '../../components/ui/Popover';
 import { Select } from '../../components/ui/Select';
 import React from 'react';
 import { UsagePanel } from '../usage/UsagePanel';
-import { usePopoverState } from '../../hooks/usePopoverState';
 import type { DashboardSnapshot, Inventory, Section } from '../../../shared/contracts';
 import {
   type NodeDetailsVisibleSections,
-  DEFAULT_VISIBLE_SECTIONS,
 } from '../workflow/NodeDetails';
 import { Icon } from '../../components/ui/Icon';
-import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
+import { RegisterProject } from './RegisterProject';
+import { DeleteProject } from './DeleteProject';
 
 export interface ProjectSelectorProps {
+  onOpenSettings?: () => void;
+  standalone?: boolean;
+  onRegistered?: (id: string) => void;
+  onDeleted?: () => void;
   failedProjectIds?: ReadonlySet<string>;
   inventorySection: Section<Inventory> | null;
   loading: boolean;
@@ -38,6 +40,10 @@ export interface ProjectSelectorProps {
 }
 
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
+  onOpenSettings,
+  standalone,
+  onRegistered,
+  onDeleted,
   failedProjectIds,
   inventorySection,
   loading,
@@ -48,27 +54,11 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   isLocallyStale,
   connectionMode,
   onCollapse,
-  theme,
-  onToggleTheme,
-  cardStateColors,
-  onToggleCardStateColors,
-  orchestrationSeparated,
-  onToggleOrchestrationSeparated,
-  visibleSections,
-  onToggleVisibleSection,
-  onResetVisibleSections,
-  commitGraphEnabled,
-  onToggleCommitGraph,
-  toolActivityEnabled,
-  onToggleToolActivity,
 }) => {
-  const { present: isSettingsOpen, closing: isSettingsClosing, close: closeSettings, toggle: toggleSettings } = usePopoverState();
-  const settingsTriggerRef = React.useRef<HTMLButtonElement>(null);
 
   const projects = inventorySection?.data?.projects ?? [];
   const runtime = snapshot?.runtime?.data;
   const runtimeMeta = snapshot?.runtime?.meta;
-  const activeVisibleSections = visibleSections ?? DEFAULT_VISIBLE_SECTIONS;
 
   const [isProjectsExpanded, setIsProjectsExpanded] = React.useState<boolean>(() => {
     try {
@@ -138,7 +128,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
         <div className="runtime-meta-details">
           {runtime?.version ? (
             <div className="runtime-meta-row">
-              <span className="meta-label">Orca:</span>
+              <span className="meta-label">{standalone ? 'ADE:' : 'Orca:'}</span>
               <span className="meta-val font-mono">{runtime.version}</span>
             </div>
           ) : runtimeMeta?.issue ? (
@@ -169,8 +159,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       <div className="rail-brand">
         <div className="brand-title-row">
           <div className="brand-title-main">
-            <img src={new URL('../../assets/brand/orca.png', import.meta.url).href} width={24} height={24} className="brand-icon" alt="" />
-            <span className="brand-name font-bold">Orca Live</span>
+            {standalone ? <Icon name="layers" size={24} /> : <img src={new URL('../../assets/brand/orca.png', import.meta.url).href} width={24} height={24} className="brand-icon" alt="" />}
+            <span className="brand-name font-bold">{standalone ? 'ADE' : 'Orca Live'}</span>
           </div>
 
           {onCollapse && (
@@ -185,7 +175,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             </button>
           )}
         </div>
-        <div className="brand-tagline">Workflow Atlas</div>
+        <div className="brand-tagline">{standalone ? 'Your local agent workspace' : 'Workflow Atlas'}</div>
       </div>
 
       {/* Mobile Selector Dropdown */}
@@ -230,6 +220,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
               className={`rail-chevron-icon ${isProjectsExpanded ? 'is-expanded' : ''}`}
             />
           </button>
+          {standalone && onRegistered && <RegisterProject onRegistered={onRegistered} />}
         </div>
 
         {loading && <div className="rail-empty-hint">Scanning projects…</div>}
@@ -282,6 +273,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
                         </div>
                       )}
                     </button>
+                    {standalone && onDeleted && <DeleteProject project={proj} onDeleted={onDeleted} />}
                   </div>
                 </li>
               );
@@ -294,131 +286,11 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       <div className="rail-footer">
         {renderRuntimeStatus()}
 
-        {/* Footer controls: Settings dropup popover */}
         <div className="rail-footer-controls">
-          <button
-            type="button"
-            className={`btn btn-secondary btn-xs ${isSettingsOpen ? 'btn-active' : ''}`}
-            ref={settingsTriggerRef}
-            onClick={toggleSettings}
-            aria-label="Dashboard settings"
-            aria-haspopup="dialog"
-            aria-expanded={isSettingsOpen && !isSettingsClosing}
-            title="Dashboard settings"
-          >
-            <Icon name="settings" size={12} />
-            <span className="btn-label">Settings</span>
+          <button type="button" className="btn btn-secondary btn-xs" onClick={onOpenSettings}
+            aria-label="Dashboard settings" title="Dashboard settings">
+            <Icon name="settings" size={12} /><span className="btn-label">Settings</span>
           </button>
-
-          <Popover isOpen={isSettingsOpen} isClosing={isSettingsClosing} onClose={closeSettings} triggerRef={settingsTriggerRef}
-            className="footer-settings-popover" aria-label="Dashboard settings">
-              <div className="settings-popover-header">
-                <span className="font-bold text-sm">Settings</span>
-                <OverlayCloseButton onClick={closeSettings} aria-label="Close settings" />
-              </div>
-              <div className="settings-popover-body">
-                <label className="settings-option-row"><div className="settings-option-text"><span className="settings-option-label font-semibold">Live Tool Nodes</span><span className="settings-option-desc text-xs text-muted">Show observed tool calls near their agent.</span></div><input type="checkbox" className="settings-checkbox" checked={toolActivityEnabled ?? true} onChange={e => onToggleToolActivity?.(e.target.checked)} /></label>
-                <label className="settings-option-row"><div className="settings-option-text"><span className="settings-option-label font-semibold">Commit Graph History</span><span className="settings-option-desc text-xs text-muted">Show local branches and merges in the Commits tab.</span></div><input type="checkbox" className="settings-checkbox" checked={commitGraphEnabled ?? false} onChange={e => onToggleCommitGraph?.(e.target.checked)} /></label>
-                <label className="settings-option-row">
-                  <div className="settings-option-text">
-                    <span className="settings-option-label font-semibold">Card State Colors</span>
-                    <span className="settings-option-desc text-xs text-muted">
-                      Color cards by state: blue working, green completed, neutral idle.
-                    </span>
-                  </div>
-                  <input
-                    type="checkbox"
-                    className="settings-checkbox"
-                    checked={cardStateColors}
-                    onChange={(e) => onToggleCardStateColors(e.target.checked)}
-                  />
-                </label>
-
-                {onToggleOrchestrationSeparated && (
-                  <label className="settings-option-row">
-                    <div className="settings-option-text">
-                      <span className="settings-option-label font-semibold">Orchestration Separated</span>
-                      <span className="settings-option-desc text-xs text-muted">
-                        Display orchestrator in a separate lane (default). Disable to merge inside the worktree.
-                      </span>
-                    </div>
-                    <input
-                      type="checkbox"
-                      className="settings-checkbox"
-                      checked={orchestrationSeparated ?? true}
-                      onChange={(e) => onToggleOrchestrationSeparated(e.target.checked)}
-                    />
-                  </label>
-                )}
-
-                <div className="settings-option-row settings-theme-row">
-                  <div className="settings-option-text">
-                    <span className="settings-option-label font-semibold">Appearance</span>
-                    <span className="settings-option-desc text-xs text-muted">
-                      Theme: {theme === 'dark' ? 'Dark' : 'Light'}
-                    </span>
-                  </div>
-                  <button
-                    type="button"
-                    className="btn btn-secondary btn-xs theme-toggle-btn"
-                    onClick={onToggleTheme}
-                    aria-label={`Toggle theme, current theme is ${theme}`}
-                    title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} theme`}
-                  >
-                    {theme === 'dark' ? (
-                      <>
-                        <Icon name="sun" size={12} />
-                        <span className="btn-label">Light</span>
-                      </>
-                    ) : (
-                      <>
-                        <Icon name="moon" size={12} />
-                        <span className="btn-label">Dark</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-
-                <div className="settings-sections-group">
-                  <div className="settings-group-header">
-                    <span className="settings-group-label">Node Details Sections</span>
-                    {onResetVisibleSections && (
-                      <button
-                        type="button"
-                        className="btn-link text-xs text-muted"
-                        onClick={onResetVisibleSections}
-                        title="Reset to all visible"
-                      >
-                        Reset
-                      </button>
-                    )}
-                  </div>
-                  <span className="text-xs text-muted">
-                    Toggle visible sections in node details:
-                  </span>
-                  <div className="settings-checkboxes-list">
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        className="settings-checkbox"
-                        checked={activeVisibleSections.conversation}
-                        onChange={() => onToggleVisibleSection?.('conversation')}
-                      />
-                      <span>Conversation History</span>
-                    </label>
-                    <label className="settings-checkbox-item">
-                      <input
-                        type="checkbox"
-                        className="settings-checkbox"
-                        checked={activeVisibleSections.chatbox}
-                        onChange={() => onToggleVisibleSection?.('chatbox')}
-                      />
-                      <span>Message Agent (Chatbox)</span>
-                    </label>
-                  </div>
-                </div>
-              </div>
-          </Popover>
         </div>
         <UsagePanel />
       </div>

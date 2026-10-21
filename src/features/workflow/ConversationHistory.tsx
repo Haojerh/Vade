@@ -85,10 +85,10 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
   }, [scrollContainerRef, error, loadOlder]);
 
   return <div className="conversation-history-content" aria-label="Conversation history">
-    <div className="conversation-history-pagination">
-      {cursor ? <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { void loadOlder(); }}>{busy ? 'Loading…' : error ? 'Retry loading older messages' : 'Load more'}</button> : <span className="text-xs text-muted">Start of conversation</span>}
+    {(cursor || error) && <div className="conversation-history-pagination">
+      {cursor && <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { void loadOlder(); }}>{busy ? 'Loading…' : error ? 'Retry loading older messages' : 'Load more'}</button>}
       {error && <p role="alert" className="text-xs text-danger">{error}</p>}
-    </div>
+    </div>}
     <div className="conversation-thread" role="log" aria-label="Conversation turns" aria-live="off">
       {messages.map(message => <div key={message.id} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
         <div className={`chat-bubble ${message.role === 'agent' ? 'bubble-agent' : 'bubble-user'}`}>

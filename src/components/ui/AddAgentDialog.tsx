@@ -43,7 +43,7 @@ export function AddAgentDialog({ isOpen, isClosing, worktreeName, isCreating = f
       <AgentPicker agents={catalog?.installed ?? []} value={agentId} onChange={select} disabled={isCreating} loading={loading || (!catalog && !catalogError)} error={catalogError} onRetry={() => void refresh()} />
       <form onSubmit={e => { e.preventDefault(); submit(); }} style={{ marginTop: 18 }}>
         <label className="worktree-field">Terminal Tab Title (optional)<input type="text" placeholder="e.g. Worker Tab" value={title} onChange={e => setTitle(e.target.value)} disabled={isCreating} maxLength={100} /></label>
-        <Disclosure title="Advanced: command flags" compact><label className="worktree-field worktree-advanced">Command<input type="text" className="font-mono" aria-label="Agent command" value={command} onChange={e => { manualSelection.current = true; setCommand(e.target.value); }} disabled={isCreating} maxLength={200} /></label></Disclosure>
+        {catalog?.runtime !== 'ade' && <Disclosure title="Advanced: command flags" compact><label className="worktree-field worktree-advanced">Command<input type="text" className="font-mono" aria-label="Agent command" value={command} onChange={e => { manualSelection.current = true; setCommand(e.target.value); }} disabled={isCreating} maxLength={200} /></label></Disclosure>}
       </form>
     </div>
     <DialogError error={error} style={{ marginTop: 12 }} />

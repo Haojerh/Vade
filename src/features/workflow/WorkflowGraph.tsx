@@ -340,7 +340,6 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
           ? node && onSendKanbanCard ? await onSendKanbanCard(cardId, node, text, chatFiles[nodeId] || []) : { ok: false, message: 'The assigned agent is no longer available.' }
           : await sendNodeMessage(projectId, nodeId, text, undefined, chatFiles[nodeId] || []);
         if (res.ok) {
-          setChatStatuses((prev) => ({ ...prev, [nodeId]: { type: 'success', text: 'Sent!' } }));
           setChatMessages((prev) => ({ ...prev, [nodeId]: '' }));
           setChatFiles((prev) => ({ ...prev, [nodeId]: [] }));
           setChatKanbanIds(prev => ({ ...prev, [nodeId]: undefined }));
@@ -507,6 +506,11 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
   const renderChatExtension = (node: Node) => {
     if (chatOpenNodeId !== node.id) return null;
+    if (node.chatAvailable === false) return <div className="node-card-chat-extension">
+      <p className="text-sm text-muted">Use this agent’s Terminal. Native Chat and task dispatch are not connected yet.</p>
+      <button className="btn btn-secondary btn-sm" onClick={() => { closeChat(node.id); onSelectNode(node.id); }}>Open terminal</button>
+      <button className="btn btn-secondary btn-sm" onClick={() => closeChat(node.id)}>Close</button>
+    </div>;
     return (
       <NodeChatExtension
         node={node}
@@ -637,10 +641,10 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         {nodes.length === 0 ? (
           <div className="graph-empty-state">
             <div className="empty-title" role="status">
-              {loading ? 'Loading Workflow Nodes…' : 'No Workflow Nodes Discovered'}
+              {!projectId ? 'Add your first repository' : loading ? 'Loading Workflow Nodes…' : 'No Workflow Nodes Discovered'}
             </div>
             <div className="empty-description">
-              {loading
+              {!projectId ? 'Open Projects and add the absolute path of a local Git repository to start.' : loading
                 ? orchestrationSeparated
                   ? 'Reading project worktrees, orchestrators, and agents.'
                   : 'Reading project worktrees and agents.'

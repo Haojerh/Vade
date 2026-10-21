@@ -41,7 +41,7 @@ export const NodeChatExtension: React.FC<NodeChatExtensionProps> = ({
         renderControls={(attachButton) => (
           <div className="node-card-chat-actions">
             {attachButton}
-            {status && (
+            {status?.type === 'error' && (
               <span
                 className={`font-mono text-xs font-semibold ${
                   status.type === 'error' ? 'text-danger' : 'text-success'
@@ -84,7 +84,7 @@ export const NodeChatExtension: React.FC<NodeChatExtensionProps> = ({
           value={currentMsg}
           onChange={(e) => onChangeMessage(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
+            if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
               onSendMessage();
             }
@@ -155,7 +155,7 @@ export const WorkflowNodeCardBody: React.FC<WorkflowNodeCardBodyProps> = ({
           <ProviderIcon provider={node.agentType} size={iconSize} />
           <span className="agent-label font-semibold">{node.label}</span>
         </div>
-        <span className={`node-badge-state state-${node.state}`}>
+        <span className={`node-badge-state state-${node.state}`} title={node.agentStatus?.meta.issue?.message ?? (node.agentStatus?.data ? `Observed ${node.agentStatus.data.event}` : undefined)}>
           {node.state}
         </span>
       </div>

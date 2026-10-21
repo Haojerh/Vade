@@ -232,15 +232,16 @@ dialog.node-modal-dialog.is-closing::backdrop {
 }
 .modal-meta-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 6px;
   flex-wrap: wrap;
   font-size: 11px;
+  line-height: 1.4;
 }
 .modal-kind-tag {
-  font-size: 10px;
+  font-size: inherit;
   font-weight: 700;
-  letter-spacing: 0.5px;
+  letter-spacing: normal;
   color: var(--text-secondary);
 }
 .meta-bullet {

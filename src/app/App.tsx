@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { useDashboard } from './useDashboard';
 import { useDashboardLayoutPrefs } from './useDashboardLayoutPrefs';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
@@ -8,6 +9,7 @@ import { GitHubPanel } from '../features/github/GitHubPanel';
 import { ResizableSidebar } from '../components/ui/ResizableSidebar';
 import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
 import { TopBar } from './TopBar';
+import { SettingsPage } from './SettingsPage';
 import { BottomPanel } from './BottomPanel';
 import { fetchPrerequisites } from '../api/client';
 import type { InboxItem, PrerequisitesStatus } from '../../shared/contracts';
@@ -22,6 +24,18 @@ import '../styles/kanban.css';
 import { Modal } from '../components/ui/Modal';
 
 export const App: React.FC = () => {
+  const [pageHash, setPageHash] = useState(() => window.location.hash);
+  useEffect(() => {
+    const changed = () => {
+      const next = window.location.hash;
+      const switchingPage = pageHash.startsWith('#/settings') !== next.startsWith('#/settings');
+      if (switchingPage && document.startViewTransition && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        document.startViewTransition(() => { flushSync(() => setPageHash(next)); });
+      } else setPageHash(next);
+    };
+    window.addEventListener('hashchange', changed);
+    return () => window.removeEventListener('hashchange', changed);
+  }, [pageHash]);
   const {
     inventorySection,
     projectsLoading,
@@ -94,6 +108,8 @@ export const App: React.FC = () => {
     } catch {
       prerequisitesReadyRef.current = false;
       setPrerequisites({
+        runtime: 'ade',
+        git: false,
         orcaApp: false,
         orcaAppOpen: false,
         orcaCli: false,
@@ -201,6 +217,14 @@ export const App: React.FC = () => {
     );
   }
 
+  if (pageHash.startsWith('#/settings')) return <SettingsPage
+    section={pageHash.split('/')[2] ?? 'general'} onBack={() => { window.location.hash = ''; }}
+    theme={theme} onToggleTheme={toggleTheme} cardStateColors={cardStateColors} onToggleCardStateColors={setCardStateColors}
+    orchestrationSeparated={orchestrationSeparated} onToggleOrchestrationSeparated={setOrchestrationSeparated}
+    commitGraphEnabled={commitGraphEnabled} onToggleCommitGraph={setCommitGraphEnabled}
+    toolActivityEnabled={toolActivityEnabled} onToggleToolActivity={setToolActivityEnabled}
+  />;
+
   return (
     <div
       className="dashboard-app-root"
@@ -228,6 +252,10 @@ export const App: React.FC = () => {
         ariaLabel="Projects Navigation Sidebar"
       >
         <ProjectSelector
+          onOpenSettings={() => { window.location.hash = '/settings/general'; }}
+          standalone={prerequisites?.runtime === 'ade'}
+          onRegistered={id => { refreshAll(); setSelectedProjectId(id); }}
+          onDeleted={refreshAll}
           failedProjectIds={inbox.failedProjectIds}
           inventorySection={inventorySection}
           loading={projectsLoading}
@@ -283,7 +311,7 @@ export const App: React.FC = () => {
         <div className="dashboard-alerts-container" aria-live="polite">
           {runtimeMeta?.issue && (
             <div className="banner-alert banner-alert-error" role="alert">
-              <span className="font-semibold">Orca Runtime Issue [{runtimeMeta.issue.code}]:</span>{' '}
+              <span className="font-semibold">Runtime Issue [{runtimeMeta.issue.code}]:</span>{' '}
               {runtimeMeta.issue.message}
             </div>
           )}
@@ -340,12 +368,12 @@ export const App: React.FC = () => {
               selectedNodeId={selectedNodeId}
               onSelectNode={setSelectedNodeId}
               isLocallyStale={isLocallyStale || Boolean(graphMeta?.stale) || (graphMeta ? graphMeta.availability !== 'ready' : false)}
-              orchestrationSeparated={orchestrationSeparated}
+              orchestrationSeparated={prerequisites?.runtime === 'ade' ? false : orchestrationSeparated}
               toolActivityEnabled={toolActivityEnabled}
             />
 
             {/* Bottom Panels Container (Independently hideable, expandable, and vertically draggable) */}
-            <BottomPanel
+            {prerequisites?.runtime !== 'ade' && <BottomPanel
               isOpen={bottomPanelOpen}
               onToggleOpen={persistBottomOpen}
               height={bottomPanelHeight}
@@ -362,7 +390,7 @@ export const App: React.FC = () => {
               progress={graph?.progress}
               activity={graph?.activity}
               onSelectNode={setSelectedNodeId}
-            />
+            />}
           </div>
         </div>
       </main>
@@ -413,6 +441,7 @@ export const App: React.FC = () => {
         selectedNode={snapshot?.graph.data?.nodes.find((n) => n.id === selectedNodeId) ?? null}
         onClose={() => setSelectedNodeId(null)}
         onRefresh={refreshNodeDetails}
+        onSessionChange={refreshAll}
         visibleSections={visibleSections}
         commitGraphEnabled={commitGraphEnabled}
       />

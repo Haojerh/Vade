@@ -4,13 +4,14 @@ import basicSsl from '@vitejs/plugin-basic-ssl';
 export default defineConfig({
   plugins: [basicSsl()],
   server: {
-    host: '0.0.0.0',
+    host: '127.0.0.1',
     port: 5173,
     strictPort: true,
     proxy: {
       '/api': {
         target: 'http://127.0.0.1:4317',
         changeOrigin: true,
+        ws: true,
         configure: (proxy) => {
           proxy.on('proxyReq', (proxyReq) => {
             proxyReq.setHeader('origin', 'http://127.0.0.1:5173');

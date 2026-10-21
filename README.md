@@ -1,4 +1,64 @@
-# Orca Visualization
+# ADE
+
+Standalone local agent development environment for the browser and Electron desktop. The production entry uses ADE's own runtime; Orca does not need to be installed or running.
+
+## Standalone v1 increment
+
+- Register local Git repositories in ADE's SQLite registry.
+- Discover and create real Git worktrees, rename display names and inspect commit history.
+- Launch installed Codex, Claude Code and Antigravity (`agy`) in managed interactive terminals.
+- Type prompts, answer authentication/permission prompts, resize and close sessions.
+- Retain GitHub activity through authenticated `gh`.
+
+**Chat supports messages, attachments and browser dictation for Codex, Claude Code and Antigravity.** Messages are staged into the exact owned terminal and submitted once, with no automatic retry. Working agents accept follow-ups through their own terminal queue. Authentication and permission prompts stay in Terminal; stopped sessions or agents awaiting input refuse Chat sends. Antigravity's native composer footer establishes readiness before its first conversation hook; missing lifecycle status alone does not block the first prompt or become a fabricated agent state. Finish provider authentication/setup in Terminal when needed. Attach up to eight files, 5 MiB each and 20 MiB combined; images become native attachment chips for Codex/Claude, while Antigravity receives file mentions. Uploads stay in ADE's bounded attachment store for asynchronous reads and expire after 24 hours. Dictation appends final speech to the draft without sending; it requires browser speech recognition support and microphone permission, and reports unsupported speech services explicitly, including desktop runtimes without one.
+
+Codex and Claude Code history requires matching session and workspace metadata. Antigravity history requires its exact hook-bound conversation, a matching trajectory database and a vendor transcript log. Chat opens at the newest 20 public turns, loads older turns on demand, and receives bounded two-second live updates. Tool output, thinking and injected messages are excluded. Missing evidence is explicit. New Codex and Claude Code agents have persisted session bindings; Antigravity acquires its binding from a provider conversation hook. Bound sessions support recovery after an ADE restart; older unbound sessions cannot resume automatically. Terminal bytes never become structured chat. Agent state remains unknown without provider evidence; process exit never implies task success. Task outcomes, automatic Kanban dispatch, quotas, orchestration, PR/issue worktree sources and setup hooks remain unsupported.
+
+### Start web or desktop
+
+Opening a stopped, bound terminal automatically attempts recovery once. Failed recovery stays visible and requires an explicit retry; intentional exits while the terminal is open do not trigger a restart loop. Chat/Terminal uses a single view toggle, and terminal status appears beneath the terminal.
+
+Requirements: Node.js 22.13+ with `node:sqlite` (Node 24 recommended), Git on PATH, and the desired agent CLIs installed/authenticated. GitHub panels optionally use `gh`.
+
+```sh
+npm install
+npm run dev
+```
+
+Open **https://127.0.0.1:5173**. In Projects, add an absolute local Git repository path. Inspect its worktree, choose **Add Agent**, then open the agent's Terminal.
+
+- Production web: `npm run build`, then `npm start`; open **http://127.0.0.1:4317**.
+- Desktop: `npm run desktop`. Electron builds and starts the same frontend/backend. Stop a separately running ADE backend first; both use port 4317 and desktop refuses collisions. Its renderer is sandboxed, isolated and has Node integration disabled.
+- Unpacked desktop distribution: `npm run package:desktop`, output in a timestamped folder under `release/` so running copies are not overwritten. Installers, signing, updates and cross-platform verification are not included yet. Development is on Windows.
+- Checks: `npm test` and `npm run build:desktop`.
+
+### Standalone storage and architecture
+
+Metadata lives at `~/.ade/ade.sqlite`; new checkouts live under `~/.ade/worktrees/<project-id>/`. Set `ADE_DATA_DIR` to override. Web and desktop share storage by default. Session records survive restarts; live processes and bounded scrollback do not. Resume a stopped bound session from its Terminal; closing its tab removes that ADE recovery entry. Closing desktop closes owned terminals. New and resumed terminals skip tool approval prompts: Codex uses `--dangerously-bypass-approvals-and-sandbox` (also disables its command sandbox); Claude Code and Antigravity use `--dangerously-skip-permissions`. Authentication remains required. Already-running terminals retain their launch settings until restarted/resumed. Terminal lifecycle events immediately publish a fresh project snapshot so resumed cards return to live without waiting for the periodic refresh.
+
+Codex binding uses fixed local app-server methods (`initialize`, `thread/start`, `thread/name/set`, `thread/read`) without submitting a model turn. ADE saves the returned UUID and starts `codex resume <exact-id>`. Recovery checks the saved thread ID and working directory and refuses duplicate starts. It never uses `--last`, guesses from terminal text, scans other conversations, or accepts a client-supplied thread ID. A Codex installation that cannot establish this binding reports an explicit startup failure.
+
+Claude Code starts with a generated `--session-id` and recovers with `--resume <exact-id>`. Antigravity's `ade-session-identity` bundle is installed alongside existing hooks in `~/.gemini/config/hooks.json`, with a backup before the first change. The bounded hook records only `conversationId` after checking its launch token and workspace; it does not retain prompts or change tool permissions. Recovery uses `agy --conversation <exact-id>`. An empty Antigravity terminal needs a provider conversation event before it can recover. Claude command contracts are tested; live Claude verification requires a local Claude Code installation.
+
+Terminal output and input use a persistent, origin-checked WebSocket. Output is delivered on PTY events in bounded chunks with renderer acknowledgements; input is batched for 4ms and never replayed after uncertain delivery. xterm uses WebGL where available and its default renderer otherwise. This replaces the previous 200ms output polling and per-keystroke HTTP requests.
+
+Agent activity uses exact-session provider hooks and root OSC 7501 reports from Codex and Claude Code. An untouched session is Idle; a provider-reported return to idle after activity ends the turn as Completed. Explicit provider errors show Failed. Interrupted requires a provider cancellation hook, or an Escape during work followed promptly by native idle/interrupt confirmation; input alone does not establish an outcome. Outcomes persist until new activity. Antigravity's fully idle Stop ends a turn, including `NO_TOOL_CALL`; late bookkeeping cannot restart it before the next invocation. Codex reports update while hooks await normal trust. Missing evidence stays unknown; terminal exit never establishes an outcome. Hooks retain only status metadata, preserve existing settings with a backup, and use fresh launch tokens to reject pre-resume events. Start or resume a session to load the hooks. Status changes publish snapshots immediately, and confirmed terminal liveness changes refresh the card without a manual page refresh. A completed turn does not mark a Kanban task successful. Claude Code behavior is fixture-tested; a live smoke check requires a local installation.
+
+Worktree deletion refuses main, locked or dirty checkouts and open ADE sessions. It never forces removal or deletes branches. No project action pushes or creates a PR.
+
+Use the trash icon beside a project to delete its ADE registration after confirming. Close its agent tabs first. Project folders, files and Git worktrees remain on disk.
+
+`server/runtime/` owns SQLite (`store.ts`), bounded Git (`git.ts`), fixed provider discovery and PTYs (`sessions.ts` with isolated `ptyHost.cjs` helpers), and graphs (`localRuntime.ts`). `server/http/localRoutes.ts` owns standalone API routing. `RegisterProject.tsx` provides onboarding; `AgentTerminal.tsx` provides ordered input and explicit reconnect without input replay. `desktop/main.cjs` owns the desktop renderer/backend lifecycle. Shared contracts remain in `shared/contracts.ts`.
+
+Legacy Orca adapters and regression tests remain during migration. Standalone routes never fall back to Orca. HTTP input cannot select arbitrary executables or launch flags; terminal input goes only to a selected owned process.
+
+The MIT-licensed [Orca source](https://github.com/stablyai/orca), snapshots `411b5c024abef11dcc269779377bc7d3aefa897c` and `45ee56e1a54bd032ce5bf7bda0c4bc8c9a02f307`, is a provider integration and terminal rendering reference. ADE uses original runtime code and adopts bounded output delivery, render acknowledgements, accelerated rendering, guarded sends and provider-specific attachment staging. Conversation history uses exact persisted bindings and validated provider transcripts.
+
+---
+
+## Legacy Orca dashboard reference
+
+The following describes the retained Orca adapter implementation, not the standalone launch above.
 
 A local dashboard for inspecting Orca multi-agent workflows, worktree relationships, agent and terminal execution, and associated GitHub repository activity, with explicit messaging to agents.
 

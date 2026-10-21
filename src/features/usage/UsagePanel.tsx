@@ -85,7 +85,7 @@ export function UsagePanel() {
   const stale = Boolean(error || section?.meta.stale);
   const refreshButton = (
     <button type="button" className="btn-icon usage-refresh" onClick={() => { void refresh(); }}
-      disabled={loading} aria-busy={loading} aria-label="Refresh usage from Orca" title="Read latest usage from Orca">
+      disabled={loading} aria-busy={loading} aria-label="Refresh provider usage" title="Read latest provider usage">
       <RefreshIcon busy={loading} />
     </button>
   );
@@ -114,7 +114,7 @@ export function UsagePanel() {
         {refreshButton}
         <OverlayCloseButton aria-label="Close usage details" onClick={() => { close(); triggerRef.current?.focus(); }} />
       </div>
-      {loading && !section && <p className="usage-note" role="status">Reading Orca usage…</p>}
+      {loading && !section && <p className="usage-note" role="status">Reading provider usage…</p>}
       {issue && <p className="usage-note" role="status">{issue}{section?.data ? ' · Showing last known usage.' : ''}</p>}
       {!loading && !issue && available.length === 0 && <p className="usage-note">No usage reported by Orca.</p>}
       <div className="usage-provider-list">
