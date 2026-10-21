@@ -20,7 +20,9 @@ process.on('message', message => {
   try {
     if (message.type === 'start' && !terminal && !closing) {
       terminal = pty.spawn(message.executable, message.args, { cwd: message.cwd, env: process.env,
-        name: 'xterm-256color', cols: 100, rows: 28 });
+        name: 'xterm-256color', cols: message.cols === 1000 ? 1000 : 100, rows: 28,
+        // The bundled headless host avoids system console delegation and teardown forks.
+        ...(process.platform === 'win32' ? { useConptyDll: true } : {}) });
       terminal.onData(data => {
         for (let i = 0; i < data.length; i += 32768) send({ type: 'data', data: data.slice(i, i + 32768) });
       });

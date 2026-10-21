@@ -6,6 +6,8 @@ import { AdeStore } from './store.js';
 import { AdeGit } from './git.js';
 import { AdeSessions } from './sessions.js';
 import { AdeConversations } from './conversation.js';
+import { LocalConnections } from './connections.js';
+import { ProviderAccounts } from './providerAccounts.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
   const now = new Date().toISOString();
@@ -17,13 +19,18 @@ export class LocalRuntime {
   readonly git: AdeGit;
   readonly sessions: AdeSessions;
   readonly conversations = new AdeConversations();
+  readonly connectionsService: LocalConnections;
+  readonly accounts: ProviderAccounts;
+  desktopMemory: { bytes: number; at: number } | null = null;
   readonly id = crypto.randomUUID();
   connections = 0;
   private lastGood = new Map<string, DashboardSnapshot>();
   readonly streams = new Set<() => void>();
 
-  constructor(readonly store = new AdeStore(), runner: CommandRunner = defaultCommandRunner) {
+  constructor(readonly store = new AdeStore(), runner: CommandRunner = defaultCommandRunner, connectionsService?: LocalConnections) {
     this.git = new AdeGit(store, runner);
+    this.accounts = new ProviderAccounts(store, runner);
+    this.connectionsService = connectionsService ?? new LocalConnections(runner, { accounts: this.accounts });
     this.sessions = new AdeSessions(store);
   }
 
@@ -42,9 +49,9 @@ export class LocalRuntime {
         if (!trees.some(tree => tree.id === record.worktreeId)) continue;
         const terminal = this.sessions.page(projectId, record.id, Number.MAX_SAFE_INTEGER);
         const status = this.sessions.status(projectId, record.id);
-        const metadata = await this.conversations.metadata(record);
-        nodes.push({ ...base(record.id, this.store.title(record.id, record.title)), kind: 'agent', worktreeId: record.worktreeId,
-          ...metadata, path: record.cwd, agentType: record.provider, liveness: terminal.live ? 'live' : 'exited', outputAvailable: true, chatAvailable: true,
+        const metadata = record.provider === 'terminal' ? { preview: this.sessions.preview(projectId, record.id).command } : await this.conversations.metadata(record);
+        nodes.push({ ...base(record.id, this.store.title(record.id, record.title)), kind: record.provider === 'terminal' ? 'terminal' : 'agent', worktreeId: record.worktreeId,
+          ...metadata, path: record.cwd, agentType: record.provider, liveness: terminal.live ? 'live' : 'exited', outputAvailable: true, chatAvailable: record.provider !== 'terminal',
           state: status.meta.availability === 'ready' && status.data ? status.data.state : 'unknown', rawState: status.data?.event ?? null,
           agentStatus: status, lastActivityAt: status.meta.observedAt });
         edges.push({ id: `contains-${record.id}`, source: record.worktreeId, target: record.id, kind: 'contains', evidence: 'workspace-membership', active: false });
@@ -68,12 +75,15 @@ export class LocalRuntime {
     const node = snapshot.graph.data?.nodes.find(item => item.id === nodeId);
     if (!node) throw new CliError('NODE_NOT_FOUND', 'Node does not belong to this project');
     return { node, tasks: [], activity: [], currentTool: null,
-      session: node.kind === 'agent' ? { terminal: true, chat: true, history: true, resumable: Boolean(this.sessions.page(projectId, nodeId).resumable) } : undefined,
+      terminalPreview: node.kind === 'terminal' ? this.sessions.preview(projectId, nodeId).output : undefined,
+      session: node.kind === 'agent' || node.kind === 'terminal' ? { terminal: true, chat: node.kind === 'agent', history: node.kind === 'agent', resumable: Boolean(this.sessions.page(projectId, nodeId).resumable),
+        ...(node.agentType === 'antigravity' && !this.sessions.require(projectId, nodeId).providerThreadId ? { reason: 'Antigravity has not reported a saved conversation yet. Complete a first turn in Terminal to bind chat and enable recovery.' } : {}) } : undefined,
       conversation: node.kind === 'agent' ? await this.conversations.read(this.sessions.require(projectId, nodeId), query) : section<ConversationPage>(null, 'unsupported', 'Workspaces do not have conversation history.') };
   }
 
   close(): void {
     for (const close of this.streams) close();
+    this.accounts.close();
     this.sessions.close();
     this.store.close();
   }

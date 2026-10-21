@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { createServer } from '../http/api.js';
 import { GIT_PATH, defaultCommandRunner, type CommandRunner } from '../integrations/cli.js';
@@ -18,7 +18,51 @@ import { WebSocket } from 'ws';
 import { installAgyHook, readAgyBinding, agyBindingFile } from './agyBinding.js';
 import { installStatusHooks, readAgentStatus, statusFile } from './statusHooks.js';
 import { AdeConversations } from './conversation.js';
+import { LocalConnections } from './connections.js';
 import { DatabaseSync } from 'node:sqlite';
+import { TerminalScreen } from './terminalScreen.js';
+import { agyConversationSaved } from './agyBinding.js';
+
+test('terminal screen resolves redraws and answers queries once without polluting previews', async () => {
+  const replies: string[] = []; let parsed = () => {};
+  const screen = new TerminalScreen(data => replies.push(data), () => parsed());
+  const write = (data: string) => new Promise<void>(resolve => { parsed = resolve; screen.write(data); });
+  try {
+    await write('PS > nmpm run\r\x1b[2KPS > node --version\r\nv22.0.0\r\nPS > ');
+    assert.equal(screen.text(), 'PS > node --version\nv22.0.0\nPS >');
+    await write('\x1b[c\x1b]10;?\x1b\\\x1b]11;?\x07');
+    assert.equal(replies.length, 3);
+    assert.ok(replies.every(reply => reply.startsWith('\x1b')));
+    assert.ok(!screen.text()?.includes('rgb:'));
+    screen.text(); screen.text(); assert.equal(replies.length, 3);
+  } finally { screen.dispose(); }
+});
+
+test('Antigravity recovery requires a saved exact conversation and preserves unbound tabs', async () => {
+  const f = fixture(); const previous = process.env.GEMINI_APPDATA_DIR;
+  try {
+    process.env.GEMINI_APPDATA_DIR = path.join(f.directory, 'agy');
+    const project = await f.runtime.git.register(f.repo), tree = (await f.runtime.git.worktrees(project))[0];
+    const id = '11234567-1234-1234-1234-123456789abc';
+    const record = { id: '21234567-1234-1234-1234-123456789abc', projectId: project.id, worktreeId: tree.id, cwd: tree.path, provider: 'antigravity' as const, title: 'Empty', createdAt: new Date().toISOString(), closed: false };
+    f.runtime.store.saveSession(record);
+    assert.equal(f.runtime.sessions.page(project.id, record.id).resumable, false);
+    const details = await f.runtime.details(project.id, record.id);
+    assert.match(details.session?.reason ?? '', /first turn/);
+    assert.equal(f.runtime.sessions.require(project.id, record.id).closed, false);
+    f.runtime.store.saveSession({ ...record, providerThreadId: id });
+    await assert.rejects(f.runtime.sessions.resume(project.id, record.id), /has not saved/);
+    assert.equal(agyConversationSaved({ ...record, providerThreadId: id }), false);
+    const root = path.join(process.env.GEMINI_APPDATA_DIR, 'conversations'); fs.mkdirSync(root, { recursive: true });
+    const db = new DatabaseSync(path.join(root, id + '.db'));
+    db.exec('CREATE TABLE trajectory_meta(cascade_id TEXT)');
+    db.prepare('INSERT INTO trajectory_meta VALUES (?)').run('foreign-id');
+    assert.equal(agyConversationSaved({ ...record, providerThreadId: id }), false);
+    db.prepare('INSERT INTO trajectory_meta VALUES (?)').run(id); db.close();
+    assert.equal(f.runtime.sessions.page(project.id, record.id).resumable, true);
+    assert.equal(f.runtime.sessions.page(project.id, record.id).recoverable, true);
+  } finally { if (previous === undefined) delete process.env.GEMINI_APPDATA_DIR; else process.env.GEMINI_APPDATA_DIR = previous; f.close(); }
+});
 import { antigravityPromptReady, programStatusReader, TerminalTurnStatus } from './programStatus.js';
 
 test('Codex quota notices do not start a turn or overwrite a terminal outcome', () => {
@@ -282,6 +326,18 @@ test('provider status hooks preserve settings and bind observed events to the ex
     const config = JSON.parse(first);
     assert.equal(config.theme, 'keep');
     assert.deepEqual(config.hooks.Stop[0], { matcher: 'keep', hooks: [{ type: 'command', command: 'user-hook' }] });
+    if (process.platform === 'win32') {
+      // Exercise the generated batch entry point, including paths with spaces and piped stdin.
+      const wrapper = path.join(directory, 'ade-status-claude-UserPromptSubmit.cmd');
+      const result = spawnSync(process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe', ['/d', '/s', '/c', `""${wrapper}""`], {
+        input: JSON.stringify({ session_id: record.providerThreadId, cwd: directory, hook_event_name: 'UserPromptSubmit' }),
+        env: { ...process.env, ADE_STATUS_FILE: statusFile(directory, record.id), ADE_STATUS_TOKEN: record.statusToken, ADE_STATUS_PROVIDER: 'claude', ADE_STATUS_CWD: directory, ADE_STATUS_SESSION: record.providerThreadId },
+        windowsHide: true, windowsVerbatimArguments: true, timeout: 10000,
+      });
+      assert.ifError(result.error);
+      assert.equal(result.status, 0, result.stderr?.toString());
+      assert.equal(readAgentStatus(directory, record, true).data?.state, 'working');
+    }
     const run = (provider: string, event: string, extra: object = {}) => execFileSync(process.execPath, [path.join(directory, 'ade-status-hook.cjs'), provider, event], {
       input: JSON.stringify({ session_id: record.providerThreadId, cwd: directory, hook_event_name: event, prompt: 'private prompt', ...extra }),
       env: { ...process.env, ADE_STATUS_FILE: statusFile(directory, record.id), ADE_STATUS_TOKEN: record.statusToken, ADE_STATUS_PROVIDER: provider, ADE_STATUS_CWD: directory, ADE_STATUS_SESSION: record.providerThreadId }, encoding: 'utf8',
@@ -423,7 +479,7 @@ test('all providers skip tool approvals on new and exact-session resumed termina
   const id = '11234567-1234-1234-1234-123456789abc';
   const script = `process.stdout.write('ARGS:'+JSON.stringify(process.argv.slice(1))+'\\n');process.stdin.on('data',()=>process.exit(0));`;
   const sessions = new AdeSessions(f.runtime.store, () => ({ executable: process.execPath, args: ['-e', script, '--'] }),
-    async () => id, () => {}, () => {});
+    async () => id, () => {}, () => {}, () => true);
   const until = async (condition: () => boolean) => {
     const deadline = Date.now() + 6000;
     while (!condition()) { if (Date.now() > deadline) throw new Error('Launch arguments fixture timed out'); await new Promise(resolve => setTimeout(resolve, 10)); }
@@ -460,7 +516,7 @@ test('Antigravity persists its observed hook identity and resumes only that conv
   const id = '11234567-1234-1234-1234-123456789abc';
   const script = `const fs=require('node:fs');fs.writeFileSync(process.env.ADE_BINDING_FILE,JSON.stringify({token:process.env.ADE_BINDING_TOKEN,id:'${id}'}));process.stdout.write(JSON.stringify(process.argv)+'\\n');process.stdin.on('data',()=>process.exit(0));`;
   const sessions = new AdeSessions(f.runtime.store, () => ({ executable: process.execPath, args: ['-e', script, '--'] }), undefined,
-    (directory, node) => installAgyHook(directory, node, path.join(directory, 'fixture-hooks.json')), () => {});
+    (directory, node) => installAgyHook(directory, node, path.join(directory, 'fixture-hooks.json')), () => {}, () => true);
   const until = async (condition: () => boolean) => {
     const deadline = Date.now() + 6000;
     while (!condition()) { if (Date.now() > deadline) throw new Error('Antigravity fixture timed out'); await new Promise(resolve => setTimeout(resolve, 10)); }
@@ -526,9 +582,41 @@ function fixture() {
     calls.push(args);
     return defaultCommandRunner(executable, args, options);
   };
-  const runtime = new LocalRuntime(new AdeStore(path.join(directory, 'data')), runner);
+  const runtime = new LocalRuntime(new AdeStore(path.join(directory, 'data')), runner, new LocalConnections(runner, { credentials: async () => [null, null], resolve: () => null }));
   return { directory, repo, git, runtime, calls, close() { runtime.close(); fs.rmSync(directory, { recursive: true, force: true }); } };
 }
+
+test('owned shell terminals expose command and output previews without agent conversations or outcomes', async () => {
+  const f = fixture();
+  try {
+    const project = await f.runtime.git.register(f.repo);
+    const tree = (await f.runtime.git.worktrees(project))[0];
+    const record = await f.runtime.sessions.launch(project.id, tree.id, tree.path, 'terminal');
+    await f.runtime.sessions.input(project.id, record.id, process.platform === 'win32' ? "Write-Output 'ADE terminal preview'\r" : "printf 'ADE terminal preview\\n'\r");
+    const deadline = Date.now() + 10000;
+    let preview;
+    do { await new Promise(resolve => setTimeout(resolve, 100)); preview = f.runtime.sessions.preview(project.id, record.id); } while (!preview.command?.includes('ADE terminal preview') && Date.now() < deadline);
+    assert.ok(preview.command?.includes('ADE terminal preview'));
+    assert.ok(preview.output?.includes('ADE terminal preview'));
+    const details = await f.runtime.details(project.id, record.id);
+    assert.equal(details.node.kind, 'terminal');
+    assert.equal(details.session?.chat, false);
+    assert.equal(details.conversation.meta.availability, 'unsupported');
+    assert.equal(details.node.agentStatus?.data, null);
+    await assert.rejects(f.runtime.sessions.resume(project.id, record.id), /already running/);
+    await f.runtime.sessions.input(project.id, record.id, 'exit\r');
+    const stoppedBy = Date.now() + 6000;
+    while (f.runtime.sessions.page(project.id, record.id).live && Date.now() < stoppedBy) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(f.runtime.sessions.page(project.id, record.id).live, false);
+    assert.equal(f.runtime.sessions.page(project.id, record.id).recoverable, true);
+    const reopened = await f.runtime.sessions.resume(project.id, record.id);
+    assert.equal(reopened.id, record.id); assert.equal(reopened.cwd, tree.path);
+    assert.equal(f.runtime.sessions.preview(project.id, record.id).command, null);
+    assert.equal(f.runtime.sessions.page(project.id, record.id).recoverable, false);
+    f.runtime.sessions.closeSession(project.id, record.id);
+    await new Promise(resolve => setTimeout(resolve, 1200));
+  } finally { f.close(); }
+});
 
 test('standalone projects persist, deduplicate and expose real Git worktrees without Orca', async () => {
   const f = fixture();
@@ -749,9 +837,24 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     assert.equal((await fetch(base + projectRoute + `/nodes/${nodeId}/terminal?cursor=-1`)).status, 400);
     assert.equal((await fetch(base + projectRoute + '/commit-graph?nodeId=foreign')).status, 404);
     const catalog = await (await fetch(base + '/api/agents/catalog')).json();
-    assert.deepEqual(catalog.available.map((item: { id: string }) => item.id), ['codex', 'claude', 'antigravity']);
-    assert.ok(catalog.installed.every((item: { command: string }) => ['codex', 'claude', 'agy'].includes(item.command)));
-    assert.equal((await (await fetch(base + '/api/usage')).json()).meta.availability, 'unsupported');
+    assert.deepEqual(catalog.available.map((item: { id: string }) => item.id), ['codex', 'claude', 'antigravity', 'terminal']);
+    assert.ok(catalog.installed.every((item: { command: string }) => ['codex', 'claude', 'agy', 'terminal'].includes(item.command)));
+    assert.equal((await (await fetch(base + '/api/usage')).json()).meta.availability, 'unavailable');
+    const refreshes: boolean[] = [];
+    const readUsage = f.runtime.connectionsService.usage.bind(f.runtime.connectionsService);
+    f.runtime.connectionsService.usage = force => { refreshes.push(Boolean(force)); return readUsage(force); };
+    assert.equal((await fetch(base + '/api/usage?refresh=1')).status, 200);
+    assert.deepEqual(refreshes, [true]);
+    assert.equal((await fetch(base + '/api/usage?refresh=anything')).status, 400);
+    assert.equal((await fetch(base + '/api/usage?refresh=1&refresh=1')).status, 400);
+    assert.equal((await fetch(base + '/api/resources?command=anything')).status, 400);
+    assert.equal((await post('/api/connections', {})).status, 405);
+    const resources = await (await fetch(base + '/api/resources')).json();
+    assert.equal(resources.scope, 'backend'); assert.ok(resources.memoryBytes > 0);
+    assert.equal((await post('/api/provider-accounts/codex', { label: 'bad', command: 'arbitrary' })).status, 400);
+    assert.equal((await post('/api/provider-accounts/codex/select', { accountId: '../outside' })).status, 400);
+    assert.equal((await fetch(base + '/api/provider-accounts/claude')).status, 200);
+    assert.equal((await post('/api/provider-accounts/claude/select', { accountId: 'system' })).status, 200);
     assert.equal((await fetch(base + '/api/health', { method: 'POST' })).status, 405);
     assert.equal((await fetch(base + '/api/projects/folders')).status, 200);
     assert.equal((await fetch(base + projectRoute, { method: 'DELETE', headers: { Origin: 'https://evil.example' } })).status, 403);

@@ -9,8 +9,11 @@ if (!rootElement) {
   throw new Error('Failed to find root mounting element with id "root"');
 }
 
+if (window.adeDesktop?.customTitleBar) document.documentElement.classList.add('desktop-custom-titlebar');
+
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
+    {window.adeDesktop?.customTitleBar && <div className="desktop-titlebar">ADE</div>}
     <App />
   </React.StrictMode>,
 );

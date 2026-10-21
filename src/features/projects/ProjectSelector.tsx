@@ -1,6 +1,5 @@
 import { Select } from '../../components/ui/Select';
 import React from 'react';
-import { UsagePanel } from '../usage/UsagePanel';
 import type { DashboardSnapshot, Inventory, Section } from '../../../shared/contracts';
 import {
   type NodeDetailsVisibleSections,
@@ -10,6 +9,7 @@ import { RegisterProject } from './RegisterProject';
 import { DeleteProject } from './DeleteProject';
 
 export interface ProjectSelectorProps {
+  footerActions?: React.ReactNode;
   onOpenSettings?: () => void;
   standalone?: boolean;
   onRegistered?: (id: string) => void;
@@ -37,9 +37,12 @@ export interface ProjectSelectorProps {
   onToggleCommitGraph?: (enabled: boolean) => void;
   toolActivityEnabled?: boolean;
   onToggleToolActivity?: (enabled: boolean) => void;
+  chatToolCallsEnabled?: boolean;
+  onToggleChatToolCalls?: (enabled: boolean) => void;
 }
 
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
+  footerActions,
   onOpenSettings,
   standalone,
   onRegistered,
@@ -57,8 +60,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
 }) => {
 
   const projects = inventorySection?.data?.projects ?? [];
-  const runtime = snapshot?.runtime?.data;
-  const runtimeMeta = snapshot?.runtime?.meta;
+
+
 
   const [isProjectsExpanded, setIsProjectsExpanded] = React.useState<boolean>(() => {
     try {
@@ -95,89 +98,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
     return projects[0]?.id ?? null;
   }, [projects, selectedProjectId]);
 
-  const renderRuntimeStatus = () => {
-    const graphMeta = snapshot?.graph?.meta;
-    const isUnavailable = graphMeta ? graphMeta.availability !== 'ready' : false;
-    const isStale = isLocallyStale || Boolean(graphMeta?.stale);
-    const isHealthy = connectionMode === 'sse' && !isStale && !isUnavailable;
-
-    const dotClass =
-      connectionMode === 'disconnected' || isUnavailable
-        ? 'dot-offline'
-        : isHealthy
-        ? 'dot-live'
-        : 'dot-polling';
-
-    const statusTitle =
-      connectionMode === 'disconnected'
-        ? 'Disconnected'
-        : isUnavailable
-        ? `Unavailable (${graphMeta?.availability})`
-        : isStale
-        ? `Stale (${connectionMode === 'sse' ? 'SSE' : 'Polling'})`
-        : connectionMode === 'sse'
-        ? 'Live SSE'
-        : 'Polling';
-
-    return (
-      <div className="runtime-status-card" role="status">
-        <div className="runtime-status-header">
-          <span className={`status-dot ${dotClass}`} aria-hidden="true" />
-          <span className="runtime-title">{statusTitle}</span>
-        </div>
-        <div className="runtime-meta-details">
-          {runtime?.version ? (
-            <div className="runtime-meta-row">
-              <span className="meta-label">{standalone ? 'ADE:' : 'Orca:'}</span>
-              <span className="meta-val font-mono">{runtime.version}</span>
-            </div>
-          ) : runtimeMeta?.issue ? (
-            <div className="runtime-meta-row text-warning">
-              <span className="meta-label">Runtime:</span>
-              <span className="meta-val">{runtimeMeta.issue.code}</span>
-            </div>
-          ) : (
-            <div className="runtime-meta-row text-muted">
-              <span className="meta-label">Runtime:</span>
-              <span className="meta-val">Active</span>
-            </div>
-          )}
-          {snapshot?.revision && (
-            <div className="runtime-meta-row">
-              <span className="meta-label">Rev:</span>
-              <span className="meta-val font-mono">{snapshot.revision.slice(0, 8)}</span>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
-
   return (
     <nav className="project-rail" aria-label="Projects navigation">
-      {/* Brand Header with Integrated Collapse Action */}
-      <div className="rail-brand">
-        <div className="brand-title-row">
-          <div className="brand-title-main">
-            {standalone ? <Icon name="layers" size={24} /> : <img src={new URL('../../assets/brand/orca.png', import.meta.url).href} width={24} height={24} className="brand-icon" alt="" />}
-            <span className="brand-name font-bold">{standalone ? 'ADE' : 'Orca Live'}</span>
-          </div>
-
-          {onCollapse && (
-            <button
-              type="button"
-              className="btn-icon rail-collapse-btn"
-              onClick={onCollapse}
-              aria-label="Collapse projects sidebar"
-              title="Collapse projects sidebar"
-            >
-              <Icon name="chevrons-left" size={14} />
-            </button>
-          )}
-        </div>
-        <div className="brand-tagline">{standalone ? 'Your local agent workspace' : 'Workflow Atlas'}</div>
-      </div>
-
       {/* Mobile Selector Dropdown */}
       <div className="rail-mobile-select">
         <label htmlFor="mobile-project-select" className="rail-section-label">
@@ -221,9 +143,10 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             />
           </button>
           {standalone && onRegistered && <RegisterProject onRegistered={onRegistered} />}
+          {onCollapse && <button type="button" className="btn-icon project-collapse-button" onClick={onCollapse} aria-label="Collapse projects sidebar" title="Collapse projects sidebar"><Icon name="chevrons-left" size={14} /></button>}
         </div>
 
-        {loading && <div className="rail-empty-hint">Scanning projects…</div>}
+        {loading && <div className="rail-empty-hint">Scanning projectsâ€¦</div>}
 
         {error && (
           <div className="rail-error-hint" role="alert">
@@ -243,7 +166,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
               const isHidden = !isProjectsExpanded && !isCurrent;
               const primaryPath = proj.paths[0] || '';
               const displayPath = primaryPath.length > 32
-                ? '…' + primaryPath.slice(-30)
+                ? 'â€¦' + primaryPath.slice(-30)
                 : primaryPath;
 
               return (
@@ -284,15 +207,14 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
 
       {/* Rail Footer: Anchored to viewport bottom with SSE status & monitor text */}
       <div className="rail-footer">
-        {renderRuntimeStatus()}
 
         <div className="rail-footer-controls">
-          <button type="button" className="btn btn-secondary btn-xs" onClick={onOpenSettings}
+          <button type="button" className="btn-icon" onClick={onOpenSettings}
             aria-label="Dashboard settings" title="Dashboard settings">
-            <Icon name="settings" size={12} /><span className="btn-label">Settings</span>
+            <Icon name="settings" size={15} />
           </button>
+          {footerActions}
         </div>
-        <UsagePanel />
       </div>
     </nav>
   );

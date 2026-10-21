@@ -22,6 +22,19 @@ import type {
   CommitGraphData,
 } from '../../shared/contracts';
 
+export async function fetchConnections(signal?: AbortSignal): Promise<Section<import('../../shared/contracts').LocalConnectionsData>> {
+  return handleResponse(await fetch('/api/connections', { signal }));
+}
+export async function addProviderAccount(provider: import('../../shared/contracts').AccountProvider, request: import('../../shared/contracts').AddProviderAccountRequest, signal?: AbortSignal): Promise<import('../../shared/contracts').ProviderAccount[]> {
+  return handleResponse(await fetch(`/api/provider-accounts/${provider}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal }));
+}
+export async function selectProviderAccount(provider: import('../../shared/contracts').AccountProvider, accountId: string, signal?: AbortSignal): Promise<import('../../shared/contracts').ProviderAccount[]> {
+  return handleResponse(await fetch(`/api/provider-accounts/${provider}/select`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId }), signal }));
+}
+export async function fetchResources(signal?: AbortSignal): Promise<import('../../shared/contracts').AppResources> {
+  return handleResponse(await fetch('/api/resources', { signal }));
+}
+
 export async function fetchAgentChatOptions(projectId: string, nodeId: string, runId: string | null, signal?: AbortSignal): Promise<Section<AgentChatOptions>> {
   const query = runId ? `?runId=${encodeURIComponent(runId)}` : '';
   return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/chat-options${query}`, { signal }));
@@ -43,9 +56,9 @@ export async function fetchInbox(signal?: AbortSignal): Promise<Section<InboxDat
   }));
 }
 
-export async function fetchUsage(signal?: AbortSignal): Promise<Section<UsageData>> {
-  return handleResponse<Section<UsageData>>(await fetch('/api/usage', {
-    headers: { Accept: 'application/json' }, signal,
+export async function fetchUsage(signal?: AbortSignal, refresh = false): Promise<Section<UsageData>> {
+  return handleResponse<Section<UsageData>>(await fetch(refresh ? '/api/usage?refresh=1' : '/api/usage', {
+    headers: { Accept: 'application/json' }, cache: 'no-store', signal,
   }));
 }
 
@@ -413,3 +426,10 @@ export async function fetchCommitGraph(projectId: string, nodeId?: string, signa
 }
 
 
+
+export async function providerAccountAction(provider: import('../../shared/contracts').AccountProvider, action: 'login' | 'delete', accountId: string, signal?: AbortSignal): Promise<import('../../shared/contracts').ProviderAccount[]> {
+  return handleResponse(await fetch('/api/provider-accounts/' + provider + '/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ accountId }), signal }));
+}
+export async function fetchProviderAccounts(provider: import('../../shared/contracts').AccountProvider, signal?: AbortSignal): Promise<import('../../shared/contracts').ProviderAccount[]> {
+  return handleResponse(await fetch('/api/provider-accounts/' + provider, { signal }));
+}

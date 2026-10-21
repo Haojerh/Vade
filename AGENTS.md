@@ -2,6 +2,11 @@
 
 ## Standalone ADE migration
 
+- Explicit Terminal launches use a fixed detected PowerShell/Bash in an owned PTY. Only nonce-bound shell history supplies command previews; bounded output previews are separate from public conversation and never establish agent outcomes. Shell sessions do not resume as provider conversations.
+- `runtime/terminalScreen.ts` owns a bounded headless xterm screen for readable previews and one-time terminal query responses. Renderer protocol replies must never be replayed as keyboard input. Recover backend-lost agent terminals once; observed agent exits require explicit Resume. Opening a stopped shell automatically reopens it once in its registered cwd, without replaying commands; never restart it in a loop. Antigravity recovery requires its exact saved conversation database.
+- Native chat interleaves bounded exact-session `ToolActivity` records separately from public turns. Edit disclosures open initially and display only recorded input diffs; other calls start collapsed. Never infer tool success or read live files for previews.
+- Saved Codex/Claude profiles support fixed native OAuth login, bounded sign-in status and confirmed removal. Account selection responses return only profile metadata without rescanning GitHub. Credentials and subprocess output remain backend-only; only allowlisted provider authorization URLs reach the browser.
+
 - Production `server/index.ts` creates `LocalRuntime` from `server/runtime/localRuntime.ts`. Orca adapters below remain legacy migration code and regression fixtures, not a standalone dependency.
 - Web and Electron (`desktop/main.cjs`) share the frontend, HTTP contracts and `~/.ade` registry (override with `ADE_DATA_DIR`).
 - `server/runtime/store.ts` owns SQLite; `git.ts` owns bounded Git; `sessions.ts` launches detected Codex, Claude Code and Antigravity in owned PTYs. No arbitrary launch commands or flags. Terminal input goes only to a selected owned process, never to a shell launcher.
@@ -38,7 +43,7 @@ Conventions, architecture patterns, and interface contracts for agents contribut
 
 Standalone ADE supports `DELETE /api/projects/:projectId` to remove registry metadata only. It rejects projects with open agent tabs and preserves all project files and worktrees.
 
-Standalone `POST /api/projects/:projectId/nodes/:nodeId/resume` accepts an empty JSON object only. Resume is limited to saved provider UUIDs and the exact discovered worktree. `server/runtime/codexThread.ts` owns bounded fixed-method Codex app-server binding; `agyBinding.ts` captures authenticated, workspace-checked Antigravity `conversationId` hook metadata. Claude uses an assigned `--session-id` and exact `--resume`. Never infer a thread from terminal text or the latest global history. Native Chat remains unsupported.
+Standalone `POST /api/projects/:projectId/nodes/:nodeId/resume` accepts an empty JSON object only. Agent resume is limited to saved provider UUIDs and the exact discovered worktree; an owned shell can instead reopen its fixed detected shell in that worktree without replaying commands. `server/runtime/codexThread.ts` owns bounded fixed-method Codex app-server binding; `agyBinding.ts` captures authenticated, workspace-checked Antigravity `conversationId` hook metadata. Claude uses an assigned `--session-id` and exact `--resume`. Never infer a thread from terminal text or the latest global history. Native Chat remains unsupported.
 
 `server/http/terminalSocket.ts` owns `/api/projects/:projectId/nodes/:nodeId/terminal-stream` upgrades, loopback origin checks, fixed input/resize messages, bounded output and renderer acknowledgement credit. Shared wire types live in `shared/contracts.ts`. Keep input ordered, never replay uncertain writes, and stop upgraded sockets during runtime shutdown. Secure local development permits `https://127.0.0.1:5173` and `https://localhost:5173` socket origins alongside the documented HTTP origins.
 
@@ -56,7 +61,14 @@ Implemented in [`server/http/api.ts`](server/http/api.ts), [`server/http/readRou
 | `GET /api/projects/:projectId/commit-graph` | `nodeId` (optional discovered worktree) | `Section<CommitGraphData>` | Bounded local topological history with parent SHAs and ref labels; all refs for project scope, HEAD for worktree scope. |
 | `GET /api/health` | None | `HealthResponse` (`{ status: 'ok', readOnly: true }`) | Process liveness check for backend server. |
 | `GET /api/prerequisites` | None | `PrerequisitesStatus` | Verifies local Orca installation: desktop application, CLI, and orchestration skill. |
-| `GET /api/usage` | None | `Section<UsageData>` | Normalized host-wide provider quota windows and buckets, read from Orca's cached runtime snapshot; no account identities or credentials. |
+| `GET /api/usage` | `refresh=1` (optional, standalone) | `Section<UsageData>` | Standalone bounded native provider quota reads; manual refresh bypasses cache and shares in-flight reads. Legacy Orca reads cached snapshots. No credentials or account identities. |
+| `GET /api/connections` | None | `Section<LocalConnectionsData>` | Standalone host CLI installation and system sign-in detection. |
+| `GET /api/provider-accounts/:provider` | None | `ProviderAccount[]` | Read bounded profile and native sign-in status metadata without credentials or rescanning integrations. |
+| `POST /api/provider-accounts/:provider` | `AddProviderAccountRequest` | `ProviderAccount[]` | Create an isolated Codex/Claude sign-in profile. |
+| `POST /api/provider-accounts/:provider/select` | `SelectProviderAccountRequest` | `ProviderAccount[]` | Select System default or a registered profile for usage only; clear account-bound caches. |
+| `POST /api/provider-accounts/:provider/login` | `SelectProviderAccountRequest` | `ProviderAccount[]` | Start fixed native browser OAuth for an exact registered profile, with a ten-minute timeout. |
+| `POST /api/provider-accounts/:provider/delete` | `SelectProviderAccountRequest` | `ProviderAccount[]` | Remove only an owned saved profile after UI confirmation; System default cannot be removed. |
+| `GET /api/resources` | None | `AppResources` | Electron process working sets on desktop; backend resident memory on web. Excludes agents. |
 | `GET /api/projects` | None | `Section<Inventory>` | Lists registered Orca projects (Git repos and folder workspaces). |
 | `GET /api/projects/:projectId/snapshot` | `runId` (optional) | `DashboardSnapshot` | Full project dashboard graph, runtime metadata, nodes, edges, tasks, progress, and activity. |
 | `GET /api/projects/:projectId/events` | `runId` (optional) | SSE stream (`text/event-stream`) | Pushes full snapshot updates as `event: snapshot` with `id: <revision>` on collection changes. 15s comment heartbeats (`: heartbeat`). |
@@ -104,6 +116,9 @@ Standard error codes:
 - `src/app/`: dashboard composition, selection, subscriptions, and state.
 - `src/api/`: typed HTTP and SSE clients; no provider filesystem access.
 - `src/features/`: workflow, GitHub, usage, projects, and activity UI with feature-specific helpers.
+- `src/features/usage/usagePresentation.ts` formats observed quota windows and reset times; `src/styles/usage.css` owns the compact status strip and Detailed/Compact usage overlay with one provider detail panel. Preserve missing/stale readings and all model-pool quotas in both modes.
+- `server/runtime/providerAccounts.ts` manages isolated Claude/Codex sign-in directories and selection metadata through `store.ts` SQLite. Native CLIs own sign-in. Require private directory permissions before issuing sign-in instructions; never accept credentials, executable commands, profile paths or native flags from HTTP. Usage-account selection must invalidate caches, fence in-flight reads and leave running agents unchanged.
+- `src/features/usage/ConnectionSettings.tsx` owns connection settings; `src/app/StatusBar.tsx` composes bottom usage and scoped RAM. `server/runtime/connections.ts` owns bounded credential-file reads and fixed quota endpoints. Never expose credentials or execute client-provided login commands. Native sign-in stays in provider CLIs. Gate Antigravity `/usage` on version >= 1.1.11 and disable its background updater.
 - `src/features/workflow/AgentChatControls.tsx`: shared capability-driven model search, effort and speed controls in the agent-details composer. Keep provider behavior in the backend, with explicit unknown/unconfirmed values and obsolete-request cancellation.
 - `src/features/kanban/`: browser-local project boards and IndexedDB attachment persistence. Dispatch uses the validated agent-message endpoint, with one active board task per agent; it never creates Orca tasks or changes their status. Completion requires an observed working/result cycle or a newer explicit Inbox agent result for the exact project/node. Stale results and tool/message text cannot move cards. Persist assignments before sending; never automatically retry uncertain delivery.
 - `src/features/github/useGitHubActivity.ts`: shared repository/worktree activity loading; worktree history lives in Inspect Worktree while the sidebar remains repository-wide.

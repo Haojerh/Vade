@@ -155,9 +155,9 @@ export const WorkflowNodeCardBody: React.FC<WorkflowNodeCardBodyProps> = ({
           <ProviderIcon provider={node.agentType} size={iconSize} />
           <span className="agent-label font-semibold">{node.label}</span>
         </div>
-        <span className={`node-badge-state state-${node.state}`} title={node.agentStatus?.meta.issue?.message ?? (node.agentStatus?.data ? `Observed ${node.agentStatus.data.event}` : undefined)}>
+        {node.kind !== 'terminal' && <span className={`node-badge-state state-${node.state}`} title={node.agentStatus?.meta.issue?.message ?? (node.agentStatus?.data ? `Observed ${node.agentStatus.data.event}` : undefined)}>
           {node.state}
-        </span>
+        </span>}
       </div>
 
       {showPreviewText && node.preview && (

@@ -69,6 +69,7 @@ process.stdin.on('end',()=>process.exit(0)); process.stdin.on('error',()=>proces
 export function statusFile(directory: string, id: string): string { return path.join(directory, 'status', id + '.json'); }
 
 export function installStatusHooks(directory: string, provider: AdeProvider, node: string, configFile?: string): void {
+  if (provider === 'terminal') return;
   const script = path.join(directory, 'ade-status-hook.cjs');
   if (/["%\r\n]/.test(node + script)) throw new CliError('INVALID_ARGUMENT', 'Runtime path cannot be used for provider status hooks');
   fs.mkdirSync(path.join(directory, 'status'), { recursive: true, mode: 0o700 });
@@ -90,7 +91,8 @@ export function installStatusHooks(directory: string, provider: AdeProvider, nod
       fs.writeFileSync(wrapper, `@echo off\r\nsetlocal DisableDelayedExpansion\r\n"${node}" "${script}" ${provider} ${event}\r\nexit /b 0\r\n`);
       command = /^[a-zA-Z]:[\\/][a-zA-Z0-9_./\\-]+$/.test(wrapper) ? wrapper.replaceAll('\\','/') : `"${wrapper}"`;
     }
-    const handler = { type: 'command', command, timeout: 2 };
+    // The script bounds its own input wait; allow time for Windows shell/Node startup too.
+    const handler = { type: 'command', command, timeout: 10 };
     const entry = provider === 'antigravity' && !['PreToolUse','PostToolUse'].includes(event) ? handler : { hooks: [handler] };
     const previous = hooks[event] ?? [];
     if (!Array.isArray(previous)) throw new CliError('INVALID_ARGUMENT', 'Invalid provider event configuration');
@@ -113,7 +115,7 @@ export function readAgentStatus(directory: string, record: SessionRecord, live: 
   const now = new Date().toISOString();
   const missing: Section<AgentStatus> = { data: null, meta: { availability: 'unavailable', observedAt: null, attemptedAt: now, partial: false, stale: false,
     issue: { code: 'RUNTIME_UNAVAILABLE', message: live ? 'No verified provider status event yet. Resume a new ADE session and enable its status hooks if the provider requests trust.' : 'Terminal is stopped; no current agent status is available.', retryable: true } } };
-  if (!record.statusToken) return missing;
+  if (!record.statusToken || record.provider === 'terminal') return missing;
   try {
     const file = statusFile(directory, record.id); if (fs.statSync(file).size > 4096) return missing;
     const event = JSON.parse(fs.readFileSync(file, 'utf8'));

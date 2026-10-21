@@ -30,7 +30,7 @@ export function toolLabel(name: string, rawInput: unknown, maxLength = 160): str
   const patch = wrappedPatch ?? input.patch ?? input.patchText ?? input.diff;
   const patchPath = typeof patch === 'string' ? patch.match(/\*\*\* (?:Update|Add|Delete) File: ([^\r\n]+)/)?.[1] : null;
   const detail = action === 'Run' ? input.command ?? input.cmd ?? input.command_line ?? input.CommandLine ?? wrappedCommand
-    : input.file_path ?? input.path ?? input.filePath ?? input.filename ?? input.AbsolutePath ?? input.TargetFile ?? input.FilePath ?? patchPath ?? input.title;
+    : input.file_path ?? input.path ?? input.filePath ?? input.filename ?? input.AbsolutePath ?? input.TargetFile ?? input.FilePath ?? input.Path ?? patchPath ?? input.title;
   const safe = typeof detail === 'string' ? detail.replace(/[\x00-\x1f\x7f]/g, ' ').trim().slice(0, maxLength) : '';
   return `${action.slice(0, 60)}${safe ? `: ${safe}` : ''}`;
 }
@@ -76,7 +76,7 @@ export function toolEditPreview(raw: unknown): ToolEditPreview[] {
     }
     return previews.filter((preview) => preview.lines.some((line) => line.kind !== 'context'));
   }
-  const path = input.file_path ?? input.path ?? input.filePath ?? input.filename ?? input.TargetFile ?? input.AbsolutePath ?? input.FilePath;
+  const path = input.file_path ?? input.path ?? input.filePath ?? input.filename ?? input.TargetFile ?? input.AbsolutePath ?? input.FilePath ?? input.Path;
   if (typeof path !== 'string') return [];
   if (typeof patch === 'string' && patch.includes('<<<<<<< SEARCH')) {
     const bounded = patch.slice(0, 64000);
@@ -87,8 +87,8 @@ export function toolEditPreview(raw: unknown): ToolEditPreview[] {
   }
   const chunks = Array.isArray(input.ReplacementChunks) ? input.ReplacementChunks : Array.isArray(input.edits) ? input.edits : [input];
   for (const chunk of chunks.slice(0, 2)) {
-    const before = chunk.old_string ?? chunk.oldString ?? chunk.oldText ?? chunk.TargetContent;
-    const after = chunk.new_string ?? chunk.newString ?? chunk.newText ?? chunk.ReplacementContent ?? chunk.content ?? chunk.Content;
+    const before = chunk.old_string ?? chunk.oldString ?? chunk.oldText ?? chunk.TargetContent ?? chunk.Target;
+    const after = chunk.new_string ?? chunk.newString ?? chunk.newText ?? chunk.ReplacementContent ?? chunk.Replacement ?? chunk.content ?? chunk.Content;
     if (typeof before !== 'string' && typeof after !== 'string') continue;
     const start = chunk.StartLine ?? input.StartLine;
     const preview: ToolEditPreview = { path: clean(path).slice(0, 500), lines: [], truncated: chunks.length > 2,

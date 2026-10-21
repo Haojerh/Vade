@@ -1,0 +1,71 @@
+.usage-status-trigger { padding: 3px 5px; border-radius: 4px; }
+.usage-status-trigger:hover, .usage-status-trigger[aria-expanded="true"] { color: var(--text-main); background: var(--surface-active); }
+.usage-status-provider { gap: 8px; }
+.usage-status-provider > .usage-track { flex-shrink: 0; width: 60px; height: 5px; }
+.usage-track > span { background: var(--text-muted); }
+.usage-track.usage-high > span { background: var(--state-failed-text); }
+.usage-track { display: inline-block; flex-shrink: 0; }
+.usage-menu { padding: 12px 0 0; overflow: visible; gap: 8px; animation: usage-menu-enter 140ms ease-out; }
+.usage-menu .usage-header { padding: 0 14px; margin: 0; gap: 8px; }
+.usage-header-spacer { flex: 1; }
+.usage-display-switch { position: relative; display: flex; border: 1px solid var(--border-main); border-radius: 9px; padding: 3px; gap: 0; margin: 0 14px 4px; }
+.usage-display-thumb { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); border-radius: 6px; background: var(--surface-active); pointer-events: none; transition: transform 150ms var(--ease-out); }
+.usage-display-switch[data-mode="compact"] .usage-display-thumb { transform: translateX(100%); }
+.usage-display-switch button { position: relative; z-index: 1; flex: 1; padding: 4px 8px; border-radius: 6px; color: var(--text-secondary); font-size: 12px; }
+.usage-display-switch button[aria-pressed="true"] { color: var(--text-main); font-weight: 600; }
+.usage-display-switch[data-motion="false"] .usage-display-thumb { transition: none; }
+.usage-menu > .usage-note { padding: 0 14px; }
+.usage-menu .usage-provider-list { scrollbar-gutter: auto; }
+.usage-provider-row { display: block; width: 100%; padding: 14px 16px; text-align: left; border-radius: 8px; color: var(--text-main); }
+.usage-provider-row:hover, .usage-provider-row.is-hovered { background: var(--surface-active); }
+.usage-provider-row .usage-provider-heading { gap: 10px; min-width: 0; }
+.usage-provider-heading > strong { font-size: 13px; }
+.usage-provider-heading > .usage-note { white-space: nowrap; }
+.usage-provider-heading > svg:last-child { margin-left: auto; color: var(--text-muted); }
+.usage-provider-summary { margin: 8px 0 0 30px; }
+.usage-provider-summary.detailed { display: grid; gap: 8px; }
+.usage-provider-summary.compact, .usage-provider-row.is-simple .usage-provider-summary.detailed { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.usage-summary-window { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+.usage-summary-window > span:first-child { color: var(--text-secondary); }
+.usage-summary-window > strong { white-space: nowrap; }
+.usage-inline-summary, .usage-inline-group, .usage-inline-values, .usage-inline-window { display: inline-flex; align-items: center; }
+.usage-inline-summary { gap: 6px; }
+.usage-inline-group, .usage-inline-values { gap: 7px; }
+.usage-inline-window { gap: 4px; }
+.usage-inline-window > strong { color: var(--text-main); font-weight: 600; font-variant-numeric: tabular-nums; }
+.usage-pool-label { color: var(--text-secondary); }
+.usage-inline-meta { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.usage-window-separator { color: var(--text-secondary); padding: 0 2px; font-weight: 700; }
+.usage-pool-separator { color: var(--text-secondary); padding: 0; opacity: .7; }
+.usage-inline-compact { display: flex; flex-direction: column; align-items: stretch; gap: 8px; width: 100%; font-size: 11px; }
+.usage-inline-compact .usage-inline-group { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 6px 12px; }
+.usage-inline-compact .usage-pool-separator { display: none; }
+.usage-inline-compact .usage-inline-values { margin-left: auto; }
+.usage-provider-row.is-simple .usage-provider-summary.compact { display: grid; grid-template-columns: 1fr auto; }
+.usage-provider-row.is-simple .usage-inline-compact { width: auto; }
+.usage-remaining-label { font-size: 11px; color: var(--text-secondary); }
+.usage-unavailable-row { display: flex; align-items: center; gap: 10px; padding: 12px 16px; color: var(--text-secondary); font-size: 12px; }
+.usage-unavailable-row > .usage-note { margin-left: auto; }
+.usage-manage-accounts { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-top: 1px solid var(--border-main); font-weight: 600; color: var(--text-main); text-decoration: none; border-radius: 0 0 14px 14px; }
+.usage-manage-accounts:hover { background: var(--surface-active); }
+.usage-deep-panel { position: fixed; z-index: 151; width: 360px; padding-left: 8px; display: flex; }
+.usage-deep-card { width: 100%; min-height: 0; padding: 16px; border: 1px solid var(--border-main); border-radius: 12px; background: var(--surface-1); box-shadow: var(--shadow-lg); overflow-y: auto; transform-origin: top left; opacity: 1; transform: scale(1); transition: opacity 125ms var(--ease-out), transform 125ms var(--ease-out); }
+.usage-deep-panel.is-closing { pointer-events: none; }
+.usage-deep-panel.is-closing .usage-deep-card { opacity: 0; transform: translateX(-3px) scale(.97); }
+.usage-deep-panel[data-motion="false"] .usage-deep-card { transition: none; }
+@starting-style { .usage-deep-panel[data-motion="true"] .usage-deep-card { opacity: 0; transform: translateX(-3px) scale(.97); } }
+.usage-deep-heading { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.usage-deep-window { display: flex; flex-direction: column; gap: 7px; margin-top: 20px; font-size: 12px; }
+.usage-track-wide { width: 100%; height: 6px; }
+.usage-deep-values { display: flex; justify-content: space-between; gap: 12px; color: var(--text-secondary); font-size: 11px; }
+@keyframes usage-menu-enter { from { opacity: 0; } to { opacity: 1; } }
+@media (max-width: 780px) {
+  .usage-deep-panel { position: static; width: 100%; padding: 0 10px 10px; max-height: 260px !important; min-height: 0; }
+  .usage-provider-heading { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .usage-menu { animation: none; }
+  .usage-display-thumb, .usage-deep-card { transition: none; }
+  .usage-deep-panel.is-closing .usage-deep-card { transform: none; }
+  @starting-style { .usage-deep-panel[data-motion="true"] .usage-deep-card { opacity: 1; transform: none; } }
+}

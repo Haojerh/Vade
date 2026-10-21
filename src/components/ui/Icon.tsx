@@ -28,6 +28,7 @@ export type IconName =
   | 'bell'
   | 'send'
   | 'mic'
+  | 'memory'
   | 'trash'
   | 'x-square'
   | 'terminal'
@@ -60,6 +61,8 @@ export const Icon: React.FC<IconProps> = ({
 }) => {
   const renderPaths = () => {
     switch (name) {
+      case 'memory':
+        return <><rect x="3" y="5" width="18" height="12" rx="2" /><path d="M7 17v3M11 17v3M15 17v3M19 17v3M7 9h3v4H7zM14 9h3v4h-3z" /></>;
       case 'globe':
         return <><circle cx="12" cy="12" r="9" /><ellipse cx="12" cy="12" rx="4" ry="9" /><path d="M3 12h18" /></>;
       case 'mic':

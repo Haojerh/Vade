@@ -40,10 +40,10 @@ export function AddAgentDialog({ isOpen, isClosing, worktreeName, isCreating = f
   return <Modal isOpen={isOpen} isClosing={isClosing} busy={isCreating} onClose={onClose} className="confirmation-dialog add-agent-dialog" aria-labelledby="add-agent-dialog-title">
     <div className="worktree-dialog-heading"><div><h2 id="add-agent-dialog-title">Add New Agent</h2><p className="text-sm text-muted">Start a new agent session in worktree <strong>{worktreeName}</strong>.</p></div><div className="overlay-heading-actions"><button type="button" className="btn-icon" onClick={() => void refresh()} disabled={loading || isCreating} aria-label="Refresh detected agents"><RefreshIcon busy={loading} size={14} /></button><OverlayCloseButton onClick={onClose} disabled={isCreating} aria-label="Close add agent" /></div></div>
     <div className="add-agent-dialog-scroll">
-      <AgentPicker agents={catalog?.installed ?? []} value={agentId} onChange={select} disabled={isCreating} loading={loading || (!catalog && !catalogError)} error={catalogError} onRetry={() => void refresh()} />
+      <div className="worktree-field"><span>Agent</span><AgentPicker agents={catalog?.installed ?? []} value={agentId} onChange={select} disabled={isCreating} loading={loading || (!catalog && !catalogError)} error={catalogError} onRetry={() => void refresh()} /></div>
       <form onSubmit={e => { e.preventDefault(); submit(); }}>
         <label className="worktree-field">Terminal Tab Title (optional)<input type="text" placeholder="e.g. Worker Tab" value={title} onChange={e => setTitle(e.target.value)} disabled={isCreating} maxLength={100} /></label>
-        {catalog?.runtime !== 'ade' && <Disclosure title="Advanced: command flags" compact><label className="worktree-field worktree-advanced">Command<input type="text" className="font-mono" aria-label="Agent command" value={command} onChange={e => { manualSelection.current = true; setCommand(e.target.value); }} disabled={isCreating} maxLength={200} /></label></Disclosure>}
+        {catalog && catalog.runtime !== 'ade' && <Disclosure title="Advanced: command flags" compact><label className="worktree-field worktree-advanced">Command<input type="text" className="font-mono" aria-label="Agent command" value={command} onChange={e => { manualSelection.current = true; setCommand(e.target.value); }} disabled={isCreating} maxLength={200} /></label></Disclosure>}
       </form>
     </div>
     <DialogError error={error} style={{ marginTop: 22 }} />

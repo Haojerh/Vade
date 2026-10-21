@@ -51,8 +51,8 @@ export function NodeMessagePreview({ projectId, runId, nodeId, anchor, onLeave }
   return createPortal(
     <div ref={ref} className="node-message-preview" id="node-message-preview" role="tooltip"
       style={position} onPointerLeave={(event) => { if (!(event.relatedTarget instanceof globalThis.Node) || !anchor.contains(event.relatedTarget)) onLeave(); }}>
-      <div className="latest-message-heading">Latest Agent Message</div>
-      {message ? <>
+      <div className="latest-message-heading">{details?.node.kind === 'terminal' ? 'Latest Terminal Output' : 'Latest Agent Message'}</div>
+      {details?.node.kind === 'terminal' ? <p className="node-message-preview-text font-mono">{details.terminalPreview || 'No terminal output yet.'}</p> : message ? <>
         <p className="node-message-preview-text">{message.text}</p>
         {message.at && <time className="text-xs text-muted" dateTime={message.at}>{new Date(message.at).toLocaleTimeString()}</time>}
         {details?.conversation.meta.stale && <span className="badge-stale-tag">Stale</span>}

@@ -10,6 +10,65 @@
 }
 
 /* 5. Resizable Sidebar Component */
+.dashboard-app-root.dashboard-unified-header {
+  flex-direction: column;
+  height: 100dvh;
+}
+.dashboard-workspace {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  min-height: 0;
+  min-width: 0;
+}
+.dashboard-unified-header > .dashboard-topbar { justify-content: flex-start; gap: 20px; }
+.dashboard-unified-header > .dashboard-topbar .topbar-left-group { flex: 0 0 auto; }
+.dashboard-unified-header > .dashboard-topbar .topbar-meta-controls { order: 1; }
+.dashboard-unified-header > .dashboard-topbar .topbar-center-group { order: 2; margin-left: auto; }
+.sidebar-edge-tab {
+  position: absolute;
+  top: 15px;
+  z-index: 30;
+  width: 18px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  background: var(--surface-1);
+  border: 1px solid var(--border-main);
+}
+.sidebar-edge-tab:hover { color: var(--text-main); background: var(--surface-hover); }
+.sidebar-edge-left { left: 0; border-left: 0; border-radius: 0 5px 5px 0; }
+.sidebar-edge-right { right: 0; border-right: 0; border-radius: 5px 0 0 5px; }
+.app-statusbar {
+  flex: 0 0 30px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 14px;
+  border-top: 1px solid var(--border-main);
+  background: var(--surface-1);
+  font-size: 11px;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+.statusbar-used { flex-shrink: 0; }
+.statusbar-memory { display: inline-flex; align-items: center; gap: 6px; flex-shrink: 0; margin-left: auto; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.app-statusbar .rail-usage { border: 0; padding: 0; min-width: 0; overflow: hidden; }
+.app-statusbar .usage-status-trigger { flex-wrap: nowrap; overflow: auto; scrollbar-width: none; }
+.app-statusbar .usage-status-row { gap: 10px; }
+.usage-mini-track { width: 36px; height: 4px; border-radius: 3px; background: var(--border-main); overflow: hidden; }
+.usage-mini-track > span { display: block; height: 100%; background: var(--text-secondary); }
+.dashboard-unified-header .dashboard-main-stage,
+.dashboard-unified-header .resizable-sidebar {
+  height: 100%;
+}
+@media (max-width: 900px) {
+  .dashboard-unified-header .resizable-sidebar { height: auto; }
+  .dashboard-unified-header .dashboard-workspace > .resizable-sidebar { top: 0; }
+  .dashboard-unified-header .sidebar-backdrop { inset: 0; }
+}
+
 .resizable-sidebar {
   position: relative;
   height: 100vh;

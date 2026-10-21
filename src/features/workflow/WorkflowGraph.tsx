@@ -120,9 +120,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     {}
   );
 
-  // 1. Separate orchestrators, worktrees, and member agents. Filter out terminals completely.
+  // Keep owned terminals in the same worktree layout as agents.
   const { orchestrators, worktrees, worktreeAgentsMap, unassignedAgents } = useMemo(() => {
-    const validNodes = nodes.filter((n) => n.kind !== 'terminal');
+    const validNodes = nodes;
     const orchestrators: Node[] = [];
     const worktrees: Node[] = [];
     const allAgents: Node[] = [];
@@ -136,7 +136,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         }
       } else if (n.kind === 'worktree') {
         worktrees.push(n);
-      } else if (n.kind === 'agent') {
+      } else if (n.kind === 'agent' || n.kind === 'terminal') {
         allAgents.push(n);
       }
     }
@@ -192,11 +192,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
   const nodeMap = useMemo(() => {
     const map = new Map<string, Node>();
-    for (const n of nodes) {
-      if (n.kind !== 'terminal') {
-        map.set(n.id, n);
-      }
-    }
+    for (const n of nodes) map.set(n.id, n);
     return map;
   }, [nodes]);
 
@@ -567,12 +563,6 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       <div className="graph-toolbar">
         <div className="toolbar-title-group">
           <h2 className="graph-title">Workflow Topology</h2>
-          <span className="node-count-badge font-mono">
-            {orchestrationSeparated
-              ? `${orchestrators.length} Orchestrator${orchestrators.length === 1 ? '' : 's'} • `
-              : ''}
-            {worktrees.length} Worktree{worktrees.length === 1 ? '' : 's'}
-          </span>
         </div>
 
         <div className="graph-toolbar-actions">
@@ -610,6 +600,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
           )}
 
           <div className="graph-legend">
+            <span className="legend-item"><span className="legend-swatch swatch-tool" /> Tool</span>
             <span className="legend-item">
               <span className="legend-swatch swatch-active" /> Active
             </span>
@@ -849,7 +840,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                           onDragLeave={(e) => handleDragLeave(e, ag.id)}
                           onDrop={(e) => handleDrop(e, ag.id)}
                           aria-pressed={isAgSelected}
-                          aria-label={`Agent: ${ag.label}, state: ${ag.state}`}
+                          aria-label={ag.kind === 'terminal' ? `Terminal: ${ag.label}, liveness: ${ag.liveness}` : `Agent: ${ag.label}, state: ${ag.state}`}
                         >
                           <WorkflowNodeCardBody
                             node={ag}

@@ -8,6 +8,12 @@ export function useDashboardLayoutPrefs(dashboardReady = true) {
   const [toolActivityEnabled, setToolActivityEnabled] = useState(() => {
     try { return localStorage.getItem('orca-tool-activity') !== 'false'; } catch { return true; }
   });
+  const [chatToolCallsEnabled, setChatToolCallsEnabled] = useState(() => {
+    try { return localStorage.getItem('ade-chat-tool-calls') !== 'false'; } catch { return true; }
+  });
+  useEffect(() => {
+    try { localStorage.setItem('ade-chat-tool-calls', String(chatToolCallsEnabled)); } catch { /* Storage unavailable. */ }
+  }, [chatToolCallsEnabled]);
   useEffect(() => {
     try { localStorage.setItem('orca-tool-activity', String(toolActivityEnabled)); } catch { /* Storage unavailable. */ }
   }, [toolActivityEnabled]);
@@ -392,6 +398,8 @@ export function useDashboardLayoutPrefs(dashboardReady = true) {
   return {
     toolActivityEnabled,
     setToolActivityEnabled,
+    chatToolCallsEnabled,
+    setChatToolCallsEnabled,
     theme,
     toggleTheme,
     cardStateColors,

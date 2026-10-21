@@ -27,6 +27,46 @@ html, body {
   outline-offset: 2px;
 }
 
+/* Windows desktop chrome; the browser layout keeps its full viewport. */
+.desktop-custom-titlebar #root {
+  padding-top: 36px;
+}
+
+.desktop-titlebar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 36px;
+  padding: 0 150px 0 14px;
+  display: flex;
+  align-items: center;
+  background: #202020;
+  color: #a3a3a3;
+  border-bottom: 1px solid #303030;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  user-select: none;
+  -webkit-app-region: drag;
+  z-index: 1000;
+}
+
+.desktop-custom-titlebar .dashboard-app-root,
+.desktop-custom-titlebar .dashboard-main-stage,
+.desktop-custom-titlebar .settings-page,
+.desktop-custom-titlebar .resizable-sidebar {
+  height: calc(100dvh - 36px);
+}
+
+.desktop-custom-titlebar:has(.dashboard-unified-header) #root { padding-top: 0; }
+.desktop-custom-titlebar:has(.dashboard-unified-header) .desktop-titlebar { display: none; }
+.desktop-custom-titlebar .dashboard-unified-header > .dashboard-topbar {
+  padding-right: max(154px, calc(100vw - env(titlebar-area-width, calc(100vw - 138px)) + 16px));
+  background: #202020;
+  -webkit-app-region: drag;
+}
+.desktop-custom-titlebar .dashboard-topbar :is(button, input, select, a, .select-wrapper) {
+  -webkit-app-region: no-drag;
+}
+
 /* Custom Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;

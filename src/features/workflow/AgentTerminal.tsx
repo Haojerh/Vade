@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { TerminalClientMessage, TerminalServerMessage } from '../../../shared/contracts';
 import { resumeTerminal } from '../../api/client';
+import { isTerminalReply } from './terminalInput';
 
 export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId: string; nodeId: string; onStatusChange?: () => void }) {
   const statusChange = useRef(onStatusChange); statusChange.current = onStatusChange;
@@ -12,6 +13,7 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
   const [live, setLive] = useState<boolean | null>(null);
   const [retry, setRetry] = useState(0);
   const [resumable, setResumable] = useState(false);
+  const [restartable, setRestartable] = useState(false);
   const [resuming, setResuming] = useState(false);
   const active = useRef(true);
   const selection = useRef(''); selection.current = `${projectId}/${nodeId}`;
@@ -52,7 +54,7 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
       try { send({ type: 'resize', cols, rows }); sentSize = size; } catch (error) { fail(error); }
     };
     const input = terminal.onData(data => {
-      if (failed || !active) return;
+      if (failed || !active || isTerminalReply(data)) return;
       queuedInput += data;
       if (queuedInput.length > 262144) { fail(new Error('Terminal input is too large. Paste smaller sections.')); return; }
       if (inputTimer) return;
@@ -79,9 +81,9 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
           if (page.reset) terminal.reset();
           if (page.data) await new Promise<void>(resolve => terminal.write(page.data, resolve));
           if (!active || socket !== current) return;
-          cursor = page.cursor; setLive(page.live); setResumable(Boolean(page.resumable));
+          cursor = page.cursor; setLive(page.live); setResumable(Boolean(page.resumable)); setRestartable(Boolean(page.restartable));
           if (lastLive !== page.live) { lastLive = page.live; statusChange.current?.(); }
-          const autoResume = initialPage && !page.live && page.resumable;
+          const autoResume = initialPage && !page.live && page.recoverable;
           initialPage = false;
           if (autoResume) {
             setResuming(true); socket = null; current.close();
@@ -102,7 +104,7 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
   return <section className="agent-terminal" aria-label="Agent terminal">
     {error && <div className="panel-alert alert-error" role="alert">{error} <button className="btn btn-secondary btn-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button><span> Inspect the terminal before repeating input.</span></div>}
     <div ref={host} className="agent-terminal-screen" />
-    <p className="text-xs text-muted" role="status">{resuming ? 'Resuming the same conversation…' : live === false ? resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native agent terminal · authentication and permission prompts appear here.'}</p>
-    {live === false && resumable && !resuming && <button type="button" className="btn btn-secondary" onClick={() => void resume()}>Resume session</button>}
+    <p className="text-xs text-muted" role="status">{resuming ? restartable ? 'Opening a fresh shell…' : 'Resuming the same conversation…' : live === false ? restartable ? 'Shell stopped. Reopen in the same folder. Previous commands will not be replayed.' : resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native terminal · authentication and permission prompts appear here.'}</p>
+    {live === false && (resumable || restartable) && !resuming && <button type="button" className="btn btn-secondary" onClick={() => void resume()}>{restartable ? 'Reopen terminal' : 'Resume session'}</button>}
   </section>;
 }
