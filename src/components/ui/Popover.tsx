@@ -17,8 +17,9 @@ interface PopoverProps extends React.HTMLAttributes<HTMLDivElement> {
   focusOnOpen?: boolean;
   floating?: boolean;
   floatingWidth?: number;
+  placement?: 'auto' | 'top' | 'bottom';
 }
-export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, portal = false, focusOnOpen = false, floating = false, floatingWidth, className = '', children, style, ...props }: PopoverProps) {
+export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, portal = false, focusOnOpen = false, floating = false, floatingWidth, placement = 'auto', className = '', children, style, ...props }: PopoverProps) {
   const fallbackRef = useRef<HTMLDivElement>(null);
   const ref = contentRef ?? fallbackRef;
   const [position, setPosition] = useState<React.CSSProperties>({});
@@ -33,7 +34,7 @@ export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, po
       const height = Math.min(content.scrollHeight, window.innerHeight - 24);
       const below = window.innerHeight - anchor.bottom - 12;
       const above = anchor.top - 12;
-      const flip = height > below && above > below;
+      const flip = placement === 'top' || (placement === 'auto' && height > below && above > below);
       const maxHeight = Math.max(80, flip ? above - 6 : below - 6);
       setPosition({ position: 'fixed', inset: 'auto', margin: 0, width, maxHeight, overflowY: 'auto', boxSizing: 'border-box',
         left: Math.max(12, Math.min(anchor.left, window.innerWidth - width - 12)), top: flip ? Math.max(12, anchor.top - Math.min(height, maxHeight) - 6) : anchor.bottom + 6 });
@@ -43,7 +44,7 @@ export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, po
     window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
     const resize = new ResizeObserver(place); resize.observe(content);
     return () => { resize.disconnect(); window.removeEventListener('resize', place); window.removeEventListener('scroll', place, true); content.hidePopover(); };
-  }, [isOpen, floating, floatingWidth, ref, triggerRef]);
+  }, [isOpen, floating, floatingWidth, placement, ref, triggerRef]);
   useDismissLayer(isOpen, ref, onClose, triggerRef);
   useEffect(() => {
     if (!isOpen) return;

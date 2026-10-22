@@ -24,12 +24,15 @@ export class WorkflowModels {
   async list(provider: WorkflowProvider): Promise<WorkflowModel[]> {
     const cached = this.cache.get(provider);
     if (cached && Date.now() - cached.at < 60000) return cached.models;
-    const previous = this.pending.get(provider); if (previous) return previous;
+    const reusable = cached && Date.now() - cached.at < 300000 ? cached.models : undefined;
+    const previous = this.pending.get(provider); if (previous) return reusable ?? previous;
     const request = this.discover(provider).then(models => {
       if (!models.length) throw new CliError('RUNTIME_UNAVAILABLE', 'This provider did not expose a model catalog. Use its default model or update the provider.');
       this.cache.set(provider, { at: Date.now(), models }); return models;
     }).finally(() => this.pending.delete(provider));
-    this.pending.set(provider, request); return request;
+    this.pending.set(provider, request);
+    if (reusable) { void request.catch(() => {}); return reusable; }
+    return request;
   }
   private async discover(provider: WorkflowProvider): Promise<WorkflowModel[]> {
     const resolved = resolveAgent(provider);

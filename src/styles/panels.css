@@ -772,10 +772,16 @@
   border-radius: 4px;
   font-size: 11px;
 }
-.alert-error {
+.alert-error,
+[role="alert"].text-danger {
   background: var(--state-failed-bg);
   color: var(--state-failed-text);
   border: 1px solid var(--state-failed-border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  box-sizing: border-box;
 }
 .alert-stale {
   background: var(--state-waiting-bg);

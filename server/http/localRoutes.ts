@@ -1,5 +1,5 @@
 import type http from 'node:http';
-import type { AgentPreferences, AnswerAgentRequest, CreateWorktreeRequest, GitHubQuery, InboxItem, RegisterProjectRequest, SendMessageRequest, TerminalShell } from '../../shared/contracts.js';
+import type { AgentPreferences, AnswerAgentRequest, CreateWorktreeRequest, GitHubQuery, InboxItem, RegisterProjectRequest, SendMessageRequest, TerminalShell, SetAgentChatOptionRequest } from '../../shared/contracts.js';
 import { permissionArgs, readAgentPreferences, saveAgentPreferences } from '../runtime/agentPreferences.js';
 import { CliError } from '../integrations/cli.js';
 import { collectGitHubData } from '../integrations/github.js';
@@ -34,6 +34,28 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     return value;
   };
   try {
+    if (pathname === '/api/speech/models') { requireMethod('GET'); queryKeys(); sendJson(200, runtime.speech.catalog()); return; }
+    const speechModel = pathname.match(/^\/api\/speech\/models\/([a-z0-9-]+)\/(download|cancel)$/);
+    if (speechModel) {
+      requireMethod('POST'); queryKeys(); await body<{}>([]);
+      if (speechModel[2] === 'download') runtime.speech.download(speechModel[1]); else runtime.speech.cancelDownload(speechModel[1]);
+      sendJson(200, runtime.speech.catalog()); return;
+    }
+    if (pathname === '/api/speech/sessions') {
+      requireMethod('POST'); queryKeys(); const request = await body<import('../../shared/contracts.js').StartSpeechRequest>(['modelId']);
+      sendJson(200, await runtime.speech.start(text(request.modelId, 'speech model', 100))); return;
+    }
+    const speechSession = pathname.match(/^\/api\/speech\/sessions\/([0-9a-f-]{36})\/(audio|finish|cancel)$/);
+    if (speechSession) {
+      requireMethod('POST'); queryKeys();
+      if (speechSession[2] === 'audio') sendJson(200, await runtime.speech.audio(speechSession[1], await body<import('../../shared/contracts.js').SpeechAudioRequest>(['pcm', 'sequence'], 95000)));
+      else {
+        await body<{}>([]);
+        if (speechSession[2] === 'finish') sendJson(200, await runtime.speech.finish(speechSession[1]));
+        else { runtime.speech.cancel(speechSession[1]); sendJson(200, { ok: true }); }
+      }
+      return;
+    }
     if (pathname === '/api/workflow/setup-terminal') { requireMethod('POST'); queryKeys(); await body<{}>([]); sendJson(200, await runtime.organization.setup.prepareTerminal()); return; }
     if (pathname === '/api/workflow/setup-terminal/close') { requireMethod('POST'); queryKeys(); const owner = await body<{ projectId: string; nodeId: string }>(['projectId', 'nodeId']); runtime.organization.setup.closeTerminal(text(owner.projectId, 'setup project ID', 36), text(owner.nodeId, 'setup terminal ID', 36)); sendJson(200, { ok: true }); return; }
     if (pathname === '/api/workflow/config') {
@@ -296,7 +318,13 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       runtime.streams.add(close); res.once('close', close); publish(initial, true); return;
     }
     queryKeys('runId');
-    if (action === 'chat-options') { requireMethod('GET'); runtime.sessions.require(projectId, nodeId); sendJson(200, section(null, 'unsupported', 'Use the provider’s controls in Terminal.')); return; }
+    if (action === 'chat-options') {
+      if (req.method === 'GET') { sendJson(200, section(await runtime.chatOptions(projectId, nodeId))); return; }
+      requireMethod('POST');
+      const request = await body<SetAgentChatOptionRequest>(['key', 'value']);
+      if (!['model', 'effort', 'fastMode', 'serviceTier', 'providerPicker', 'fastToggle'].includes(request.key) || typeof request.value !== 'string' || !request.value.length || request.value.length > 200 || /[\x00-\x1f\x7f]/.test(request.value)) throw new CliError('INVALID_ARGUMENT', 'Select a supported model setting');
+      sendJson(200, await runtime.chatOptions(projectId, nodeId, request)); return;
+    }
     requireMethod(action === 'worktree' ? 'DELETE' : 'POST');
     if (action === 'resume') {
       if (query.size) throw new CliError('INVALID_ARGUMENT', 'Resume does not accept query parameters');

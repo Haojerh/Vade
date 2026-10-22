@@ -1,4 +1,7 @@
 import { readTerminalShell } from '../app/terminalShellPreference';
+export async function speechRequest<T>(path: string, value?: object, signal?: AbortSignal): Promise<T> {
+  return handleResponse(await fetch(`/api/speech/${path}`, { signal, ...(value ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) } : {}) }));
+}
 import type { OrganizationConfig, WorkflowSetupStatus, WorkflowModel, WorkflowProvider, WorkflowRun } from '../../shared/contracts';
 
 export async function workflowRequest<T>(path: string, value?: object, signal?: AbortSignal): Promise<T> {
@@ -465,7 +468,9 @@ export async function createWorktreeAgent(
       signal,
     },
   );
-  return handleResponse<CreateAgentResponse>(res);
+  const result = await handleResponse<CreateAgentResponse>(res);
+  window.dispatchEvent(new CustomEvent('ade:session-created', { detail: { projectId } }));
+  return result;
 }
 
 let catalogCache: { value: AgentCatalogResponse; expires: number } | null = null;

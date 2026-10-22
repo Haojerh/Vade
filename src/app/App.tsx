@@ -21,6 +21,7 @@ import '../styles/activity.css';
 import '../styles/inbox.css';
 import { useInbox } from '../features/inbox/useInbox';
 import { InboxPanel } from '../features/inbox/InboxPanel';
+import { useAgentNotifications } from '../features/inbox/agentNotifications';
 import { useConfirmationState } from '../hooks/useConfirmationState';
 import { useKanban } from '../features/kanban/useKanban';
 import { KanbanBoard } from '../features/kanban/KanbanBoard';
@@ -93,6 +94,12 @@ export const App: React.FC = () => {
   const prerequisitesRequestRef = useRef(false);
   const prerequisitesReadyRef = useRef(false);
   const inbox = useInbox(Boolean(prerequisites?.ready));
+  const notificationPopups = useAgentNotifications(inbox.section, item => {
+    if (!item.nodeId) return;
+    window.location.hash = '';
+    inbox.markHandled([item.id]);
+    openInboxNode(item.projectId, item.nodeId, item.runId);
+  });
   const kanban = useKanban(Boolean(prerequisites?.ready));
   const pendingKanbanAgent = useRef<{ projectId: string; nodeId: string; runId: string | null } | null>(null);
   const kanbanOverlay = useConfirmationState({ onClosed: () => {
@@ -237,14 +244,14 @@ export const App: React.FC = () => {
     );
   }
 
-  if (pageHash.startsWith('#/settings')) return <SettingsPage
+  if (pageHash.startsWith('#/settings')) return <>{notificationPopups}<SettingsPage
     section={pageHash.split('/')[2] ?? 'general'} onBack={() => { window.location.hash = ''; }}
     theme={theme} onToggleTheme={toggleTheme} cardStateColors={cardStateColors} onToggleCardStateColors={setCardStateColors}
     orchestrationSeparated={orchestrationSeparated} onToggleOrchestrationSeparated={setOrchestrationSeparated}
     commitGraphEnabled={commitGraphEnabled} onToggleCommitGraph={setCommitGraphEnabled}
     toolActivityEnabled={toolActivityEnabled} onToggleToolActivity={setToolActivityEnabled}
     chatToolCallsEnabled={chatToolCallsEnabled} onToggleChatToolCalls={setChatToolCallsEnabled}
-  />;
+  /></>;
 
   return (
     <div
@@ -253,6 +260,7 @@ export const App: React.FC = () => {
       style={{ '--topbar-height': `${topbarHeight}px` } as React.CSSProperties}
     >
         {/* Top Header Bar */}
+        {notificationPopups}
         <TopBar
           topbarRef={topbarRef}
           runs={runs}

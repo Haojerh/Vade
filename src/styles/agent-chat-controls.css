@@ -1,0 +1,29 @@
+.agent-settings { min-width: 0; margin-left: auto; }
+.agent-settings-trigger { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; width: max-content; padding: 5px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
+.agent-settings-trigger > span:first-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.agent-settings-trigger > .text-muted, .agent-settings-trigger > svg { flex-shrink: 0; }
+.agent-settings-trigger:hover { background: var(--surface-hover); }
+.agent-settings-popover { padding: 0; border: 1px solid var(--border-main); border-radius: 12px; background: var(--surface-1); color: var(--text-main); box-shadow: 0 12px 36px #0005; transform-origin: left bottom; opacity: 1; transform: translateY(0) scale(1); transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out); }
+.agent-settings-popover.is-closing { opacity: 0; transform: translateY(4px) scale(.97); pointer-events: none; }
+@starting-style { .agent-settings-popover:popover-open { opacity: 0; transform: translateY(4px) scale(.97); } }
+.agent-settings-search { display: flex; align-items: center; gap: 10px; padding: 12px 15px; border-bottom: 1px solid var(--border-main); color: var(--text-secondary); }
+.agent-settings-search input { width: 100%; min-width: 0; background: transparent; border: 0; outline: none; color: var(--text-main); font: inherit; }
+.agent-settings-models { padding: 6px; max-height: 330px; overflow-y: auto; overscroll-behavior: contain; }
+.agent-settings-model { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px; border: 1px solid transparent; border-radius: 9px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.agent-settings-model > span { display: grid; gap: 3px; min-width: 0; overflow-wrap: anywhere; }
+.agent-settings-model strong { font-weight: 600; }
+.agent-settings-model[aria-pressed="true"] { background: var(--surface-hover); border-color: var(--border-main); }
+.agent-settings-model:hover:not(:disabled), .agent-chat-option-row button:hover:not(:disabled) { background: var(--surface-hover); }
+.agent-chat-option-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 7px 15px; border-top: 1px solid var(--border-main); color: var(--text-secondary); font-size: 13px; }
+.agent-chat-option-row > span { flex-shrink: 0; }
+.agent-chat-option-row > button { padding: 6px 10px; border: 0; border-radius: 14px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.agent-settings-message { margin: 0; padding: 10px 15px; color: var(--text-secondary); font-size: 12px; }
+.agent-settings-native { margin: 4px 15px 10px; border: 0; background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
+.agent-settings button:disabled { cursor: default; opacity: .55; }
+.agent-settings-popover button:disabled { cursor: default; }
+.agent-settings-model:disabled, .agent-settings-native:disabled, .agent-chat-option-row > button:disabled { opacity: .55; }
+.agent-settings-popover button:focus-visible, .agent-settings-trigger:focus-visible { outline: 2px solid var(--text-secondary); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  .agent-settings-popover, .agent-settings-popover.is-closing { transform: none; transition: opacity 100ms var(--ease-out); }
+  @starting-style { .agent-settings-popover:popover-open { transform: none; } }
+}

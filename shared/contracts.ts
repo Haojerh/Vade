@@ -584,3 +584,20 @@ export interface WorkflowRun {
   planReason?: string; integrationTreeId?: string; integrationPath?: string; integrationShas?: string[];
   messages: { id: string; from: string; to: string; text: string; at: string }[];
 }
+/** Local speech contracts. Audio is mono float32 PCM at exactly 16 kHz. */
+export interface LocalSpeechModel {
+  id: string;
+  label: string;
+  description: string;
+  sizeBytes: number;
+  streaming: boolean;
+  recommended?: boolean;
+  status: 'missing' | 'downloading' | 'ready' | 'error';
+  downloadedBytes: number;
+  error?: string;
+}
+export interface LocalSpeechCatalog { available: boolean; reason?: string; models: LocalSpeechModel[] }
+export interface SpeechAudioRequest { pcm: string; sequence: number }
+export interface SpeechTranscript { text: string; interim: string }
+export interface StartSpeechRequest { modelId: string }
+export interface StartSpeechResponse { sessionId: string }

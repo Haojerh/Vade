@@ -21,8 +21,7 @@ export function StatusBar() {
     return () => { closed = true; abort.abort(); clearInterval(timer); document.removeEventListener('visibilitychange', read); };
   }, []);
   return <footer className="app-statusbar" aria-label="App usage and resources">
-    <UsagePanel />
-    <SystemControls resources={resources} />
+    <SystemControls resources={resources}><UsagePanel /></SystemControls>
 
   </footer>;
 }

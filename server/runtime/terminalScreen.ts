@@ -26,6 +26,24 @@ export class TerminalScreen {
     return data.length <= 524288 ? { data, cursor: this.parsedCursor, cols: this.terminal.cols, rows: this.terminal.rows } : null;
   }
   resize(cols: number, rows: number): void { this.terminal.resize(cols, rows); }
+  /** Native composer placeholders are dim; typed text must never be overwritten. */
+  composerEmpty(antigravity = false): boolean {
+    const buffer = this.terminal.buffer.active;
+    const line = buffer.getLine(buffer.baseY + buffer.cursorY);
+    if (!line) return false;
+    // Codex redraws its prompt after a full-width blank spacer, retaining xterm's
+    // wrapped flag. A nonempty preceding line still means a multiline draft.
+    if (line.isWrapped && buffer.getLine(buffer.baseY + buffer.cursorY - 1)?.translateToString(true).trim()) return false;
+    const text = line.translateToString(true), marker = /^\s*[›❯>]/.exec(text);
+    if (!marker) return false;
+    // Antigravity 1.4.5 uses an undimmed mode hint, leaving its cursor before it.
+    if (antigravity && buffer.cursorX <= marker[0].length + 1 && /^> [A-Za-z-]+ mode: [^\r\n]+\(shift\+tab to cycle\)$/.test(text)) return true;
+    for (let column = marker[0].length; column < line.length; column++) {
+      const cell = line.getCell(column);
+      if (cell?.getChars().trim() && !cell.isDim()) return false;
+    }
+    return true;
+  }
   text(): string | null {
     const buffer = this.terminal.buffer.active;
     const lines: string[] = [];

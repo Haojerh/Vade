@@ -78,6 +78,7 @@ export function useSnapshotSubscription({
 
     const currentGen = ++selectionGeneration.current;
     let cancelled = false;
+    let latestSnapshotAt = -Infinity;
     let sseCleanup: (() => void) | null = null;
     let pollingTimer: NodeJS.Timeout | null = null;
 
@@ -87,6 +88,9 @@ export function useSnapshotSubscription({
     const onFreshSnapshot = (snap: DashboardSnapshot) => {
       if (cancelled || currentGen !== selectionGeneration.current) return;
 
+      const generatedAt = Date.parse(snap.generatedAt);
+      if (Number.isFinite(generatedAt) && generatedAt < latestSnapshotAt) return;
+      if (Number.isFinite(generatedAt)) latestSnapshotAt = generatedAt;
       const graphMeta = snap.graph.meta;
       const isAvailable = graphMeta.availability === 'ready';
       const isSourceStale = graphMeta.stale;
@@ -112,6 +116,12 @@ export function useSnapshotSubscription({
 
       onSnapshotArrivedRef.current(snap);
     };
+
+    const created = (event: Event) => {
+      if ((event as CustomEvent<{ projectId: string }>).detail?.projectId !== selectedProjectId) return;
+      void fetchSnapshot(selectedProjectId, selectedRunId).then(onFreshSnapshot).catch(() => {});
+    };
+    window.addEventListener('ade:session-created', created);
 
     const startPollingFallback = () => {
       if (cancelled) return;
@@ -159,6 +169,7 @@ export function useSnapshotSubscription({
 
     return () => {
       cancelled = true;
+      window.removeEventListener('ade:session-created', created);
       if (sseCleanup) sseCleanup();
       if (pollingTimer) clearInterval(pollingTimer);
     };

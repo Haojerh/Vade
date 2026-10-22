@@ -47,7 +47,14 @@ export class Ports {
         if (!Number.isInteger(row.port) || row.port < 1 || row.port > 65535 || !Number.isInteger(row.pid) || row.pid < 1) return [];
         let ancestor = row.pid, group: typeof groups[number] | undefined;
         for (let depth = 0; ancestor && depth < 128; depth++) { group = groups.find(group => group.roots.includes(ancestor)); if (group) break; const parent = byPid.get(ancestor)?.parent ?? 0; if (parent === ancestor) break; ancestor = parent; }
-        const processRow = byPid.get(row.pid), project = projects.find(project => project.id === group?.projectId);
+        const processRow = byPid.get(row.pid);
+        const providerService = /^(?:codex|agy|antigravity|claude|claude-code)(?:\.exe)?$/i.test(processRow?.name ?? '')
+          || /[\\/](?:@openai[\\/]codex|@anthropic-ai[\\/]claude-code|antigravity|agy)[\\/]/i.test(processRow?.commandLine ?? '');
+        const developmentCommand = /(?:[\\/]node_modules[\\/](?:vite|next|webpack|astro|http-server|serve)[\\/]|npm-cli\.js["']?\s+(?:run|exec|start)|(?:^|\s)(?:npm|pnpm|yarn)(?:\.cmd)?\s+(?:run|dev|start)|\buvicorn\b|\bhttp\.server\b)/i.test(processRow?.commandLine ?? '');
+        // Owning an agent does not make its RPC/debug/service ports a project
+        // server. Internal ports need an owned shell or a recognized dev command.
+        const internal = group && !providerService && (group.provider === 'terminal' || (!group.roots.includes(row.pid) && developmentCommand));
+        const project = internal ? projects.find(project => project.id === group?.projectId) : undefined;
         const id = crypto.createHash('sha256').update(`${row.pid}:${processRow?.startedAt ?? ''}:${row.port}:${row.address}`).digest('hex').slice(0, 40);
         if (typeof processRow?.startedAt === 'string') identities.set(id, processRow.startedAt);
         return [{ id, port: row.port, address: String(row.address).slice(0, 128), pid: row.pid, process: processRow?.name ?? 'Process', projectId: project?.id ?? null, project: project?.name ?? null, canKill: Boolean(project && processRow?.startedAt && row.pid !== process.pid && row.port !== 4317) }];

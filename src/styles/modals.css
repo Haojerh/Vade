@@ -87,7 +87,7 @@ dialog.node-modal-dialog.composer-only-dialog { min-height: 0; }
 }
 .message-composer-actions .message-attachment-controls > .btn svg { width: 14px; height: 14px; }
 .message-composer-actions > .message-attachment-controls { grid-column: 1; grid-row: 1; }
-.message-composer-actions > .agent-chat-controls { grid-column: 2; grid-row: 1; margin-left: 0; justify-self: end; max-width: 100%; }
+.message-composer-actions > .agent-chat-controls { grid-column: 2; grid-row: 1; margin-left: 0; justify-self: end; width: max-content; min-width: 0; max-width: 100%; }
 .agent-chat-metadata { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 12px; }
 .agent-chat-metadata > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-chat-model { font-weight: 600; }
@@ -196,6 +196,7 @@ dialog.node-modal-dialog.is-closing::backdrop {
   flex-shrink: 0;
   box-shadow: var(--shadow-sm);
 }
+.modal-provider-avatar .provider-badge, .modal-provider-avatar .provider-svg { display: inline-flex; align-items: center; justify-content: center; line-height: 0; }
 .modal-identity-info {
   display: flex;
   flex-direction: column;
@@ -279,6 +280,7 @@ dialog.node-modal-dialog.is-closing::backdrop {
   .node-modal-dialog .modal-identity-hero { width: 100%; gap: 10px; }
   .node-modal-dialog:not(.confirmation-dialog) .modal-identity-hero { width: calc(100% - 46px); }
   .node-modal-dialog .modal-provider-avatar { width: 34px; height: 34px; }
+  .node-modal-dialog .modal-provider-avatar .provider-svg { width: 24px !important; height: 24px !important; }
   .node-modal-dialog .modal-provider-avatar svg,
   .node-modal-dialog .modal-provider-avatar img { max-width: 24px; max-height: 24px; }
   .node-modal-dialog .modal-name-status-row { gap: 8px; }
@@ -1223,10 +1225,14 @@ dialog.add-worktree-dialog {
 .worktree-dialog-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 24px; }
 .worktree-dialog-heading h2 { margin: 0; }
 .worktree-field { display: flex; flex-direction: column; gap: 9px; margin: 0 0 22px; font-size: 13px; color: var(--text-secondary); }
-.worktree-field input { width: 100%; min-width: 0; box-sizing: border-box; padding: 11px 12px; border: 1px solid var(--border-main); border-radius: 9px; background: var(--surface-2); color: var(--text-main); font: inherit; }
+.worktree-field input,
+.project-shortcut-editor input:not([role=switch]),
+.project-shortcut-editor textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 11px 12px; border: 1px solid var(--border-main); border-radius: 9px; background: var(--surface-2); color: var(--text-main); font: inherit; }
 .worktree-field .custom-select-control { width: 100%; min-width: 0; padding-right: 0; border-radius: 9px; background: var(--surface-2); }
 .worktree-field .custom-select-native { min-width: 0; padding: 11px 34px 11px 12px; font: inherit; }
-.worktree-field input:focus-visible { outline: none; border-color: var(--accent); box-shadow: none; }
+.worktree-field input:focus-visible,
+.project-shortcut-editor input:not([role=switch]):focus,
+.project-shortcut-editor textarea:focus { outline: none; border-color: var(--accent); box-shadow: none; }
 .worktree-field .custom-select-control:focus-within { border-color: var(--accent); box-shadow: none; }
 .agent-picker-trigger:focus-visible { outline: none; border-color: var(--accent); box-shadow: none; }
 .worktree-field input[readonly] { color: var(--text-secondary); text-overflow: ellipsis; }
@@ -1267,6 +1273,19 @@ dialog.add-worktree-dialog {
   min-width: 0;
   overflow-wrap: anywhere;
   line-height: 1.5;
+}
+.message-composer-actions .composer-dictation > .btn-danger { color: var(--state-failed-text); background: var(--state-failed-bg); border-color: var(--state-failed-border); }
+.agent-chatbox-section { container-type: inline-size; }
+@container (max-width: 520px) {
+  .message-composer-actions { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+  .message-composer-actions .composer-action-label, .message-composer-actions .composer-attachment-hint { display: none; }
+  .message-composer-actions > .agent-chat-controls { grid-column: 2; grid-row: 1; justify-self: start; }
+  .message-composer-actions .agent-settings-trigger > span:first-child { max-width: 16ch; }
+  .message-composer-actions > .message-attachment-controls { grid-column: 1; grid-row: 1; justify-self: start; }
+  .message-composer-actions .composer-dictation > button { grid-column: 3; grid-row: 1; }
+  .message-composer-actions > .btn-chat-send { grid-column: 4; grid-row: 1; }
+  .message-composer-actions :is(.btn-chat-send, .message-attachment-controls > .btn, .composer-dictation > button) { min-width: 34px; min-height: 34px; padding: 7px; justify-content: center; }
+  .message-composer-actions .dictation-status { grid-row: 2; }
 }
 
 .prereq-local-card { max-width: 480px; padding: 28px; gap: 16px; }

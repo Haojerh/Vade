@@ -27,7 +27,7 @@ export function useInbox(enabled: boolean) {
   }, [enabled]);
   useEffect(() => {
     void refresh();
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') void refresh(); }, 30_000);
+    const timer = setInterval(() => { void refresh(); }, window.adeDesktop ? 30_000 : 5_000);
     const focus = () => { void refresh(); };
     window.addEventListener('focus', focus);
     const storage = (event: StorageEvent) => {

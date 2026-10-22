@@ -24,7 +24,7 @@
 .inbox-handle-all:hover:not(:disabled) { background: var(--state-working-bg); color: var(--text-main); }
 .inbox-handle-all:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .inbox-handle-all:disabled { opacity: .45; cursor: default; }
-.inbox-results { overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
+.inbox-results { flex: 1; display: flex; flex-direction: column; overflow-y: auto; min-height: 0; overscroll-behavior: contain; }
 .inbox-results ul { list-style: none; margin: 0; padding: 0; }
 .inbox-results li { display: flex; border-bottom: 1px solid var(--border-subtle); transition: background-color 120ms ease; }
 .inbox-results li:hover { background: var(--surface-hover); }
@@ -49,7 +49,7 @@
 .inbox-open-project:hover { background: var(--surface-active); color: var(--text-main); }
 .inbox-open-project:disabled { opacity: .35; cursor: default; background: transparent; }
 .inbox-notice { padding: 10px 20px; margin: 0; color: var(--text-secondary); font-size: 12px; background: var(--surface-2); }
-.inbox-empty { text-align: center; padding: 48px 20px; color: var(--text-secondary); }
+.inbox-empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 24px 20px; color: var(--text-secondary); }
 .inbox-empty h3 { color: var(--text-main); font-size: 14px; margin: 12px 0 8px; }
 .inbox-empty p { font-size: 12px; margin: 0; }
 @media (max-width: 600px) {

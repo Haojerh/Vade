@@ -72,13 +72,14 @@ export function useWorkflowOverlays({
     try {
       await deleteWorktree(projectId, wt.id);
       deleteWorktreeConfirmation.close();
+      onRefresh?.();
       scheduleUpdate();
     } catch (err: any) {
       setDeleteError(err.message || 'Failed to delete worktree');
     } finally {
       setIsDeletingWorktree(false);
     }
-  }, [projectId, deleteWorktreeConfirmation, scheduleUpdate]);
+  }, [projectId, deleteWorktreeConfirmation, scheduleUpdate, onRefresh]);
 
   const handleConfirmCloseAgentTab = useCallback(async () => {
     const node = closeAgentTabConfirmation.data;
@@ -126,6 +127,7 @@ export function useWorkflowOverlays({
       try {
         await createWorktreeAgent(projectId, wt.id, command, title);
         addAgentConfirmation.close();
+        onRefresh?.();
         scheduleUpdate();
       } catch (err: any) {
         setCreateAgentError(err.message || 'Failed to create agent');
@@ -133,7 +135,7 @@ export function useWorkflowOverlays({
         setIsCreatingAgent(false);
       }
     },
-    [projectId, addAgentConfirmation, scheduleUpdate]
+    [projectId, addAgentConfirmation, scheduleUpdate, onRefresh]
   );
 
   return {

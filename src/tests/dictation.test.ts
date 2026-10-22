@@ -1,6 +1,17 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendDictation, createDictationSession, dictationSupport, type SpeechRecognizer } from '../features/workflow/dictation';
+import { pcmResampler } from '../features/workflow/localDictation';
+
+test('local microphone resampling preserves sample boundaries and produces 16 kHz mono PCM', () => {
+  const input = Float32Array.from({ length: 48000 }, (_, index) => Math.sin(index / 100));
+  const whole = pcmResampler(48000)(input);
+  const resample = pcmResampler(48000), pieces: number[] = [];
+  for (let i = 0; i < input.length; i += 4096) pieces.push(...resample(input.slice(i, i + 4096)));
+  assert.equal(whole.length, 16000);
+  assert.deepEqual(new Float32Array(pieces), whole);
+  assert.ok(whole.every(value => Number.isFinite(value) && Math.abs(value) <= 1));
+});
 
 function recognizer(): SpeechRecognizer {
   return { lang: '', continuous: false, interimResults: false, onresult: null, onerror: null, onend: null,

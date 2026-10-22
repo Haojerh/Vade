@@ -863,9 +863,24 @@ test('standalone snapshot retains last successful data when Git becomes unavaila
   } finally { f.close(); }
 });
 
-test('project onboarding browses folders, registers plain workspaces and creates repositories without overwriting', async () => {
+test('project onboarding browses folders, registers plain workspaces and creates repositories without overwriting', async t => {
   const f = fixture();
+  // The host's temporary directory may itself be inside a checkout (for example,
+  // a home-directory dotfiles repository). Hide only those ancestor markers so
+  // this fixture has a genuinely plain workspace without changing host files.
+  const ancestorMarkers = new Set<string>();
+  for (let directory = path.dirname(f.directory);; directory = path.dirname(directory)) {
+    ancestorMarkers.add(path.join(directory, '.git'));
+    if (path.dirname(directory) === directory) break;
+  }
+  const existsSync = fs.existsSync;
+  t.mock.method(fs, 'existsSync', (file: fs.PathLike) =>
+    typeof file === 'string' && ancestorMarkers.has(file) ? false : existsSync(file));
   try {
+    const nested = path.join(f.repo, 'nested'); fs.mkdirSync(nested);
+    const checkout = await addProject(f.runtime.git, { path: nested });
+    assert.equal(checkout.kind, 'git');
+    assert.equal(checkout.paths[0], fs.realpathSync(f.repo), 'Folders inside a checkout still resolve to its repository root');
     const plain = path.join(f.directory, 'plain folder'); fs.mkdirSync(plain);
     fs.writeFileSync(path.join(plain, 'keep.txt'), 'keep');
     const listing = listProjectFolders(f.directory);
@@ -947,12 +962,14 @@ test('hookless Codex root status updates the dashboard immediately and resets on
   }
 });
 
-test('Codex resume initialization does not create a working turn or Inbox result', async () => {
+for (const freshLaunch of [false, true]) test(`Codex ${freshLaunch ? 'launch' : 'resume'} initialization does not create a working turn or Inbox result`, async () => {
   const f = fixture();
   const script = String.raw`const report=s=>process.stdout.write('\x1b]7501;state='+s+':app=codex\x1b\\');report('working');setTimeout(()=>{report('idle');setTimeout(()=>{report('working');process.stdout.write('Weekly limit: 23% left');setTimeout(()=>{report('idle');process.stdout.write('RESTORED');},100);},100);},200);process.stdin.on('data',d=>{if(d.includes('work'))report('working');if(d.includes('done'))report('idle')});`;
   const id = '11234567-1234-1234-1234-123456789abc';
   const sessions = new AdeSessions(f.runtime.store, () => ({ executable: process.execPath, args: ['-e', script, '--'] }), async () => id, () => {}, () => {});
   Object.defineProperty(f.runtime, 'sessions', { value: sessions });
+  const notifications: string[] = [];
+  const unsubscribe = sessions.subscribeResults(item => { notifications.push(item.id); assert.equal(item.outcome, 'completed'); });
   const until = async (condition: () => boolean) => { const deadline = Date.now() + 6000; while (!condition()) { if (Date.now() > deadline) throw new Error('Resume fixture timed out'); await new Promise(resolve => setTimeout(resolve, 10)); } };
   try {
     const project = await f.runtime.git.register(f.repo), tree = (await f.runtime.git.worktrees(project))[0];
@@ -965,9 +982,17 @@ test('Codex resume initialization does not create a working turn or Inbox result
     assert.equal(sessions.status(project.id, record.id).data?.state, 'idle');
     assert.ok(!states.includes('working')); assert.ok(!states.includes('completed'));
     assert.equal(f.runtime.store.db.prepare('SELECT count(*) AS total FROM turn_results').get()?.total, 0);
+    assert.equal(notifications.length, 0, 'Restored history must not notify');
     await sessions.input(project.id, record.id, 'work\r'); await until(() => sessions.status(project.id, record.id).data?.state === 'working');
     await sessions.input(project.id, record.id, 'done\r'); await until(() => sessions.status(project.id, record.id).data?.state === 'completed');
     assert.equal(f.runtime.store.db.prepare('SELECT count(*) AS total FROM turn_results').get()?.total, 1);
+    assert.equal(notifications.length, 1, 'A fresh completed turn notifies once');
+    sessions.status(project.id, record.id); sessions.status(project.id, record.id);
+    assert.equal(notifications.length, 1, 'Repeated status reads must not duplicate notifications');
+    unsubscribe();
+    await sessions.input(project.id, record.id, 'work\r'); await until(() => sessions.status(project.id, record.id).data?.state === 'working');
+    await sessions.input(project.id, record.id, 'done\r'); await until(() => sessions.status(project.id, record.id).data?.state === 'completed');
+    assert.equal(notifications.length, 1, 'Unsubscribed listeners must not receive later turns');
   } finally { f.runtime.close(); await fs.promises.rm(f.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
@@ -1118,4 +1143,22 @@ test('terminal checkpoints restore an idle alternate-screen TUI and preserve the
     await write('hello');
     assert.equal(screen.checkpoint()!.cursor, initial.length + 5);
   } finally { screen.dispose(); restored.dispose(); }
+});
+
+test('chat controls distinguish native placeholders, typed drafts and Antigravity mode hints', async () => {
+  let parsed = () => {}; const screen = new TerminalScreen(() => {}, () => parsed());
+  const write = (data: string) => new Promise<void>(resolve => { parsed = resolve; screen.write(data); });
+  try {
+    await write('\x1b[2J\x1b[H› \x1b[2mAsk Codex to do anything\x1b[0m\r\x1b[2C');
+    assert.equal(screen.composerEmpty(), true);
+    await write('\x1b[2J\x1b[H' + ' '.repeat(100) + '\u203a \x1b[2mAsk Codex to do anything\x1b[0m\r\x1b[2C');
+    assert.equal(screen.composerEmpty(), true, 'Codex redraw after a full-width blank spacer remains empty');
+    await write('\x1b[2K\r› hello draft');
+    assert.equal(screen.composerEmpty(), false);
+    await write('\x1b[2K\r> Accept-edits mode: file edits auto-approved (shift+tab to cycle)\r\x1b[2C');
+    assert.equal(screen.composerEmpty(), false);
+    assert.equal(screen.composerEmpty(true), true);
+    await write('\x1b[2K\r> typed draft\r\x1b[2C');
+    assert.equal(screen.composerEmpty(true), false);
+  } finally { screen.dispose(); }
 });

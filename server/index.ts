@@ -5,6 +5,9 @@ const PORT = 4317;
 const HOST = '127.0.0.1';
 
 const runtime = new LocalRuntime();
+runtime.sessions.subscribeResults(item => {
+  (process as NodeJS.Process & { parentPort?: { postMessage: (value: unknown) => void } }).parentPort?.postMessage({ type: 'agent-completed', item });
+});
 const server = createServer({ localRuntime: runtime, distDir: process.env.ADE_DIST_DIR });
 
 server.on('error', (err: any) => {

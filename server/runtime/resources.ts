@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import type { AppResources, ResourceDetails } from '../../shared/contracts.js';
 import os from 'node:os';
 
-export interface ProcessMemory { pid: number; parent: number; bytes: number; name?: string; startedAt?: string; privateBytes?: number; cpuSeconds?: number; cpuPercent?: number | null }
+export interface ProcessMemory { pid: number; parent: number; bytes: number; name?: string; commandLine?: string; startedAt?: string; privateBytes?: number; cpuSeconds?: number; cpuPercent?: number | null }
 export function processTreeMemory(rows: ProcessMemory[], roots: number[]) {
   const selected = new Set(roots), byParent = new Map<number, ProcessMemory[]>();
   for (const row of rows) { const group = byParent.get(row.parent) ?? []; group.push(row); byParent.set(row.parent, group); }
@@ -57,12 +57,14 @@ export class ResourceReader {
   private async collect(): Promise<ProcessMemory[]> {
     const windows = process.platform === 'win32';
     const command = promisify(execFile)(windows ? 'powershell.exe' : 'ps', windows
-      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | Select-Object @{n="pid";e={$_.ProcessId}},@{n="parent";e={$_.ParentProcessId}},@{n="bytes";e={[double]$_.WorkingSetSize}},@{n="name";e={$_.Name}},@{n="startedAt";e={$_.CreationDate.ToUniversalTime().Ticks.ToString()}},@{n="privateBytes";e={[double]$_.PrivatePageCount}},@{n="cpuSeconds";e={([double]$_.KernelModeTime+[double]$_.UserModeTime)/10000000}} | ConvertTo-Json -Compress']
-      : ['-axo', 'pid=,ppid=,rss='], { windowsHide: true, timeout: 5000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });
+      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | Select-Object @{n="pid";e={$_.ProcessId}},@{n="parent";e={$_.ParentProcessId}},@{n="bytes";e={[double]$_.WorkingSetSize}},@{n="name";e={$_.Name}},@{n="commandLine";e={if($_.CommandLine){$_.CommandLine.Substring(0,[Math]::Min(1024,$_.CommandLine.Length))}}},@{n="startedAt";e={$_.CreationDate.ToUniversalTime().Ticks.ToString()}},@{n="privateBytes";e={[double]$_.PrivatePageCount}},@{n="cpuSeconds";e={([double]$_.KernelModeTime+[double]$_.UserModeTime)/10000000}} | ConvertTo-Json -Compress']
+      : ['-axo', 'pid=,ppid=,rss=,comm=,args='], { windowsHide: true, timeout: 5000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });
     const samplerPid = command.child.pid;
     const { stdout } = await command;
     const rows: ProcessMemory[] = windows ? JSON.parse(stdout) : stdout.trim().split('\n').map(line => {
-      const [pid, parent, rss] = line.trim().split(/\s+/).map(Number); return { pid, parent, bytes: rss * 1024 };
+      const fields = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+      if (!fields) throw new Error('Invalid process row');
+      return { pid: Number(fields[1]), parent: Number(fields[2]), bytes: Number(fields[3]) * 1024, name: fields[4].split('/').at(-1), commandLine: fields[5].slice(0, 1024) };
     });
     if (!Array.isArray(rows) || rows.length > 10000 || rows.some(row => !Number.isInteger(row.pid) || !Number.isInteger(row.parent) || !Number.isFinite(row.bytes) || row.bytes < 0)) throw new Error('Invalid process snapshot');
     const now = Date.now(), next = new Map<number, { at: number; seconds: number; startedAt?: string }>();

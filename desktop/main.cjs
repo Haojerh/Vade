@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, utilityProcess, shell, ipcMain } = require('electron');
+const { app, BrowserWindow, dialog, utilityProcess, shell, ipcMain, Notification } = require('electron');
 const path = require('node:path');
 
 let backend;
@@ -6,6 +6,7 @@ let quitting = false;
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.setName('Vade');
+  if (process.platform === 'win32') app.setAppUserModelId('dev.ade.desktop');
   app.on('second-instance', () => {
     const window = BrowserWindow.getAllWindows()[0];
     if (window) { if (window.isMinimized()) window.restore(); window.focus(); }
@@ -13,7 +14,7 @@ else {
   app.whenReady().then(async () => {
     backend = utilityProcess.fork(path.join(__dirname, '../build/server.cjs'), [], {
       cwd: app.getAppPath(),
-      env: { ...process.env, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.getAppPath(), 'build/ptyHost.cjs'), ADE_ORCHESTRATION_RESOURCES: path.join(app.getAppPath(), 'build/orchestration') },
+      env: { ...process.env, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.getAppPath(), 'build/ptyHost.cjs'), ADE_SPEECH_WORKER: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/speechWorker.cjs'), ADE_ORCHESTRATION_RESOURCES: path.join(app.getAppPath(), 'build/orchestration') },
       stdio: 'pipe', serviceName: 'ADE local runtime',
     });
     backend.stdout?.on('data', data => process.stdout.write(data));
@@ -43,6 +44,33 @@ else {
       window.setMenuBarVisibility(false);
       window.removeMenu();
       const origin = 'http://127.0.0.1:4317';
+      let notificationSettings = { enabled: true, sound: true };
+      const notifications = new Map();
+      ipcMain.handle('ade:notification-settings', (event, value) => {
+        if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('Notifications are only available to ADE');
+        if (!value || typeof value.enabled !== 'boolean' || typeof value.sound !== 'boolean') throw new Error('Invalid notification settings');
+        notificationSettings = { enabled: value.enabled, sound: value.sound };
+        if (!value.enabled) { for (const notification of notifications.values()) notification.close(); notifications.clear(); }
+      });
+      backend.on('message', message => {
+        if (message?.type !== 'agent-completed' || window.isDestroyed()) return;
+        const item = message.item;
+        window.webContents.send('ade:agent-notification', { item, open: false });
+        if (!notificationSettings.enabled || window.isFocused() || !Notification.isSupported() || notifications.has(item.id)) return;
+        const notification = new Notification({ title: 'Agent finished', body: `${item.projectName} — ${item.title}`, silent: !notificationSettings.sound });
+        notifications.set(item.id, notification);
+        while (notifications.size > 32) { const [id, oldest] = notifications.entries().next().value; oldest.close(); notifications.delete(id); }
+        notification.on('click', () => {
+          if (window.isDestroyed()) return;
+          if (window.isMinimized()) window.restore();
+          window.show(); window.focus();
+          window.webContents.send('ade:agent-notification', { item, open: true });
+        });
+        notification.on('close', () => notifications.delete(item.id));
+        notification.on('failed', () => notifications.delete(item.id));
+        notification.show();
+      });
+      window.on('closed', () => { for (const notification of notifications.values()) notification.close(); notifications.clear(); });
       ipcMain.handle('ade:choose-folder', async event => {
         if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('Folder picker is only available to ADE');
         const result = await dialog.showOpenDialog(window, { title: 'Choose a project folder', properties: ['openDirectory'] });

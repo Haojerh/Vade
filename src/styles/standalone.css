@@ -148,17 +148,17 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .project-shortcut-row span { display: grid; gap: 4px; min-width: 0; }
 .project-shortcut-row small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; max-width: 230px; color: var(--text-secondary); }
 .project-shortcut-row button.text-danger { color: var(--state-failed-text); }
-.project-shortcut-editor { width: min(860px, calc(100vw - 32px)); }
-.project-shortcut-fields { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 16px; margin: 24px 0; }
+.project-shortcut-editor { width: min(560px, calc(100vw - 32px)); }
+.project-shortcut-fields { display: grid; grid-template-columns: minmax(0, 1fr) 168px; gap: 16px; margin: 24px 0; }
 .project-shortcut-editor label { display: grid; gap: 8px; font-size: 13px; font-weight: 600; }
-.project-shortcut-editor input:not([role=switch]), .project-shortcut-editor textarea { width: 100%; box-sizing: border-box; background: var(--surface-1); color: var(--text-main); border: 1px solid var(--border-main); border-radius: 8px; padding: 12px; font: inherit; }
 .project-shortcut-editor fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .project-shortcut-editor legend { font-size: 13px; font-weight: 600; margin-bottom: 8px; }
-.project-shortcut-action { display: flex; border: 1px solid var(--border-main); border-radius: 8px; overflow: hidden; }
-.project-shortcut-action button { flex: 1; border: 0; padding: 12px; background: transparent; color: var(--text-main); cursor: pointer; }
-.project-shortcut-action button[aria-pressed=true] { background: var(--surface-active); font-weight: 600; }
+.project-shortcut-action { padding: 3px; border: 1px solid var(--border-main); border-radius: 8px; overflow: hidden; box-sizing: border-box; }
+.project-shortcut-action .segmented-control { width: 100%; gap: 0; }
+.project-shortcut-action .segmented-control > button, .project-shortcut-action .segmented-control-active > span { padding: 8px 10px; min-height: 36px; box-sizing: border-box; border-radius: 6px; }
+.project-shortcut-action .segmented-control-active { gap: 0; background: var(--surface-active); }
 .project-shortcut-command { margin-top: 20px; }
-.project-shortcut-command textarea { min-height: 260px; resize: vertical; font-family: Consolas, monospace; }
+.project-shortcut-command textarea { resize: vertical; }
 .project-shortcut-editor label.settings-page-row { display: flex; gap: 16px; min-height: 48px; }
 .project-shortcut-notice { max-width: 28ch; font-size: 11px; color: var(--text-secondary); }
 @media (max-width: 600px) { .project-shortcut-fields { grid-template-columns: 1fr; } .project-shortcut-notice { display: none; } }
@@ -168,6 +168,10 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .statusbar-system-controls { margin-left: auto; display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .statusbar-control { display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; border: 0; background: transparent; color: var(--text-secondary); font: inherit; cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .statusbar-control:hover, .statusbar-control[aria-expanded=true] { color: var(--text-main); }
+.agent-notifications { position: fixed; right: 18px; bottom: 46px; z-index: 10000; display: grid; gap: 10px; width: min(360px, calc(100vw - 36px)); pointer-events: none; }
+.agent-notification { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border-main); border-radius: 10px; background: var(--surface-1); color: var(--text-main); box-shadow: 0 8px 28px #0005; pointer-events: auto; }
+.agent-notification-open { flex: 1; min-width: 0; display: grid; gap: 5px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.agent-notification-open span { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .system-popover { padding: 10px; border: 1px solid var(--border-main); border-radius: 12px; background: var(--surface-1); color: var(--text-main); box-shadow: 0 8px 30px #0005; font-size: 12px; }
 .system-popover > header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 4px 4px 12px; margin-bottom: 6px; border-bottom: 1px solid var(--border-main); }
 .system-popover > header > span, .system-popover-note { color: var(--text-secondary); }
@@ -190,14 +194,14 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 @media (max-width: 600px) { .statusbar-system-controls { gap: 9px; } .statusbar-control { font-size: 10px; } }
 
 /* Compact project command editor shares dialog chrome with other settings. */
-dialog.node-modal-dialog.project-shortcut-editor { padding: 24px; box-sizing: border-box; max-width: 860px; min-height: 0; max-height: 90dvh; overflow: auto; }
+dialog.node-modal-dialog.project-shortcut-editor { padding: 24px; box-sizing: border-box; max-width: 560px; min-height: 0; max-height: 90dvh; overflow: auto; }
 .project-shortcut-editor h2 { margin: 0; font-size: 20px; line-height: 1.4; }
 .project-shortcut-editor .project-shortcut-fields { margin: 24px 0 20px; }
 .project-shortcut-editor input:not([role=switch]) { height: 44px; }
 .project-shortcut-editor :is(input:not([role=switch]), textarea) { font-weight: 400; font-size: 13px; }
-.project-shortcut-editor .project-shortcut-command textarea { min-height: 220px; max-height: 42dvh; }
+.project-shortcut-editor .project-shortcut-command textarea { min-height: 160px; max-height: 42dvh; }
 .project-shortcut-editor .dialog-actions { margin-top: 22px; }
-.project-shortcuts-menu > .btn { margin-top: 10px; padding: 10px; width: 100%; justify-content: flex-start; border-top: 1px solid var(--border-subtle); border-radius: 0 0 6px 6px; }
+.project-shortcuts-menu > .btn { margin-top: 10px; padding: 10px; width: 100%; justify-content: flex-start; border: 1px solid var(--border-subtle); border-radius: 6px; }
 .project-shortcut-row > button:not(:first-child) { opacity: 0; pointer-events: none; transition: opacity 120ms ease; }
 .project-shortcut-row:hover > button, .project-shortcut-row:focus-within > button { opacity: 1; pointer-events: auto; }
 .statusbar-system-controls { gap: 18px; }

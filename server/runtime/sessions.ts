@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fork, type ChildProcess } from 'node:child_process';
-import type { AdeProvider, AgentCatalogResponse, AgentStatus, Section, SendMessageRequest, TerminalPage, TerminalShell, AgentInteraction, AnswerAgentRequest } from '../../shared/contracts.js';
+import type { AdeProvider, AgentCatalogResponse, AgentStatus, Section, SendMessageRequest, TerminalPage, TerminalShell, AgentInteraction, AnswerAgentRequest, InboxItem, AgentChatOptions, SetAgentChatOptionRequest } from '../../shared/contracts.js';
 import { CliError } from '../integrations/cli.js';
 import { AdeStore, type SessionRecord } from './store.js';
 import { codexThread, validCodexThreadId } from './codexThread.js';
@@ -14,6 +14,9 @@ import { attachmentPaste, attachmentReference, decodeAttachments, storeAttachmen
 import { TerminalScreen } from './terminalScreen.js';
 import { permissionArgs, readAgentPreferences } from './agentPreferences.js';
 import { terminalInteraction } from './interaction.js';
+import { ProviderChatControls } from './providerChatControls.js';
+import { AntigravityChatControls } from './antigravityChatControls.js';
+import type { ChatControlIO } from './chatControlTypes.js';
 
 const PROVIDERS: { id: AdeProvider; name: string; command: string; package?: string; entry?: string }[] = [
   { id: 'codex', name: 'Codex', command: 'codex', package: '@openai/codex', entry: 'bin/codex.js' },
@@ -73,6 +76,10 @@ export function resolveAgent(provider: AdeProvider, shell?: TerminalShell): { ex
   if (definition.package && definition.entry) {
     const node = executableOnPath('node');
     for (const dir of (process.env.PATH ?? '').split(path.delimiter)) {
+      if (provider === 'claude') {
+        const nativeEntry = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', '@anthropic-ai', 'claude-code', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
+        if (fs.existsSync(nativeEntry)) return { executable: nativeEntry, args: [] };
+      }
       const entry = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', definition.package, definition.entry);
       if (node && fs.existsSync(entry)) return { executable: node, args: [entry] };
     }
@@ -88,6 +95,8 @@ export function agentCatalog(): AgentCatalogResponse {
 }
 
 interface LiveSession {
+  draftInput?: boolean;
+  chatCurrent?: AgentChatOptions['current'];
   lastHook?: Section<AgentStatus>;
   nativeApprovalVisible?: boolean;
   answeredPrompt?: string;
@@ -124,14 +133,21 @@ export class AdeSessions {
   private listeners = new Map<string, Set<() => void>>();
   private statusListeners = new Map<string, Set<() => void>>();
   private resultTurns = new Map<string, { state: string; turn: string; token?: string }>();
+  private chatControls = new ProviderChatControls();
+  private antigravityControls = new AntigravityChatControls();
+  private resultListeners = new Set<(item: InboxItem) => void>();
+  subscribeResults(listener: (item: InboxItem) => void): () => void {
+    this.resultListeners.add(listener);
+    return () => { this.resultListeners.delete(listener); };
+  }
   processRoots(): number[] { return [...this.helpers].flatMap(child => child.pid ? [child.pid] : []).concat([...this.live.values()].flatMap(session => session.live && session.agentPid ? [session.agentPid] : [])); }
-  processGroups(): { id: string; projectId: string; label: string; roots: number[] }[] {
+  processGroups(): { id: string; projectId: string; provider: AdeProvider; label: string; roots: number[] }[] {
     const projects = this.store.projects();
     const records = new Map(projects.flatMap(project => this.store.sessions(project.id)).map(record => [record.id, record]));
     return [...this.live].flatMap(([id, live]) => {
       if (!live.live || !live.agentPid) return [];
       const record = records.get(id), project = projects.find(project => project.id === record?.projectId);
-      return record ? [{ id, projectId: record.projectId, label: `${project?.name ?? 'Project'} / ${this.store.title(id, record.title)}`, roots: [live.agentPid] }] : [];
+      return record ? [{ id, projectId: record.projectId, provider: record.provider, label: `${project?.name ?? 'Project'} / ${this.store.title(id, record.title)}`, roots: [live.agentPid] }] : [];
     });
   }
   subscribeStatus(projectId: string, listener: () => void): () => void {
@@ -230,6 +246,9 @@ export class AdeSessions {
         entityId: record.id, title: this.store.title(record.id, record.title), outcome: state, at: status.meta.observedAt, source: 'turn' };
       this.store.db.prepare('INSERT OR REPLACE INTO turn_results VALUES (?, ?, ?)').run(turn, item.at, JSON.stringify(item));
       this.store.db.exec('DELETE FROM turn_results WHERE id NOT IN (SELECT id FROM turn_results ORDER BY at DESC LIMIT 200)');
+      if (state === 'completed' && previous && previous.token === record.statusToken && ['working', 'waiting', 'blocked'].includes(previous.state) && this.live.get(record.id)?.live) {
+        for (const listener of this.resultListeners) listener({ ...item, outcome: 'completed', source: 'turn' });
+      }
     }
     return status;
   }
@@ -292,7 +311,8 @@ export class AdeSessions {
     if (this.starting.has(record.id)) throw new CliError('INVALID_ARGUMENT', 'This terminal is already starting');
     if (this.live.size + this.starting.size - (this.live.has(record.id) ? 1 : 0) >= MAX_LIVE_SESSIONS) throw new CliError('RATE_LIMITED', 'Close an agent before starting more than 16 sessions');
     this.starting.add(record.id);
-    const resumingCodex = record.provider === 'codex' && Boolean(record.providerThreadId);
+    // Even a new Codex thread starts through the native resume path below.
+    const initializingCodex = record.provider === 'codex';
     try {
       const node = executableOnPath('node');
       if (!node) throw new CliError('CLI_MISSING', 'Node.js is required for provider status hooks');
@@ -325,11 +345,11 @@ export class AdeSessions {
         if (options?.effort) resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
       }
       if (this.shutdown.signal.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
-      return await this.startTerminal(record, resolved, resumingCodex);
+      return await this.startTerminal(record, resolved, initializingCodex);
     } finally { this.starting.delete(record.id); }
   }
 
-  private async startTerminal(record: SessionRecord, resolved: { executable: string; args: string[] }, resumingCodex = false): Promise<SessionRecord> {
+  private async startTerminal(record: SessionRecord, resolved: { executable: string; args: string[] }, initializingCodex = false): Promise<SessionRecord> {
     const definition = PROVIDERS.find(provider => provider.id === record.provider)!;
     const cwd = record.cwd;
     fs.mkdirSync(path.join(this.store.directory, 'status'), { recursive: true, mode: 0o700 });
@@ -369,7 +389,7 @@ export class AdeSessions {
     delete env.ELECTRON_RUN_AS_NODE;
     try { child = fork(host, [], { execPath: node, env, execArgv: [], windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }); }
     catch { throw new CliError('CLI_FAILED', `${definition.name} could not start; check its local installation`); }
-    const session: LiveSession = { process: child, buffer: '', start: 0, live: false, exitCode: null, pending: new Map(), turnStatus: new TerminalTurnStatus(), resumeInitializing: resumingCodex, resumeTurnObserved: !resumingCodex };
+    const session: LiveSession = { process: child, buffer: '', start: 0, live: false, exitCode: null, pending: new Map(), turnStatus: new TerminalTurnStatus(), resumeInitializing: initializingCodex, resumeTurnObserved: !initializingCodex };
     session.screen = new TerminalScreen(data => {
       if (child.connected && !this.shutdown.signal.aborted) void this.command(session, { type: 'input', data }).catch(() => {});
     }, () => {
@@ -383,7 +403,7 @@ export class AdeSessions {
     const programStatus = programStatusReader(status => {
       if (!['codex', 'claude'].includes(record.provider)) return;
       if (session.resumeInitializing) {
-        // Codex reports working while restoring a conversation, then idle without a new turn.
+        // Codex reports working while initializing either a new or restored thread.
         // Establish the idle baseline, or wait for a fresh prompt/tool hook; never count restoration.
         if (status.state === 'idle') { session.resumeInitializing = false; session.turnStatus = new TerminalTurnStatus(); }
         else if (['working', 'completed'].includes(status.state)) return;
@@ -499,6 +519,66 @@ export class AdeSessions {
     return { command: session?.lastCommand ?? null, output: output || null };
   }
 
+  async chatOptions(projectId: string, id: string, observed: { model?: string | null; effort?: string | null }): Promise<AgentChatOptions> {
+    const record = this.require(projectId, id), live = this.live.get(id);
+    if (record.provider === 'terminal') throw new CliError('INVALID_ARGUMENT', 'Shell terminals do not have model settings');
+    const current = { ...observed, ...live?.chatCurrent };
+    const options = record.provider === 'antigravity' ? await this.antigravityControls.read(current, () => live?.screen?.text() ?? '')
+      : await this.chatControls.read(record.provider, current, () => live?.screen?.text() ?? '', record.cwd);
+    if (this.require(projectId, id).statusToken !== record.statusToken || this.live.get(id) !== live) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent changed while reading its settings. Reopen the picker.');
+    if (!live?.live) options.controls = { model: false, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false };
+    return options;
+  }
+
+  async setChatOption(projectId: string, id: string, request: SetAgentChatOptionRequest, observed: { model?: string | null; effort?: string | null }): Promise<AgentChatOptions> {
+    const record = this.require(projectId, id), live = this.live.get(id);
+    if (!live?.live || record.provider === 'terminal') throw new CliError('RUNTIME_UNAVAILABLE', 'Open the running agent terminal before changing settings');
+    if (this.sending.has(id)) throw new CliError('RATE_LIMITED', 'Input is already being sent to this agent');
+    const verify = () => {
+      if (this.shutdown.signal.aborted || this.live.get(id) !== live || !live.live || this.require(projectId, id).statusToken !== record.statusToken) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent changed. Inspect Terminal before retrying.');
+      const state = this.status(projectId, id).data?.state;
+      if (['working', 'waiting', 'blocked'].includes(state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait until the agent is idle and finish any question or approval in Terminal before changing settings');
+    };
+    verify();
+    const initial = live.screen?.text() ?? '';
+    // A failed setting confirmation can leave this conservative flag set even
+    // after the provider has returned to its visibly empty native prompt.
+    // Reconcile observed screen state; never resend the earlier operation.
+    if (live.draftInput && live.screen?.composerEmpty(record.provider === 'antigravity') && !/(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) live.draftInput = false;
+    if (live.draftInput) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the draft in Terminal before changing settings');
+    if (!live.screen?.composerEmpty(record.provider === 'antigravity')) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal before changing settings');
+    // Codex can omit the shortcuts hint when fast mode and quota warnings fill its footer.
+    if ((record.provider !== 'codex' && !/(?:\? for shortcuts|context left|context remaining)/i.test(initial)) || /(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Open Terminal and wait for the agent prompt before changing settings');
+    if (record.provider === 'antigravity' && !antigravityPromptReady(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the Antigravity prompt before changing settings');
+    this.sending.add(id);
+    let wrote = false;
+    const start = live.start + live.buffer.length;
+    const io: ChatControlIO = {
+      screen: () => live.screen?.text() ?? '',
+      output: () => live.buffer.slice(Math.max(0, start - live.start)).slice(-65536),
+      write: async data => { verify(); wrote = true; await this.command(live, { type: 'input', data }); },
+      waitFor: async predicate => {
+        const deadline = Date.now() + 5000;
+        while (Date.now() < deadline) {
+          verify(); const screen = live.screen?.text() ?? '';
+          if (predicate(screen)) return screen;
+          await new Promise(resolve => setTimeout(resolve, 40));
+        }
+        throw new CliError('CLI_TIMEOUT', 'The provider did not confirm this setting. Inspect Terminal before retrying.');
+      },
+    };
+    try {
+      const options = await this.chatOptions(projectId, id, observed); verify();
+      const result = record.provider === 'antigravity' ? await this.antigravityControls.apply(options, request, io) : await this.chatControls.apply(options, request, io);
+      if (!result.unconfirmed) live.chatCurrent = result.current;
+      this.changed(id); this.statusChanged(projectId, record);
+      return result;
+    } catch (error) {
+      if (wrote) { live.draftInput = true; throw new CliError('CLI_FAILED', 'The setting may be partially applied. Inspect Terminal before retrying; no input was replayed.'); }
+      throw error;
+    } finally { this.sending.delete(id); }
+  }
+
   input(projectId: string, id: string, data: string): Promise<void> {
     this.require(projectId, id);
     if (this.sending.has(id)) throw new CliError('RATE_LIMITED', 'A chat message is being staged. Wait before typing in Terminal.');
@@ -506,6 +586,8 @@ export class AdeSessions {
     const session = this.live.get(id);
     if (!session?.live) throw new CliError('RUNTIME_UNAVAILABLE', 'Agent terminal is no longer running; start a new agent');
     session.inputRevision = (session.inputRevision ?? 0) + 1;
+    session.chatCurrent = undefined;
+    session.draftInput = data === '\r' || data === '\n' || data === '\x03' || data === '\x15' ? false : /^(?:\x1b|\x1b\[[IO])$/.test(data) ? session.draftInput : true;
     const sent = this.command(session, { type: 'input', data });
     if (session.resumeTurnObserved === false && /[\r\n]/.test(data)) session.resumePromptSubmitted = true;
     const interrupt = data === '\x1b' || data === '\x03' || /^\x1b\[27(?:;1(?::[12])?)?u$/.test(data);
@@ -550,6 +632,7 @@ export class AdeSessions {
         if (session!.resumeTurnObserved === false) session!.resumePromptSubmitted = true;
         await this.command(session!, { type: 'input', data: '\r' });
       }
+      session!.draftInput = !submit;
       return { ok: true, message: submit ? 'Submitted to the agent terminal' : 'Staged in the agent terminal. Press Enter to submit.' };
     } catch (error) {
       if (staged) throw new CliError('CLI_FAILED', 'Delivery may be partial. Inspect Terminal before sending again; the message was not automatically retried.');
@@ -618,6 +701,7 @@ export class AdeSessions {
     this.statusTimers.clear(); this.statusOwners.clear();
     this.listeners.clear();
     this.statusListeners.clear();
+    this.resultListeners.clear();
     // Include helpers whose tabs have closed but whose native PTY teardown is still pending.
     // The backend may exit immediately after this method, so do not defer termination.
     for (const helper of this.helpers) helper.kill();

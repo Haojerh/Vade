@@ -23,7 +23,7 @@ import { ConversationToolCall, compactEditLines } from '../features/workflow/Con
 import { conversationTimeline } from '../features/workflow/ConversationHistory';
 
 test('terminal protocol responses are excluded from keyboard input while commands and navigation remain input', () => {
-  for (const reply of ['\x1b[?1;2c', '\x1b[1;2R', '\x1b]10;rgb:eded/eded/eded\x1b\\', '\x1b]11;rgb:1818/1818/1818\x07']) assert.equal(isTerminalReply(reply), true);
+  for (const reply of ['\x1b[I', '\x1b[O', '\x1b[?1;2c', '\x1b[1;2R', '\x1b]10;rgb:eded/eded/eded\x1b\\', '\x1b]11;rgb:1818/1818/1818\x07']) assert.equal(isTerminalReply(reply), true);
   for (const input of ['node --version\r', '\x1b[A', '\x03', '\x1b[200~echo test\x1b[201~']) assert.equal(isTerminalReply(input), false);
 });
 
@@ -101,7 +101,7 @@ import { AgentPicker } from '../components/ui/AgentPicker';
 import { Disclosure } from '../components/ui/Disclosure';
 import { Icon } from '../components/ui/Icon';
 import { popoverPortalHost } from '../components/ui/Popover';
-import { AgentChatMetadata } from '../features/workflow/AgentChatMetadata';
+import { AgentChatControls } from '../features/workflow/AgentChatControls';
 import { useConfirmationState } from '../hooks/useConfirmationState';
 import type { PrerequisitesStatus } from '../../shared/contracts';
 import { useDashboardLayoutPrefs } from '../app/useDashboardLayoutPrefs';
@@ -147,12 +147,21 @@ test('concurrent terminal recovery shares one exact-session request and allows l
   } finally { globalThis.fetch = original; }
 });
 
-test('composer model and effort are observed text with no picker or button', () => {
-  const html = renderToStaticMarkup(createElement(AgentChatMetadata, { model: 'gpt-5.6-sol', effort: 'high' }));
+test('composer picker starts closed and preserves observed model and effort without inventing capabilities', () => {
+  const html = renderToStaticMarkup(createElement(AgentChatControls, { projectId: 'project', nodeId: 'agent', runId: 'run', model: 'gpt-5.6-sol', effort: 'high' }));
   assert.match(html, /gpt-5.6-sol/);
   assert.match(html, /high/);
-  assert.doesNotMatch(html, /<button|<select|aria-haspopup/);
-  assert.equal(renderToStaticMarkup(createElement(AgentChatMetadata, { model: 'unknown' })), '');
+  assert.match(html, /<button[^>]*type="button"/);
+  assert.match(html, /aria-haspopup="dialog"/);
+  assert.match(html, /aria-expanded="false"/);
+  assert.doesNotMatch(html, /Search models|Standard|Fast|role="dialog"|aria-pressed/);
+});
+
+test('composer picker uses an explicit unknown label and disables actions while its session is busy', () => {
+  const html = renderToStaticMarkup(createElement(AgentChatControls, { projectId: 'project', nodeId: 'agent', runId: null, model: 'unknown', effort: 'unknown', disabled: true }));
+  assert.match(html, /Model settings/);
+  assert.match(html, /<button[^>]*disabled=""/);
+  assert.doesNotMatch(html, />unknown<|Standard|Fast|aria-pressed/);
 });
 
 test('portaled pickers remain inside their native modal so search and actions are not inert', () => {

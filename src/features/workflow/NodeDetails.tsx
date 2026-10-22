@@ -10,7 +10,7 @@ import { ConversationToolCall } from './ConversationToolCall';
 import { sendNodeMessage } from '../../api/client';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
-import { AgentChatMetadata } from './AgentChatMetadata';
+import { AgentChatControls } from './AgentChatControls';
 import { DictationButton } from './DictationButton';
 import { appendDictation } from './dictation';
 const AgentTerminal = lazy(() => import('./AgentTerminal').then(module => ({ default: module.AgentTerminal })));
@@ -295,22 +295,22 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                             <div className="message-composer-actions">
                               <div className="message-attachment-controls">
                                 {attachButton}
-                                <span className="text-xs text-muted">Paste or drop files - 5 MiB each</span>
                               </div>
-                              <AgentChatMetadata model={node.model} effort={node.effort} />
+                              {projectId && <AgentChatControls projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} model={node.model} effort={node.effort} disabled={chatSending || isClosing} />}
                               <DictationButton key={`dictation:${projectId}:${node.id}:${selectedRunId ?? ''}`} disabled={chatSending || isClosing}
                                 onText={(text) => setChatMessage((draft) => appendDictation(draft, text))} onActiveChange={setDictating} />
                               <button
                                 type="submit"
                                 className="btn btn-primary btn-sm btn-chat-send"
+                                aria-label={chatSending ? 'Sending message' : 'Send message'} title="Send message"
                                 disabled={chatSending || dictating || (!chatMessage.trim() && !chatFiles.length)}
                               >
                                 {chatSending ? (
-                                  <span>Sending...</span>
+                                  <><Icon name="refresh-cw" size={14} /><span className="composer-action-label">Sending...</span></>
                                 ) : (
                                   <>
                                     <Icon name="send" size={14} />
-                                    <span>Send</span>
+                                    <span className="composer-action-label">Send</span>
                                   </>
                                 )}
                               </button>

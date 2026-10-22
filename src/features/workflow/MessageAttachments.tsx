@@ -36,9 +36,9 @@ export function MessageAttachments({ files, onChange, disabled, children, render
     setError(problem);
     if (!problem) onChange(next);
   };
-  const attachButton = <button type="button" className="btn btn-secondary btn-xs" disabled={disabled} onClick={() => input.current?.click()}>
+  const attachButton = <button type="button" className="btn btn-secondary btn-xs" aria-label="Attach files" title="Attach files" disabled={disabled} onClick={() => input.current?.click()}>
     <Icon name="paperclip" size={12} />
-    Attach
+    <span className="composer-action-label">Attach</span>
   </button>;
   return (
     <div className="message-attachments"
@@ -67,7 +67,6 @@ export function MessageAttachments({ files, onChange, disabled, children, render
           onChange={(event) => { add(Array.from(event.target.files || [])); event.target.value = ''; }} />
       {renderControls ? renderControls(attachButton) : <div className="message-attachment-controls">
         {attachButton}
-        <span className="text-xs text-muted">Paste or drop files - 5 MiB each</span>
       </div>}
       {error && <p className="text-danger text-xs" role="alert">{error}</p>}
     </div>

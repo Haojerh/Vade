@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { ConversationPage, DashboardSnapshot, Graph, Node, NodeDetails, NodeDetailsQuery, Section, SourceMeta } from '../../shared/contracts.js';
+import type { ConversationPage, DashboardSnapshot, Graph, Node, NodeDetails, NodeDetailsQuery, Section, SourceMeta, SetAgentChatOptionRequest } from '../../shared/contracts.js';
 import { CliError, type CommandRunner, defaultCommandRunner } from '../integrations/cli.js';
 import { taskProgress } from '../services/progress.js';
 import { AdeStore } from './store.js';
@@ -13,6 +13,7 @@ import { ComputerAwake } from './computerAwake.js';
 import { Ports } from './ports.js';
 import { AgentHistory } from './agentHistory.js';
 import { OrganizationRuntime } from './organization.js';
+import { LocalSpeech } from './speech.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
   const now = new Date().toISOString();
@@ -31,6 +32,7 @@ export class LocalRuntime {
   readonly ports: Ports;
   readonly history: AgentHistory;
   readonly organization: OrganizationRuntime;
+  readonly speech: LocalSpeech;
   desktopMemory: { bytes: number; at: number; pids?: number[] } | null = null;
   readonly id = crypto.randomUUID();
   connections = 0;
@@ -39,6 +41,7 @@ export class LocalRuntime {
 
   constructor(readonly store = new AdeStore(), runner: CommandRunner = defaultCommandRunner, connectionsService?: LocalConnections) {
     this.git = new AdeGit(store, runner);
+    this.speech = new LocalSpeech(store.directory);
     this.history = new AgentHistory(store);
     this.accounts = new ProviderAccounts(store, runner);
     this.connectionsService = connectionsService ?? new LocalConnections(runner, { accounts: this.accounts });
@@ -91,6 +94,12 @@ export class LocalRuntime {
     }
   }
 
+  async chatOptions(projectId: string, nodeId: string, request?: SetAgentChatOptionRequest) {
+    const record = this.sessions.require(projectId, nodeId);
+    const metadata = await this.conversations.metadata(record);
+    return request ? this.sessions.setChatOption(projectId, nodeId, request, metadata) : this.sessions.chatOptions(projectId, nodeId, metadata);
+  }
+
   async details(projectId: string, nodeId: string, query: NodeDetailsQuery = { direction: 'older' }): Promise<NodeDetails> {
     const snapshot = await this.snapshot(projectId);
     if (snapshot.graph.meta.availability !== 'ready') throw new CliError('RUNTIME_UNAVAILABLE', 'Refresh the repository before inspecting this node', true);
@@ -104,6 +113,7 @@ export class LocalRuntime {
   }
 
   close(): void {
+    this.speech.close();
     this.awake.close(); this.history.close();
     for (const close of this.streams) close();
     this.accounts.close();
