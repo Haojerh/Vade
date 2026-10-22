@@ -1,9 +1,10 @@
 import React, { useRef, useState, useEffect, useMemo, useCallback } from 'react';
 import type { Node, Edge, Project } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
+import { WorkflowZoomControls } from './WorkflowZoomControls';
 import { NodeMessagePreview } from './NodeMessagePreview';
 import { compareWorkflowNodes } from './workflowOrder';
-import { sendNodeMessage } from '../../api/client';
+import { runProjectShortcutRequest, sendNodeMessage } from '../../api/client';
 import { validateMessageFiles } from './MessageAttachments';
 import { deduplicateWorkflowEdges, WorkflowEdgesSvg } from './WorkflowEdgesSvg';
 import { NodeChatExtension, WorkflowNodeCardBody } from './WorkflowNodeCard';
@@ -15,6 +16,7 @@ import { useLiveGraphActivity } from './useLiveGraphActivity';
 import { ToolActivityOverlay } from './ToolActivityOverlay';
 import { buildCardPrompt, KANBAN_DRAG_TYPE, type KanbanCard } from '../kanban/kanban';
 import type { HistoryDrag } from '../agents/historyDrag';
+import { ProjectShortcuts } from '../projects/ProjectShortcuts';
 
 interface WorkflowGraphProps {
   projectId: string | null;
@@ -102,6 +104,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   onDropKanbanCard,
   onSendKanbanCard,
 }) => {
+  const [shortcutDrag, setShortcutDrag] = useState<HistoryDrag | null>(null);
   const prefersReducedMotion = usePrefersReducedMotion();
   const { tools, packets, holdTool } = useLiveGraphActivity(`${projectId}:${runId}`, nodes, edges, toolActivityEnabled && !isLocallyStale);
   const [preview, setPreview] = useState<{ nodeId: string; anchor: HTMLElement } | null>(null);
@@ -571,6 +574,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         </div>
 
         <div className="graph-toolbar-actions">
+          {projectId && <ProjectShortcuts key={projectId} projectId={projectId} nodes={nodes} selectedNodeId={selectedNodeId} onOpen={onSelectNode} onRefresh={onRefresh} onDragShortcut={setShortcutDrag} />}
           <button
             type="button"
             className="btn btn-secondary btn-xs"
@@ -769,9 +773,17 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                     renderChatExtension={renderChatExtension}
                     isValidReorder={isValidReorder}
                     onSelectNode={onSelectNode}
-                    historyDrag={historyDrag}
-                    onResumeHistory={onResumeHistory ? async (id, worktreeId, placement) => {
-                      const nodeId = await onResumeHistory(id, worktreeId);
+                    historyDrag={shortcutDrag ?? historyDrag}
+                    onResumeHistory={projectId ? async (id, worktreeId, placement) => {
+                      let nodeId: string;
+                      if (id.startsWith('shortcut:')) {
+                        const result = await runProjectShortcutRequest(projectId, id.slice(9), worktreeId);
+                        nodeId = result.nodeId; onRefresh?.(); onSelectNode(nodeId);
+                        if (!result.staged) throw new Error(result.message);
+                      } else {
+                        if (!onResumeHistory) throw new Error('History resume unavailable');
+                        nodeId = await onResumeHistory(id, worktreeId);
+                      }
                       handleReorderMember(worktreeId, nodeId, placement?.targetId ?? '', placement?.position ?? 'after');
                     } : undefined}
                     onNodeDragStart={handleNodeDragStart}
@@ -872,13 +884,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         </div>
         </div>
       </div>
-      <div className="workflow-zoom-controls" role="group" aria-label="Topology zoom" title="Ctrl + mouse wheel or touchpad pinch to zoom; scroll or drag the background to pan">
-        <button type="button" aria-label="Zoom out" title="Zoom out" disabled={zoom <= 0.4} onClick={() => changeZoom(zoom - 0.1)}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M5 12h14" /></svg>
-        </button>
-        <button type="button" className="workflow-zoom-value" aria-label={`Zoom ${Math.round(zoom * 100)} percent. Reset to 100 percent`} title="Reset zoom to 100%" onClick={() => changeZoom(1)}>{Math.round(zoom * 100)}<span>%</span></button>
-        <button type="button" aria-label="Zoom in" title="Zoom in" disabled={zoom >= 2} onClick={() => changeZoom(zoom + 0.1)}><Icon name="plus" size={14} /></button>
-      </div>
+      <WorkflowZoomControls zoom={zoom} onChange={changeZoom} />
     </section>
   );
 };

@@ -1,5 +1,13 @@
 # ADE
 
+### Local workspace controls
+
+The topology's **Commands** menu saves project-specific terminal commands or agent prompts. Add, edit, remove with confirmation, or drag a shortcut onto a worktree to launch it at that position. Append Enter controls immediate submission; uncertain delivery is never replayed. Codex launches use inline mode to preserve terminal scrollback.
+
+The bottom-right bar includes **Ports**, **Keep computer awake**, and **Resource Manager** (click RAM). Keep-awake offers On, Agent and Off, also in General settings; Agent mode requires observed working status. Native blockers are released when Vade exits. Resource details group observed process memory, private memory and sampled CPU by owned session and Vade; standalone web mode excludes browser processes. Ports distinguishes owned workspace listeners from external listeners, opens loopback URLs, copies URLs, and confirms process termination. Stopping requires fresh ownership and process-start identity; external or unverified listeners cannot be stopped. Windows exposes that identity; platforms without it retain read-only port controls.
+
+History reuses a bounded saved index across restarts while refreshing changed transcripts in the background. Initial reads use skeleton rows, and refreshes preserve the previous list.
+
 ### Agent session history
 
 The right sidebar switches between Source Control and Agents. Agents indexes local Codex, Claude Code and Antigravity transcripts, with Workspace, Project and All scopes, search, project totals, public message previews/counts, observed models and last-interaction times. Expand a session to resume manually in the selected worktree, or drag a stopped session onto a graph worktree and drop on **Move here**. This reuses its exact provider identity and moves its Vade workspace association; it does not move project files or rewrite transcripts. A session running in another Vade worktree must be stopped first.
@@ -7,6 +15,12 @@ The right sidebar switches between Source Control and Agents. Agents indexes loc
 Discovery is cached for 30 seconds and bounded to 20,000 directory entries, 2,000 newest transcript files and 64 MiB of new reads per scan. Each transcript reads at most 4 MiB, retaining its beginning and newest end for large files. Truncated counts show +. Project badges show matching / project totals when a scope or search narrows the list. Provider read failures appear as warnings. Only public conversation turns enter previews; tools and thinking are excluded. Antigravity workspace attribution uses exact saved conversation IDs from native history/cache metadata or Vade's owned session records.
 
 APIs: `GET /api/agent-history` accepts bounded scope/projectId/worktreeId/search/offset/refresh queries. `POST /api/projects/:projectId/resume-history` accepts only an opaque indexed sessionId and a discovered worktreeId. The backend revalidates source identity before using fixed provider resume arguments, uses the selected worktree as cwd and refuses duplicate live writers.
+
+### Workflow / Organization
+
+Settings → Installation / Setup installs and verifies Vade's bundled CLI and orchestration skill. Then open Settings → Workflow / Organization, add roles, select provider/model/effort, connect dependencies, and enable. Workflow changes save automatically. The contacted agent becomes the orchestrator for every new task submitted through Chat, a card composer, or Kanban. Raw terminal typing and approval/question answers remain direct input. Mode is off by default.
+
+Workers explicitly report results; dependency stages cannot start from a terminal exit or a provider turn ending. Shared work is serialized. Optional Isolated Worktrees lets the orchestrator split two or more independent workstreams, then integrate committed changes through a separate integration checkout before updating the source. Conflicts pause execution and preserve work. The settings run list shows plans, results and cancellation. No Orca process/service is required. See [execution protocol, limits and architectural references](docs/workflow-runtime.md).
 
 ### Agent settings, Inbox and attention prompts
 
@@ -200,7 +214,7 @@ npm test
 ### Read-Only Orca CLI Integration
 - Executes only fixed, allowlisted read commands, including `orchestration worker-show` for effective launch metadata and `worker-read --source transcript` for supported conversation sources.
 - Spawns CLI commands directly with `shell: false`, bounded execution timeouts (8s for Orca, 12s for Git/gh), stdout caps (4 MiB), and global concurrency limits (maximum 3 concurrent processes).
-- Collection never creates runs or changes task status. The explicit message composer can send user-authored text and attachments to an agent.
+- Collection never creates runs or changes task status. With Workflow / Organization disabled, the explicit message composer sends directly to the selected agent. Enabling the saved workflow starts a standalone run on each new message submission.
 - **Provider usage**: The bottom of the left sidebar shows compact usage percentages; clicking opens quota windows, model pools, and reset times. `/api/usage` reads Orca's local `accounts.list` snapshot with `refreshUsage: false` over its authenticated local pipe/socket. Only normalized quotas reach the browser; account credentials and identities are omitted. Reads are capped at 1 MiB, time out after 5s, and are cached for 10s. The UI rereads every minute, independent of project switches; Orca owns provider polling. Missing or failed observations stay unavailable or stale.
 
 ### Polling Cadence & Freshness

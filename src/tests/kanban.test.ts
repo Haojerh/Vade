@@ -49,6 +49,16 @@ test('board ignores old results, missing agents, stale snapshots and text; obser
   assert.equal(observeCard(working, [{ ...node, id: 'other', state: 'failed' }]), working);
 });
 
+test('workflow assignments wait for explicit final results rather than an orchestrator turn ending', () => {
+  const working = observeCard(pending, [{ ...node, state: 'working' }]);
+  const orchestrator: Node = { ...node, state: 'completed', workflow: { runId: 'workflow', role: 'orchestrator' } };
+  assert.equal(observeCard(working, [orchestrator]), working);
+  assert.ok(assignmentProblem(todo, orchestrator, []));
+  const result = { source: 'agent', projectId: 'project', nodeId: 'agent', at: '2026-10-20T00:01:00Z', outcome: 'completed' } as const;
+  assert.equal(observeCardResults(working, [result as any]).status, 'completed');
+  assert.equal(observeCardResults(working, [{ ...result, outcome: 'interrupted' } as any]).status, 'failed');
+});
+
 test('assignment guards reject busy/disconnected agents, duplicate pending work and terminal cards; allow failed retry', () => {
   assert.equal(assignmentProblem(todo, node, [todo]), null);
   assert.equal(assignmentProblem({ ...todo, status: 'failed' }, node, []), null);

@@ -55,20 +55,39 @@ function verifyJsonSession(file: string, record: SessionRecord): boolean {
 }
 
 export function publicMessage(record: SessionRecord, line: string, sourceIdentity: string) {
+  const visible = (message: ReturnType<typeof parseCoordinatorTranscriptLine>['message']) => {
+    if (!message || message.role !== 'user' || !message.text.startsWith('[Vade workflow assignment; protocol 1.0.0]')) return message;
+    if (!message.text.includes('\nYou are the orchestrator.')) return null;
+    const marker = '\nOriginal user request:\n', start = message.text.indexOf(marker);
+    return start < 0 ? null : { ...message, text: message.text.slice(start + marker.length) };
+  };
   try {
     const row = JSON.parse(line);
     if (record.provider !== 'antigravity') {
       if (record.provider === 'claude' && row.sessionId && row.sessionId !== record.providerThreadId) return null;
-      return parseCoordinatorTranscriptLine(line, record.provider, sourceIdentity).message;
+      return visible(parseCoordinatorTranscriptLine(line, record.provider, sourceIdentity).message);
     }
     if (['USER_EXPLICIT', 'USER'].includes(row.source) && ['USER_INPUT', 'REQUEST'].includes(row.type)) {
-      return parseAntigravityTranscriptLine(JSON.stringify({ ...row, type: 'USER_INPUT' }), sourceIdentity).message;
+      return visible(parseAntigravityTranscriptLine(JSON.stringify({ ...row, type: 'USER_INPUT' }), sourceIdentity).message);
     }
     return row.source === 'MODEL' && row.type === 'PLANNER_RESPONSE' ? parseAntigravityTranscriptLine(line, sourceIdentity).message : null;
   } catch { return null; }
 }
 
 export class AdeConversations {
+  watch(record: SessionRecord, changed: () => void): () => void {
+    let watcher: fs.FSWatcher | undefined, timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const { file } = this.resolve(record);
+      // Watch the parent so atomic transcript replacement is observed as well.
+      watcher = fs.watch(path.dirname(file), (_event, name) => {
+        if (name && name.toString() !== path.basename(file)) return;
+        clearTimeout(timer); timer = setTimeout(changed, 75);
+      });
+      watcher.on('error', () => { watcher?.close(); });
+    } catch { /* A not-yet-bound transcript is discovered by the polling fallback. */ }
+    return () => { clearTimeout(timer); watcher?.close(); };
+  }
   private paths = new Map<string, string>();
 
   private resolve(record: SessionRecord): { file: string; root: string } {
@@ -96,7 +115,29 @@ export class AdeConversations {
     return { file, root };
   }
 
-  async metadata(record: SessionRecord): Promise<{ preview: string | null; model: string | null; effort: string | null; toolActivity: Section<ToolActivity[]> }> {
+  private metadataCache = new Map<string, { stamp: string; value: Awaited<ReturnType<AdeConversations['readMetadata']>> }>();
+  private metadataPending = new Map<string, Promise<Awaited<ReturnType<AdeConversations['readMetadata']>>>>();
+  async metadata(record: SessionRecord): Promise<Awaited<ReturnType<AdeConversations['readMetadata']>>> {
+    // Antigravity also reads a separate database, so transcript stamps alone cannot cache it.
+    if (record.provider === 'antigravity') return this.readMetadata(record);
+    try {
+      const { file } = this.resolve(record), stat = fs.statSync(file);
+      const key = `${record.projectId}:${record.id}:${record.provider}:${record.providerThreadId}:${record.cwd}`;
+      const stamp = `${file}:${stat.dev}:${stat.ino}:${stat.birthtimeMs}:${stat.ctimeMs}:${stat.mtimeMs}:${stat.size}`;
+      const cached = this.metadataCache.get(key); if (cached?.stamp === stamp) return cached.value;
+      const pendingKey = `${key}:${stamp}`, previous = this.metadataPending.get(pendingKey); if (previous) return previous;
+      const pending = this.readMetadata(record).then(value => {
+        if (value.toolActivity.meta.availability === 'ready' || value.toolActivity.meta.availability === 'empty') {
+          if (this.metadataCache.size >= 128) this.metadataCache.delete(this.metadataCache.keys().next().value!);
+          this.metadataCache.set(key, { stamp, value });
+        }
+        return value;
+      }).finally(() => this.metadataPending.delete(pendingKey));
+      this.metadataPending.set(pendingKey, pending); return pending;
+    } catch { return this.readMetadata(record); }
+  }
+
+  private async readMetadata(record: SessionRecord): Promise<{ preview: string | null; model: string | null; effort: string | null; toolActivity: Section<ToolActivity[]> }> {
     const now = new Date().toISOString();
     const result = { preview: null as string | null, model: null as string | null, effort: null as string | null, toolActivity: {
       data: null, meta: { availability: 'unavailable', attemptedAt: now, observedAt: null, partial: true, stale: false,

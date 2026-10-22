@@ -18,6 +18,43 @@ import { WebSocket } from 'ws';
 import { installAgyHook, readAgyBinding, agyBindingFile } from './agyBinding.js';
 import { installStatusHooks, readAgentStatus, statusFile } from './statusHooks.js';
 import { AdeConversations } from './conversation.js';
+import { projectShortcuts, runProjectShortcut, saveProjectShortcuts } from './projectShortcuts.js';
+
+test('project shortcuts validate commands, persist by project and stage once in a new owned shell', async () => {
+  const f = fixture();
+  try {
+    const project = await f.runtime.git.register(f.repo), tree = (await f.runtime.git.worktrees(project))[0];
+    const marker = path.join(f.directory, 'shortcut-ran.txt');
+    const command = process.platform === 'win32' ? `Set-Content -LiteralPath '${marker.replaceAll("'", "''")}' -Value done` : `printf done > '${marker.replaceAll("'", "'\\''")}'`;
+    const shortcut = { id: 'dev', label: 'Dev server', action: 'terminal' as const, command, appendEnter: false, agent: 'codex' as const };
+    saveProjectShortcuts(f.runtime.store, project.id, [shortcut]);
+    assert.deepEqual(projectShortcuts(f.runtime.store, project.id), [shortcut]);
+    assert.throws(() => saveProjectShortcuts(f.runtime.store, project.id, [shortcut, shortcut]), /Invalid/);
+    assert.throws(() => saveProjectShortcuts(f.runtime.store, project.id, [{ ...shortcut, command: '\x1b[31m' }]), /Invalid/);
+    const result = await runProjectShortcut(f.runtime, project.id, shortcut.id, tree.id);
+    assert.equal(result.staged, true);
+    assert.equal(f.runtime.sessions.require(project.id, result.nodeId).cwd, tree.path);
+    assert.equal(fs.existsSync(marker), false, 'Append Enter off must not execute the command');
+    await f.runtime.sessions.input(project.id, result.nodeId, '\r');
+    const deadline = Date.now() + 4000;
+    let markerContent = '';
+    while (Date.now() < deadline) {
+      try {
+        if (fs.existsSync(marker)) {
+          markerContent = fs.readFileSync(marker, 'utf8').trim();
+          if (markerContent === 'done') break;
+        }
+      } catch (error) {
+        if (error && (error as { code?: string }).code !== 'EBUSY') throw error;
+      }
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    assert.equal(markerContent, 'done');
+    saveProjectShortcuts(f.runtime.store, project.id, []);
+    assert.equal(f.runtime.sessions.page(project.id, result.nodeId).live, true, 'Removing shortcut leaves its process running');
+    await assert.rejects(runProjectShortcut(f.runtime, project.id, shortcut.id, tree.id), /no longer exists/);
+  } finally { f.runtime.close(); await fs.promises.rm(f.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
+});
 import { LocalConnections } from './connections.js';
 import { DatabaseSync } from 'node:sqlite';
 import { TerminalScreen } from './terminalScreen.js';
@@ -379,6 +416,7 @@ test('standalone history reads exact Codex, Claude and Antigravity sessions with
       assert.equal(metadata.toolActivity.data?.length, 1);
       assert.equal(metadata.toolActivity.data?.[0].label, 'Read: observed.txt');
       assert.deepEqual((await reader.metadata(record)).toolActivity.data, metadata.toolActivity.data, 'stable observed tool IDs');
+      if (!agy) assert.equal(await reader.metadata(record), metadata, 'unchanged exact-session metadata is reused');
       if (!agy) assert.equal((await reader.metadata({ ...record, cwd: path.dirname(directory) })).model, null);
       const newest = await reader.read(record, { direction: 'older' });
       assert.equal(newest.data?.messages.length, 20, provider);
@@ -417,7 +455,15 @@ test('standalone history reads exact Codex, Claude and Antigravity sessions with
           assert.equal(response.status, 200);
           const stream = response.body!.getReader();
           assert.match(new TextDecoder().decode((await stream.read()).value), /event: conversation/);
+          let notify!: () => void;
+          const changed = new Promise<void>(resolve => { notify = resolve; });
+          const stopWatching = reader.watch(record, notify);
           fs.appendFileSync(file, JSON.stringify(turn(46)) + '\n');
+          let watchTimeout: ReturnType<typeof setTimeout> | undefined;
+          try {
+            await Promise.race([changed, new Promise<never>((_resolve, reject) => { watchTimeout = setTimeout(() => reject(new Error('Exact transcript watcher did not observe append')), 1500); })]);
+          } finally { clearTimeout(watchTimeout); stopWatching(); }
+          assert.equal((await reader.metadata(record)).preview, 'public 46', 'transcript changes invalidate metadata cache');
           let update = '';
           while (!update.includes('public 46')) update += new TextDecoder().decode((await stream.read()).value);
           assert.ok(!update.includes('secret'));
@@ -899,6 +945,30 @@ test('hookless Codex root status updates the dashboard immediately and resets on
     f.runtime.close();
     await fs.promises.rm(f.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
+});
+
+test('Codex resume initialization does not create a working turn or Inbox result', async () => {
+  const f = fixture();
+  const script = String.raw`const report=s=>process.stdout.write('\x1b]7501;state='+s+':app=codex\x1b\\');report('working');setTimeout(()=>{report('idle');setTimeout(()=>{report('working');process.stdout.write('Weekly limit: 23% left');setTimeout(()=>{report('idle');process.stdout.write('RESTORED');},100);},100);},200);process.stdin.on('data',d=>{if(d.includes('work'))report('working');if(d.includes('done'))report('idle')});`;
+  const id = '11234567-1234-1234-1234-123456789abc';
+  const sessions = new AdeSessions(f.runtime.store, () => ({ executable: process.execPath, args: ['-e', script, '--'] }), async () => id, () => {}, () => {});
+  Object.defineProperty(f.runtime, 'sessions', { value: sessions });
+  const until = async (condition: () => boolean) => { const deadline = Date.now() + 6000; while (!condition()) { if (Date.now() > deadline) throw new Error('Resume fixture timed out'); await new Promise(resolve => setTimeout(resolve, 10)); } };
+  try {
+    const project = await f.runtime.git.register(f.repo), tree = (await f.runtime.git.worktrees(project))[0];
+    const record = { id: crypto.randomUUID(), projectId: project.id, worktreeId: tree.id, cwd: tree.path, provider: 'codex' as const, title: 'Resumed', closed: false, createdAt: new Date().toISOString(), providerThreadId: id };
+    f.runtime.store.saveSession(record);
+    const states: string[] = [];
+    sessions.subscribeStatus(project.id, () => { const state = sessions.status(project.id, record.id).data?.state; if (state) states.push(state); });
+    await sessions.resume(project.id, record.id);
+    await until(() => sessions.page(project.id, record.id).data.includes('RESTORED'));
+    assert.equal(sessions.status(project.id, record.id).data?.state, 'idle');
+    assert.ok(!states.includes('working')); assert.ok(!states.includes('completed'));
+    assert.equal(f.runtime.store.db.prepare('SELECT count(*) AS total FROM turn_results').get()?.total, 0);
+    await sessions.input(project.id, record.id, 'work\r'); await until(() => sessions.status(project.id, record.id).data?.state === 'working');
+    await sessions.input(project.id, record.id, 'done\r'); await until(() => sessions.status(project.id, record.id).data?.state === 'completed');
+    assert.equal(f.runtime.store.db.prepare('SELECT count(*) AS total FROM turn_results').get()?.total, 1);
+  } finally { f.runtime.close(); await fs.promises.rm(f.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });
 
 test('owned PTYs round-trip input, bound output, track exit separately and enforce project identity', async () => {

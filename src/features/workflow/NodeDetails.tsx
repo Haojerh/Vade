@@ -232,7 +232,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 )}
 
                 {!isWorktree && details?.session && projectId && <>
-                  {(sessionView === 'terminal' || !details.session.chat) && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} onStatusChange={onSessionChange} /></Suspense>}
+                  {(sessionView === 'terminal' || !details.session.chat) && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} provider={node.agentType ?? undefined} onStatusChange={onSessionChange} /></Suspense>}
                 </>}
 
                 {activeVisibleSections.conversation && !isWorktree && (!details?.session || (sessionView === 'chat' && details.session.history)) && (

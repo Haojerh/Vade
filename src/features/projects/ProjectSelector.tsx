@@ -143,7 +143,6 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
           {onCollapse && <button type="button" className="btn-icon project-collapse-button" onClick={onCollapse} aria-label="Collapse projects sidebar" title="Collapse projects sidebar"><Icon name="chevrons-left" size={14} /></button>}
         </div>
 
-        {loading && <div className="rail-empty-hint">Scanning projectsâ€¦</div>}
 
         {error && (
           <div className="rail-error-hint" role="alert">

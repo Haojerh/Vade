@@ -38,6 +38,7 @@ export function AgentHistoryPanel({ projectId, worktrees, onResume, onOpen, onDr
     return () => request.current?.abort();
   }, [projectId, workspace?.id, scope, query, refresh, revision]);
   useEffect(() => { const timer = setInterval(() => { if (!document.hidden && !resuming) setRefresh(value => value + 1); }, 30000); return () => clearInterval(timer); }, [resuming]);
+  useEffect(() => { if (!page?.refreshing) return; const timer = setTimeout(() => setRefresh(value => value + 1), 1000); return () => clearTimeout(timer); }, [page]);
   const loadMore = async () => {
     if (page?.nextOffset === null || !page || loading || more) return;
     const abort = new AbortController(); request.current?.abort(); request.current = abort;
@@ -57,12 +58,12 @@ export function AgentHistoryPanel({ projectId, worktrees, onResume, onOpen, onDr
   return <section className="agent-history-panel" aria-label="Agent session history">
     <header className="agent-history-heading"><div><h2>Agents</h2><p>Indexed history</p></div><button type="button" className="history-refresh" aria-label="Refresh session history" disabled={loading || more} onClick={() => { force.current = true; setRefresh(value => value + 1); }}><RefreshIcon busy={loading} /></button></header>
     <div className="history-scope-tabs" role="tablist" aria-label="Session scope" style={{ '--scope-index': ['workspace', 'project', 'all'].indexOf(scope) } as React.CSSProperties}><span className="history-scope-indicator" aria-hidden="true" />{(['workspace', 'project', 'all'] as const).map(value => <button key={value} role="tab" aria-selected={scope === value} onClick={() => setScope(value)}>{value === 'workspace' ? 'Workspace' : value === 'project' ? 'Project' : 'All'}</button>)}</div>
-    {worktrees.length > 0 && <Select aria-label="Target worktree" value={workspace?.id ?? ''} onChange={event => setWorkspaceId(event.target.value)}>{worktrees.map(tree => <option key={tree.id} value={tree.id}>{tree.label}</option>)}</Select>}
+    {scope === 'workspace' && worktrees.length > 0 && <Select aria-label="Target worktree" value={workspace?.id ?? ''} onChange={event => setWorkspaceId(event.target.value)}>{worktrees.map(tree => <option key={tree.id} value={tree.id}>{tree.label}</option>)}</Select>}
     <label className="history-search"><Icon name="search" size={15} /><input type="search" placeholder="Search sessions..." aria-label="Search sessions" value={search} onChange={event => setSearch(event.target.value)} /></label>
     {page && <><div className="history-scan-status"><Icon name="check" size={13} /><span>Scanned <strong>{page.scannedFiles}</strong> files</span><time dateTime={page.scannedAt} title={new Date(page.scannedAt).toLocaleString()}>{historyAge(page.scannedAt)}</time></div><div className="history-result-count"><strong>{page.sessions.length} of {page.total}{page.limited ? '+' : ''} sessions</strong><span>Last updated</span></div></>}
     {error && <p className="history-notice text-danger" role="alert">{error}</p>}
     <div className="history-session-list" aria-busy={loading}>
-      {loading && <p className="empty-hint" role="status">Indexing agent history...</p>}
+      {loading && !page && <div className="history-skeleton" role="status" aria-label="Loading agent history">{Array.from({ length: 4 }, (_, index) => <div key={index}><div className="skeleton-line" /><div className="skeleton-line" /><div className="skeleton-line short" /></div>)}</div>}
       {!loading && page && !page.sessions.length && <div className="history-empty"><Icon name="message-square" size={24} /><strong>No sessions found</strong><p>{query ? 'Try another search.' : scope === 'workspace' ? 'Try Project or All to find earlier sessions.' : 'Recorded Codex, Claude Code and Antigravity conversations appear here.'}</p></div>}
       {!projectId && scope !== 'all' && <p className="empty-hint">Select a project or choose All.</p>}
       {page?.groups.filter(group => page.sessions.some(row => row.groupId === group.id)).map(group => <Disclosure key={group.id} compact defaultOpen className="history-project-group" title={group.name} badge={<span className="history-group-count" title={`${group.total} matching sessions; ${group.projectTotal} total indexed sessions in this project`}>{group.total === group.projectTotal ? group.total : `${group.total} / ${group.projectTotal}`}{page.limited ? '+' : ''}</span>}>

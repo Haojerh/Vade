@@ -25,11 +25,35 @@ export class AgentHistory {
   private scannedFiles = 0;
   private limited = false;
   private warnings: string[] = [];
-  constructor(private store: AdeStore) {}
+  private closed = false;
+  close(): void { this.closed = true; }
+  private cacheKey = JSON.stringify([process.env.CODEX_HOME, process.env.CLAUDE_CONFIG_DIR, agyRoot(), os.homedir()]);
+  constructor(private store: AdeStore) {
+    try {
+      const row = store.db.prepare("SELECT value FROM preferences WHERE key = 'history-index' AND length(value) <= 4000000").get();
+      if (row) {
+        const value = JSON.parse(String(row.value));
+        const valid = (entry: Indexed | null) => {
+          if (!entry) return true;
+          const root = entry.provider === 'codex' ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions')
+            : entry.provider === 'claude' ? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') : entry.provider === 'antigravity' ? path.join(agyRoot(), 'brain') : null;
+          return root && typeof entry.file === 'string' && entry.file.length <= 4096 && entry.root === root && path.isAbsolute(entry.file)
+            && path.relative(root, entry.file).split(path.sep)[0] !== '..' && validCodexThreadId(entry.threadId) && entry.id === opaque(`${entry.provider}:${entry.threadId}`);
+        };
+        if (value.key === this.cacheKey && Array.isArray(value.entries) && value.entries.length <= 2000 && value.entries.every((entry: Indexed) => Boolean(entry) && valid(entry))
+          && Array.isArray(value.parsed) && value.parsed.length <= 2000 && value.parsed.every((row: any) => Array.isArray(row) && row.length === 2 && typeof row[0] === 'string' && typeof row[1]?.stamp === 'string' && valid(row[1].entry))) {
+          this.entries = value.entries; this.parsed = new Map(value.parsed); this.scannedAt = Number.isFinite(value.scannedAt) ? Math.min(Date.now(), value.scannedAt) : 0;
+          this.scannedFiles = Number(value.scannedFiles) || 0; this.limited = Boolean(value.limited);
+        }
+      }
+    } catch { /* Rebuild an unavailable index from bounded native sources. */ }
+  }
 
   async refresh(force = false): Promise<void> {
+    if (this.closed) return;
     if (!force && Date.now() - this.scannedAt < 30000) return;
-    if (!this.pending) this.pending = this.scan().finally(() => { this.pending = undefined; });
+    if (!this.pending) this.pending = this.scan().catch(() => { if (!this.closed) this.warnings = ['History refresh could not be completed. Refresh to retry.']; }).finally(() => { this.pending = undefined; });
+    if (!force && this.entries.length) return;
     await this.pending;
   }
 
@@ -61,29 +85,39 @@ export class AgentHistory {
     this.scannedFiles = candidates.length;
     if (candidates.length > 2000) this.limited = true;
     let budget = 64 * 1024 * 1024;
+    if (this.closed) return;
     const entries = new Map<string, Indexed>(), owned = this.store.projects().flatMap(project => this.store.sessions(project.id));
     const workspaces = await this.agyWorkspaces();
-    for (const candidate of candidates.slice(0, 2000)) {
-      const stamp = `${candidate.mtime}:${candidate.size}`, cached = this.parsed.get(candidate.file);
-      let row: Indexed | null;
-      if (cached?.stamp === stamp) row = cached.entry;
-      else {
-        if (budget <= 0) { this.limited = true; break; }
-        const bytes = Math.min(candidate.size, 4 * 1024 * 1024, budget); budget -= bytes;
-        try { row = await this.parse(candidate, bytes, workspaces); }
-        catch { row = null; this.warnings.push(`${candidate.provider}: a session could not be indexed.`); }
-        this.parsed.set(candidate.file, { stamp, entry: row });
-      }
-      if (row) {
-        const owner = owned.find(record => record.provider === row!.provider && record.providerThreadId === row!.threadId);
-        if (owner) row = { ...row, cwd: owner.cwd, title: this.store.title(owner.id, row.title) };
-        if (!entries.has(row.id)) entries.set(row.id, row);
+    const selected = candidates.slice(0, 2000);
+    for (let offset = 0; offset < selected.length; offset += 4) {
+      const rows = await Promise.all(selected.slice(offset, offset + 4).map(async candidate => {
+        const stamp = `${candidate.mtime}:${candidate.size}`, cached = this.parsed.get(candidate.file);
+        let row: Indexed | null;
+        if (cached?.stamp === stamp) row = cached.entry;
+        else {
+          if (budget <= 0) { this.limited = true; return null; }
+          const bytes = Math.min(candidate.size, 4 * 1024 * 1024, budget); budget -= bytes;
+          try { row = await this.parse(candidate, bytes, workspaces); }
+          catch { row = null; this.warnings.push(`${candidate.provider}: a session could not be indexed.`); }
+          this.parsed.set(candidate.file, { stamp, entry: row });
+        }
+        return row;
+      }));
+      if (this.closed) return;
+      for (let row of rows) {
+        if (row) {
+          const owner = owned.find(record => record.provider === row!.provider && record.providerThreadId === row!.threadId);
+          if (owner) row = { ...row, cwd: owner.cwd, title: this.store.title(owner.id, row.title) };
+          if (!entries.has(row.id)) entries.set(row.id, row);
+        }
       }
     }
     this.entries = [...entries.values()]; this.scannedAt = Date.now();
     const files = new Set(candidates.slice(0, 2000).map(candidate => candidate.file));
     for (const file of this.parsed.keys()) if (!files.has(file)) this.parsed.delete(file);
     this.warnings = [...new Set(this.warnings)];
+    const cache = JSON.stringify({ key: this.cacheKey, entries: this.entries, parsed: [...this.parsed], scannedAt: this.scannedAt, scannedFiles: this.scannedFiles, limited: this.limited });
+    if (!this.closed && Buffer.byteLength(cache) <= 4000000) this.store.db.prepare("INSERT OR REPLACE INTO preferences VALUES ('history-index', ?)").run(cache);
   }
 
   private async parse(candidate: { file: string; root: string; provider: Provider; size: number; mtime: number }, bytes: number, workspaces: Map<string, string | null>): Promise<Indexed | null> {
@@ -124,7 +158,9 @@ export class AgentHistory {
     const id = opaque(`${provider}:${threadId}`), record = { provider, providerThreadId: threadId } as SessionRecord;
     let title = '', lastMessage: string | null = null, updatedAt = new Date(candidate.mtime).toISOString(), model: string | null = null;
     const messages = new Set<string>();
-    for (const line of lines) {
+    for (const [index, line] of lines.entries()) {
+      // Large JSONL scans must leave the HTTP/SSE event loop responsive.
+      if (index && index % 256 === 0) await new Promise<void>(resolve => setImmediate(resolve));
       if (line.length > 1024 * 1024) continue;
       const message = publicMessage(record, line, id);
       if (message && !messages.has(message.id)) {
@@ -199,6 +235,6 @@ export class AgentHistory {
     sessions.sort((a,b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt) || a.id.localeCompare(b.id));
     const groups = new Map<string, { id: string; name: string; total: number; projectTotal: number }>();
     for (const row of sessions) { const group = groups.get(row.groupId) ?? { id: row.groupId, name: row.groupName, total: 0, projectTotal: projectTotals.get(row.groupId)! }; group.total++; groups.set(row.groupId, group); }
-    return { sessions: sessions.slice(options.offset, options.offset + 50), groups: [...groups.values()], total: sessions.length, indexed: this.entries.length, scannedFiles: this.scannedFiles, scannedAt: new Date(this.scannedAt).toISOString(), limited: this.limited, nextOffset: options.offset + 50 < sessions.length ? options.offset + 50 : null, warnings: this.warnings };
+    return { refreshing: Boolean(this.pending), sessions: sessions.slice(options.offset, options.offset + 50), groups: [...groups.values()], total: sessions.length, indexed: this.entries.length, scannedFiles: this.scannedFiles, scannedAt: new Date(this.scannedAt).toISOString(), limited: this.limited, nextOffset: options.offset + 50 < sessions.length ? options.offset + 50 : null, warnings: this.warnings };
   }
 }

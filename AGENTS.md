@@ -2,6 +2,8 @@
 
 ## Standalone ADE migration
 
+- `runtime/organization.ts` owns opt-in Workflow / Organization execution. The message endpoint may create runs only when explicitly enabled; collection stays observational. Settings setup installs the bundled standalone CLI/skill from `resources/orchestration`. No Orca runtime dependency. Preserve DAG blockers, run/session/launch-token fencing, explicit worker results, one writer per checkout, uncertain-send protection, and clean integration through an owned worktree. See `docs/workflow-runtime.md`.
+
 - `runtime/agentPreferences.ts` validates persisted default/enabled agents and fixed Manual/Auto/Yolo launch mappings. Antigravity Auto is unsupported. `runtime/interaction.ts` parses only a waiting owned terminal's current rendered numbered prompt; interaction answers are prompt-bound, one-shot and serialized with message/terminal input. Never accept executable text, infer an approval from ordinary output, or retry uncertain answers. Complex/native-only prompts remain in Terminal.
 - `turn_results` persists up to 200 explicit completed/failed/interrupted turn observations for standalone Inbox. Turn completion is not task success; do not promote these Inbox entries to Kanban agent task results. `runtime/resources.ts` collects bounded cached OS process-tree working sets from owned roots and desktop metrics, without double-counting PIDs; report the smaller fallback scope explicitly if enumeration fails.
 

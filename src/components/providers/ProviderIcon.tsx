@@ -10,6 +10,7 @@ interface ProviderIconProps {
   className?: string;
   size?: number;
   showLabel?: boolean;
+  liveness?: string;
 }
 
 export function normalizeProvider(provider: string | null | undefined): { id: KnownProvider; displayName: string } {
@@ -39,8 +40,8 @@ const glyphs = {
   droid: DroidIcon, pi: PiIcon, omp: OmpIcon, aider: AiderIcon, copilot: CopilotIcon,
 } satisfies Record<string, React.ComponentType<{ size?: number }>>;
 
-export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className = '', size = 16, showLabel = false }) => {
-  if (provider === 'terminal') return <span className={`provider-badge ${className}`}><Icon name="terminal" size={size} />{showLabel && <span>Terminal</span>}</span>;
+export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className = '', size = 16, showLabel = false, liveness }) => {
+  if (provider === 'terminal') return <span className={`provider-badge terminal-provider-icon ${liveness === 'live' ? 'is-live' : 'is-stopped'} ${className}`} title={liveness === 'live' ? 'Terminal process running' : liveness === 'exited' ? 'Terminal process stopped' : 'Terminal process status unknown'}><Icon name="terminal" size={size} />{showLabel && <span>Terminal</span>}</span>;
   const { id, displayName } = normalizeProvider(provider);
   const image = imageAssets[id as keyof typeof imageAssets];
   const Glyph = glyphs[id as keyof typeof glyphs];

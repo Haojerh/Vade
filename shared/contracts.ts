@@ -103,6 +103,11 @@ export interface AppResources {
   processCount?: number;
   observedAt: ISO;
 }
+export interface ResourceProcess { pid: number; parent: number; name: string; memoryBytes: number; privateBytes: number | null; cpuPercent: number | null }
+export interface ResourceDetails { observedAt: string; totalBytes: number; groups: { id: string; label: string; processes: ResourceProcess[] }[] }
+export interface ComputerAwakeStatus { mode: 'on' | 'agent' | 'off'; active: boolean; error: string | null }
+export interface WorkspacePort { id: string; port: number; address: string; pid: number; process: string; projectId: string | null; project: string | null; canKill: boolean }
+export interface WorkspacePorts { observedAt: string; ports: WorkspacePort[]; error: string | null }
 
 export interface Run {
   id: Id;
@@ -134,6 +139,7 @@ export interface Node {
   preview: string | null;
   outputAvailable: boolean;
   chatAvailable?: boolean;
+  workflow?: { runId: string; role: 'orchestrator' | 'worker'; stepState?: WorkflowStep['state'] };
   model?: string | null;
   effort?: string | null;
   toolActivity?: Section<ToolActivity[]>;
@@ -521,6 +527,7 @@ export interface AgentHistorySession {
   activeProjectId: string | null;
 }
 export interface AgentHistoryPage {
+  refreshing?: boolean;
   sessions: AgentHistorySession[];
   groups: { id: string; name: string; total: number; projectTotal: number }[];
   total: number;
@@ -532,6 +539,8 @@ export interface AgentHistoryPage {
   warnings: string[];
 }
 export interface ResumeHistoryRequest { sessionId: string; worktreeId: string }
+export interface ProjectShortcut { id: string; label: string; action: 'terminal' | 'agent'; command: string; appendEnter: boolean; agent: 'codex' | 'claude' | 'antigravity' }
+export interface RunProjectShortcutResponse { nodeId: string; staged: boolean; message: string }
 export interface TerminalPage {
   cols?: number;
   rows?: number;
@@ -548,3 +557,30 @@ export interface TerminalInputRequest { data: string }
 export interface TerminalResizeRequest { cols: number; rows: number }
 export type TerminalClientMessage = { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number } | { type: 'ack'; cursor: number };
 export type TerminalServerMessage = { type: 'output'; page: TerminalPage } | { type: 'error'; message: string };
+/** Saved execution graph. Requested launch options are separate from observed agent metadata. */
+export type WorkflowProvider = Exclude<AdeProvider, 'terminal'>;
+export interface OrganizationNode {
+  id: string; title: string; prompt: string; provider: WorkflowProvider;
+  model: string | null; effort: string | null; x: number; y: number;
+}
+export interface OrganizationConfig {
+  version: 1; enabled: boolean; isolatedWorktrees: boolean;
+  orchestratorPosition?: { x: number; y: number };
+  nodes: OrganizationNode[]; edges: { source: string; target: string }[];
+}
+export interface WorkflowModel { id: string; label: string; efforts: string[]; effortModels?: Record<string, string> }
+export interface WorkflowSetupStatus { ready: boolean; cli: boolean; skill: boolean; cliSkill: boolean; cliPath: string; version: string; error: string | null }
+export interface WorkflowStep {
+  nodeId: string; state: 'pending' | 'starting' | 'running' | 'completed' | 'failed' | 'interrupted' | 'skipped';
+  sessionId: string | null; stream: string | null; result: string | null; delivery: 'not-sent' | 'submitted' | 'uncertain';
+  task?: string;
+}
+export interface WorkflowStream { id: string; title: string; nodes: string[]; worktreeId: string | null; integrated: boolean }
+export interface WorkflowRun {
+  id: string; projectId: string; orchestratorId: string; worktreeId: string; originalRequest: string;
+  createdAt: string; updatedAt: string; state: 'planning' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled';
+  config: OrganizationConfig; steps: WorkflowStep[]; streams: WorkflowStream[];
+  baseSha: string | null; error: string | null; result: string | null;
+  planReason?: string; integrationTreeId?: string; integrationPath?: string; integrationShas?: string[];
+  messages: { id: string; from: string; to: string; text: string; at: string }[];
+}

@@ -9,7 +9,10 @@ import { AdeConversations } from './conversation.js';
 import { LocalConnections } from './connections.js';
 import { ProviderAccounts } from './providerAccounts.js';
 import { ResourceReader } from './resources.js';
+import { ComputerAwake } from './computerAwake.js';
+import { Ports } from './ports.js';
 import { AgentHistory } from './agentHistory.js';
+import { OrganizationRuntime } from './organization.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
   const now = new Date().toISOString();
@@ -24,7 +27,10 @@ export class LocalRuntime {
   readonly connectionsService: LocalConnections;
   readonly accounts: ProviderAccounts;
   readonly resources = new ResourceReader();
+  readonly awake: ComputerAwake;
+  readonly ports: Ports;
   readonly history: AgentHistory;
+  readonly organization: OrganizationRuntime;
   desktopMemory: { bytes: number; at: number; pids?: number[] } | null = null;
   readonly id = crypto.randomUUID();
   connections = 0;
@@ -37,6 +43,9 @@ export class LocalRuntime {
     this.accounts = new ProviderAccounts(store, runner);
     this.connectionsService = connectionsService ?? new LocalConnections(runner, { accounts: this.accounts });
     this.sessions = new AdeSessions(store);
+    this.ports = new Ports(store, this.sessions, this.resources);
+    this.awake = new ComputerAwake(store, () => this.sessions.processGroups().some(group => this.sessions.status(group.projectId, group.id).data?.state === 'working'));
+    this.organization = new OrganizationRuntime(store, this.git, () => this.sessions);
   }
 
   async snapshot(projectId: string): Promise<DashboardSnapshot> {
@@ -50,19 +59,27 @@ export class LocalRuntime {
       const nodes: Node[] = trees.map(tree => ({ ...base(tree.id, this.store.title(tree.id, tree.main ? project.name : tree.branch || 'Detached worktree')),
         path: tree.path, branch: tree.branch, workspaceStatus: project.kind === 'folder' ? 'folder workspace' : tree.locked ? 'locked' : tree.main ? 'main checkout' : 'linked checkout' }));
       const edges: Graph['edges'] = [];
+      const workflows = this.organization.runs(projectId).filter(run => !['completed', 'failed', 'cancelled'].includes(run.state));
       for (const record of this.store.sessions(projectId).filter(session => !session.closed)) {
         if (!trees.some(tree => tree.id === record.worktreeId)) continue;
         const terminal = this.sessions.page(projectId, record.id, Number.MAX_SAFE_INTEGER);
         const status = this.sessions.status(projectId, record.id);
         const metadata = record.provider === 'terminal' ? { preview: this.sessions.preview(projectId, record.id).command } : await this.conversations.metadata(record);
+        const workflow = workflows.find(run => run.orchestratorId === record.id || run.steps.some(step => step.sessionId === record.id));
         nodes.push({ ...base(record.id, this.store.title(record.id, record.title)), kind: record.provider === 'terminal' ? 'terminal' : 'agent', worktreeId: record.worktreeId,
           ...metadata, path: record.cwd, agentType: record.provider, liveness: terminal.live ? 'live' : 'exited', outputAvailable: true, chatAvailable: record.provider !== 'terminal',
           state: status.meta.availability === 'ready' && status.data ? status.data.state : 'unknown', rawState: status.data?.event ?? null,
-          agentStatus: status, lastActivityAt: status.meta.observedAt });
+          agentStatus: status, lastActivityAt: status.meta.observedAt,
+          ...(workflow ? { workflow: { runId: workflow.id, role: workflow.orchestratorId === record.id ? 'orchestrator' as const : 'worker' as const, stepState: workflow.steps.find(step => step.sessionId === record.id)?.state } } : {}) });
         edges.push({ id: `contains-${record.id}`, source: record.worktreeId, target: record.id, kind: 'contains', evidence: 'workspace-membership', active: false });
       }
+      for (const run of workflows) for (const step of run.steps) {
+        if (!step.sessionId || !nodes.some(node => node.id === step.sessionId)) continue;
+        const predecessors = run.config.edges.filter(edge => edge.target === step.nodeId).map(edge => run.steps.find(item => item.nodeId === edge.source)?.sessionId).filter((id): id is string => Boolean(id));
+        for (const source of predecessors.length ? predecessors : [run.orchestratorId]) if (nodes.some(node => node.id === source)) edges.push({ id: `workflow-${run.id}-${source}-${step.sessionId}`, source, target: step.sessionId, kind: 'delegates', evidence: 'run-dispatch', active: step.state === 'running' });
+      }
       const graph: Graph = { runs: [], selectedRunId: null, nodes, edges, tasks: [], progress: taskProgress([], 'unavailable'), activity: [] };
-      const snapshot: DashboardSnapshot = { projectId, generatedAt: now, revision: crypto.createHash('sha256').update(JSON.stringify(nodes.map(({ observedAt, ...node }) => node))).digest('hex'),
+      const snapshot: DashboardSnapshot = { projectId, generatedAt: now, revision: crypto.createHash('sha256').update(JSON.stringify({ nodes: nodes.map(({ observedAt, ...node }) => node), edges })).digest('hex'),
         runtime: section({ version: 'ADE v1', runtimeId: this.id }), graph: section(graph) };
       this.lastGood.set(projectId, snapshot);
       return snapshot;
@@ -87,8 +104,10 @@ export class LocalRuntime {
   }
 
   close(): void {
+    this.awake.close(); this.history.close();
     for (const close of this.streams) close();
     this.accounts.close();
+    this.organization.close();
     this.sessions.close();
     this.store.close();
   }

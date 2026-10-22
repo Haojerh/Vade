@@ -154,8 +154,9 @@ export const WorkflowNodeCardBody: React.FC<WorkflowNodeCardBodyProps> = ({
       <div className="node-card-top">
         <div className="agent-title-row">
           <span className="drag-grip-icon" title={gripTitle} aria-hidden="true">⋮⋮</span>
-          <ProviderIcon provider={node.agentType} size={iconSize} />
+          <ProviderIcon provider={node.agentType} liveness={node.liveness} size={iconSize} />
           <span className="agent-label font-semibold">{node.label}</span>
+          {node.workflow && <span className="node-effort-badge" title={`Workflow ${node.workflow.runId}${node.workflow.stepState ? ` · task ${node.workflow.stepState}` : ''}`}>{node.workflow.role === 'orchestrator' ? 'Orchestrator' : 'Workflow'}</span>}
         </div>
         {node.kind !== 'terminal' && <span className={`node-badge-state state-${node.state}`} title={node.agentStatus?.meta.issue?.message ?? (node.agentStatus?.data ? `Observed ${node.agentStatus.data.event}` : undefined)}>
           {node.state === 'waiting' && node.agentStatus?.data?.attention === 'question' ? 'Question' : node.state === 'waiting' && node.agentStatus?.data?.attention === 'approval' ? 'Approval' : node.state}

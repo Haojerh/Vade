@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import type { AppResources } from '../../shared/contracts.js';
+import type { AppResources, ResourceDetails } from '../../shared/contracts.js';
+import os from 'node:os';
 
-export interface ProcessMemory { pid: number; parent: number; bytes: number }
+export interface ProcessMemory { pid: number; parent: number; bytes: number; name?: string; startedAt?: string; privateBytes?: number; cpuSeconds?: number; cpuPercent?: number | null }
 export function processTreeMemory(rows: ProcessMemory[], roots: number[]) {
   const selected = new Set(roots), byParent = new Map<number, ProcessMemory[]>();
   for (const row of rows) { const group = byParent.get(row.parent) ?? []; group.push(row); byParent.set(row.parent, group); }
@@ -17,13 +18,34 @@ export function processTreeMemory(rows: ProcessMemory[], roots: number[]) {
 export class ResourceReader {
   private cached?: { key: string; at: number; value: AppResources };
   private pending?: Promise<ProcessMemory[]>;
+  private rows?: { at: number; value: ProcessMemory[] };
+  private cpu = new Map<number, { at: number; seconds: number; startedAt?: string }>();
+  async snapshot(force = false): Promise<ProcessMemory[]> {
+    if (!force && this.rows && Date.now() - this.rows.at < 5000) return this.rows.value;
+    if (!this.pending) this.pending = this.collect().then(value => { this.rows = { at: Date.now(), value }; return value; }).finally(() => { this.pending = undefined; });
+    return this.pending;
+  }
+  async details(groups: { id: string; label: string; roots: number[] }[], desktop: { pids?: number[] } | null): Promise<ResourceDetails> {
+    const rows = await this.snapshot(), assigned = new Set<number>();
+    const children = new Map<number, ProcessMemory[]>();
+    for (const row of rows) { const group = children.get(row.parent) ?? []; group.push(row); children.set(row.parent, group); }
+    const descendants = (roots: number[]) => {
+      const ids = new Set(roots), pending = [...roots];
+      for (let index = 0; index < pending.length; index++) for (const row of children.get(pending[index]) ?? []) if (!ids.has(row.pid)) { ids.add(row.pid); pending.push(row.pid); }
+      return rows.filter(row => ids.has(row.pid) && !assigned.has(row.pid));
+    };
+    const result = [...groups, { id: 'vade', label: 'Vade', roots: [process.pid, ...desktop?.pids ?? []] }].map(group => {
+      const processes = descendants(group.roots).map(row => { assigned.add(row.pid); return { pid: row.pid, parent: row.parent, name: row.name ?? 'Process', memoryBytes: row.bytes, privateBytes: row.privateBytes ?? null, cpuPercent: row.cpuPercent ?? null }; });
+      return { id: group.id, label: group.label, processes };
+    }).filter(group => group.processes.length);
+    return { observedAt: new Date().toISOString(), groups: result, totalBytes: result.reduce((sum, group) => sum + group.processes.reduce((sum, row) => sum + row.memoryBytes, 0), 0) };
+  }
   async read(roots: number[], desktop: { bytes: number; at: number; pids?: number[] } | null): Promise<AppResources> {
     const liveDesktop = desktop && Date.now() - desktop.at < 15000 ? desktop : null;
     const allRoots = [...new Set([process.pid, ...roots, ...liveDesktop?.pids ?? []])].sort((a, b) => a - b), key = allRoots.join(':');
     if (this.cached?.key === key && Date.now() - this.cached.at < 5000) return this.cached.value;
     try {
-      if (!this.pending) this.pending = this.collect().finally(() => { this.pending = undefined; });
-      const rows = await this.pending;
+      const rows = await this.snapshot();
       if (!rows.some(row => row.pid === process.pid)) throw new Error('Backend missing from process snapshot');
       const memory = processTreeMemory(rows, allRoots);
       const value: AppResources = { ...memory, scope: liveDesktop?.pids?.length ? 'desktop-tree' : 'backend-tree', observedAt: new Date().toISOString() };
@@ -35,7 +57,7 @@ export class ResourceReader {
   private async collect(): Promise<ProcessMemory[]> {
     const windows = process.platform === 'win32';
     const command = promisify(execFile)(windows ? 'powershell.exe' : 'ps', windows
-      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | Select-Object @{n="pid";e={$_.ProcessId}},@{n="parent";e={$_.ParentProcessId}},@{n="bytes";e={[double]$_.WorkingSetSize}} | ConvertTo-Json -Compress']
+      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | Select-Object @{n="pid";e={$_.ProcessId}},@{n="parent";e={$_.ParentProcessId}},@{n="bytes";e={[double]$_.WorkingSetSize}},@{n="name";e={$_.Name}},@{n="startedAt";e={$_.CreationDate.ToUniversalTime().Ticks.ToString()}},@{n="privateBytes";e={[double]$_.PrivatePageCount}},@{n="cpuSeconds";e={([double]$_.KernelModeTime+[double]$_.UserModeTime)/10000000}} | ConvertTo-Json -Compress']
       : ['-axo', 'pid=,ppid=,rss='], { windowsHide: true, timeout: 5000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });
     const samplerPid = command.child.pid;
     const { stdout } = await command;
@@ -43,6 +65,13 @@ export class ResourceReader {
       const [pid, parent, rss] = line.trim().split(/\s+/).map(Number); return { pid, parent, bytes: rss * 1024 };
     });
     if (!Array.isArray(rows) || rows.length > 10000 || rows.some(row => !Number.isInteger(row.pid) || !Number.isInteger(row.parent) || !Number.isFinite(row.bytes) || row.bytes < 0)) throw new Error('Invalid process snapshot');
+    const now = Date.now(), next = new Map<number, { at: number; seconds: number; startedAt?: string }>();
+    for (const row of rows) if (typeof row.cpuSeconds === 'number' && Number.isFinite(row.cpuSeconds)) {
+      const previous = this.cpu.get(row.pid);
+      row.cpuPercent = previous && previous.startedAt === row.startedAt && now > previous.at ? Math.max(0, Math.min(100, (row.cpuSeconds - previous.seconds) * 100000 / (now - previous.at) / Math.max(1, os.cpus().length))) : null;
+      next.set(row.pid, { at: now, seconds: row.cpuSeconds, startedAt: row.startedAt });
+    }
+    this.cpu = next;
     return rows.filter(row => row.pid !== samplerPid);
   }
 }

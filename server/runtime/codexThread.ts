@@ -7,6 +7,18 @@ export function validCodexThreadId(value: unknown): value is string { return typ
 
 // Fixed local methods only. Never start a turn or expose provider RPC to HTTP clients.
 export async function codexThread(resolved: { executable: string; args: string[] }, cwd: string, title: string, threadId?: string, signal?: AbortSignal, sourceCwd = cwd): Promise<string> {
+  return codexRequest(resolved, cwd, async call => {
+    if (threadId !== undefined && !validCodexThreadId(threadId)) throw new CliError('CLI_FAILED', 'Codex session binding failed. Check your Codex installation and configuration.');
+    const response = threadId ? await call('thread/read', { threadId, includeTurns: false }) : await call('thread/start', { cwd });
+    const thread = response?.thread;
+    if (!validCodexThreadId(thread?.id) || (threadId && thread.id !== threadId) || thread.ephemeral !== false || typeof thread.cwd !== 'string' || ![cwd, sourceCwd].some(root => path.resolve(thread.cwd) === path.resolve(root))) throw new CliError('CLI_FAILED', 'Codex session binding failed');
+    if (!threadId) await call('thread/name/set', { threadId: thread.id, name: title });
+    return thread.id;
+  }, signal);
+}
+
+// Internal callers supply fixed methods; this transport is never exposed as an API.
+export async function codexRequest<T>(resolved: { executable: string; args: string[] }, cwd: string, operation: (call: (method: string, params: object) => Promise<any>) => Promise<T>, signal?: AbortSignal): Promise<T> {
   if (signal?.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
   const env = { ...process.env }; delete env.CODEX_THREAD_ID;
   for (const key of Object.keys(env)) if (key.startsWith('ORCA_')) delete env[key];
@@ -45,17 +57,10 @@ export async function codexThread(resolved: { executable: string; args: string[]
   try {
     await call('initialize', { clientInfo: { name: 'ade', title: 'ADE', version: '0.1.0' } });
     send({ method: 'initialized', params: {} });
-    if (threadId !== undefined && !validCodexThreadId(threadId)) throw failure();
-    const response = threadId
-      ? await call('thread/read', { threadId, includeTurns: false })
-      : await call('thread/start', { cwd });
-    const thread = response?.thread;
-    if (!validCodexThreadId(thread?.id) || (threadId && thread.id !== threadId) || thread.ephemeral !== false || typeof thread.cwd !== 'string' || ![cwd, sourceCwd].some(root => path.resolve(thread.cwd) === path.resolve(root))) throw failure();
-    // Empty threads are not durable until a persisted mutation; setting their title materializes them.
-    if (!threadId) await call('thread/name/set', { threadId: thread.id, name: title });
+    const result = await operation(call);
     child.stdin.end();
     await exited;
     if (failed) throw failure();
-    return thread.id;
+    return result;
   } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); child.kill(); await exited; }
 }

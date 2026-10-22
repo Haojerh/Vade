@@ -99,6 +99,9 @@ interface LiveSession {
   shellTail?: string;
   turnStatus: TerminalTurnStatus;
   turnStartedAt?: number;
+  resumeInitializing?: boolean;
+  resumeTurnObserved?: boolean;
+  resumePromptSubmitted?: boolean;
   programStatus?: Section<AgentStatus>;
   process: ChildProcess;
   buffer: string;
@@ -122,6 +125,15 @@ export class AdeSessions {
   private statusListeners = new Map<string, Set<() => void>>();
   private resultTurns = new Map<string, { state: string; turn: string; token?: string }>();
   processRoots(): number[] { return [...this.helpers].flatMap(child => child.pid ? [child.pid] : []).concat([...this.live.values()].flatMap(session => session.live && session.agentPid ? [session.agentPid] : [])); }
+  processGroups(): { id: string; projectId: string; label: string; roots: number[] }[] {
+    const projects = this.store.projects();
+    const records = new Map(projects.flatMap(project => this.store.sessions(project.id)).map(record => [record.id, record]));
+    return [...this.live].flatMap(([id, live]) => {
+      if (!live.live || !live.agentPid) return [];
+      const record = records.get(id), project = projects.find(project => project.id === record?.projectId);
+      return record ? [{ id, projectId: record.projectId, label: `${project?.name ?? 'Project'} / ${this.store.title(id, record.title)}`, roots: [live.agentPid] }] : [];
+    });
+  }
   subscribeStatus(projectId: string, listener: () => void): () => void {
     const listeners = this.statusListeners.get(projectId) ?? new Set(); listeners.add(listener); this.statusListeners.set(projectId, listeners);
     return () => { listeners.delete(listener); if (!listeners.size) this.statusListeners.delete(projectId); };
@@ -144,6 +156,9 @@ export class AdeSessions {
     const record = this.require(projectId, id), live = this.live.get(id);
     const hook = readAgentStatus(this.store.directory, record, Boolean(live?.live));
     if (live) live.lastHook = hook;
+    if (live?.resumeTurnObserved === false && hook.data?.state === 'working' && ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(hook.data.event)) {
+      live.resumeInitializing = false; live.resumeTurnObserved = true; live.turnStatus.observe(hook.data);
+    }
     if (live?.programStatus && hook.data?.state === 'working' && (record.provider === 'antigravity' || hook.data.event === 'UserPromptSubmit')
       && Date.parse(hook.meta.observedAt ?? '') > Date.parse(live.programStatus.meta.observedAt ?? '')) {
       live.programStatus = undefined; live.turnStatus.observe(hook.data);
@@ -193,6 +208,8 @@ export class AdeSessions {
 
   private observeResult(record: SessionRecord, status: Section<AgentStatus>): Section<AgentStatus> {
     if (record.provider === 'terminal' || status.meta.availability !== 'ready' || !status.data) return status;
+    if (this.live.get(record.id)?.resumeInitializing && ['working', 'completed'].includes(status.data.state)) return { ...status, data: { state: 'idle', source: status.data.source, event: 'resume-initialization' } };
+    if (this.live.get(record.id)?.resumeTurnObserved === false && status.data.state === 'completed') return { ...status, data: { state: 'idle', source: status.data.source, event: 'resume-ready' } };
     if (record.provider === 'antigravity' && status.data.state === 'working' && status.data.event === 'PreToolUse' && status.data.toolCall?.summary) {
       const screen = this.live.get(record.id)?.screen?.text() ?? '';
       const summary = status.data.toolCall.summary;
@@ -217,7 +234,7 @@ export class AdeSessions {
     return status;
   }
 
-  async launch(projectId: string, worktreeId: string, cwd: string, command: string, title?: string, shell?: TerminalShell): Promise<SessionRecord> {
+  async launch(projectId: string, worktreeId: string, cwd: string, command: string, title?: string, shell?: TerminalShell, workflowLaunch?: SessionRecord['workflowLaunch']): Promise<SessionRecord> {
     const definition = PROVIDERS.find(provider => provider.command === command || provider.id === command);
     if (!definition) throw new CliError('INVALID_ARGUMENT', 'Select Codex, Claude Code or Antigravity; custom commands and flags are not accepted');
     if (definition.id !== 'terminal' && !readAgentPreferences(this.store).providers[definition.id].enabled) throw new CliError('INVALID_ARGUMENT', 'This agent is disabled in Settings > Agents');
@@ -227,7 +244,7 @@ export class AdeSessions {
     if (!resolved) throw new CliError('CLI_MISSING', `${definition.name} is not installed or its executable is not available`);
     if (this.store.sessions(projectId).length >= 200) throw new CliError('RATE_LIMITED', 'Project session history has reached the 200 session limit');
     const record: SessionRecord = { id: crypto.randomUUID(), projectId, worktreeId, cwd, provider: definition.id,
-      title: title || definition.name, createdAt: new Date().toISOString(), closed: false, ...(shell ? { shell } : {}) };
+      title: title || definition.name, createdAt: new Date().toISOString(), closed: false, ...(shell ? { shell } : {}), ...(workflowLaunch ? { workflowLaunch } : {}) };
     return this.start(record, resolved);
   }
 
@@ -275,6 +292,7 @@ export class AdeSessions {
     if (this.starting.has(record.id)) throw new CliError('INVALID_ARGUMENT', 'This terminal is already starting');
     if (this.live.size + this.starting.size - (this.live.has(record.id) ? 1 : 0) >= MAX_LIVE_SESSIONS) throw new CliError('RATE_LIMITED', 'Close an agent before starting more than 16 sessions');
     this.starting.add(record.id);
+    const resumingCodex = record.provider === 'codex' && Boolean(record.providerThreadId);
     try {
       const node = executableOnPath('node');
       if (!node) throw new CliError('CLI_MISSING', 'Node.js is required for provider status hooks');
@@ -302,13 +320,16 @@ export class AdeSessions {
       if (record.provider !== 'terminal') {
         const preference = readAgentPreferences(this.store).providers[record.provider];
         resolved = { ...resolved, args: [...resolved.args, ...permissionArgs[record.provider][preference.mode]!] };
+        const options = record.workflowLaunch;
+        if (options?.model) resolved.args.push('--model', options.model);
+        if (options?.effort) resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
       }
       if (this.shutdown.signal.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
-      return await this.startTerminal(record, resolved);
+      return await this.startTerminal(record, resolved, resumingCodex);
     } finally { this.starting.delete(record.id); }
   }
 
-  private async startTerminal(record: SessionRecord, resolved: { executable: string; args: string[] }): Promise<SessionRecord> {
+  private async startTerminal(record: SessionRecord, resolved: { executable: string; args: string[] }, resumingCodex = false): Promise<SessionRecord> {
     const definition = PROVIDERS.find(provider => provider.id === record.provider)!;
     const cwd = record.cwd;
     fs.mkdirSync(path.join(this.store.directory, 'status'), { recursive: true, mode: 0o700 });
@@ -348,7 +369,7 @@ export class AdeSessions {
     delete env.ELECTRON_RUN_AS_NODE;
     try { child = fork(host, [], { execPath: node, env, execArgv: [], windowsHide: true, stdio: ['ignore', 'ignore', 'ignore', 'ipc'] }); }
     catch { throw new CliError('CLI_FAILED', `${definition.name} could not start; check its local installation`); }
-    const session: LiveSession = { process: child, buffer: '', start: 0, live: false, exitCode: null, pending: new Map(), turnStatus: new TerminalTurnStatus() };
+    const session: LiveSession = { process: child, buffer: '', start: 0, live: false, exitCode: null, pending: new Map(), turnStatus: new TerminalTurnStatus(), resumeInitializing: resumingCodex, resumeTurnObserved: !resumingCodex };
     session.screen = new TerminalScreen(data => {
       if (child.connected && !this.shutdown.signal.aborted) void this.command(session, { type: 'input', data }).catch(() => {});
     }, () => {
@@ -361,6 +382,14 @@ export class AdeSessions {
     });
     const programStatus = programStatusReader(status => {
       if (!['codex', 'claude'].includes(record.provider)) return;
+      if (session.resumeInitializing) {
+        // Codex reports working while restoring a conversation, then idle without a new turn.
+        // Establish the idle baseline, or wait for a fresh prompt/tool hook; never count restoration.
+        if (status.state === 'idle') { session.resumeInitializing = false; session.turnStatus = new TerminalTurnStatus(); }
+        else if (['working', 'completed'].includes(status.state)) return;
+      }
+      if (session.resumeTurnObserved === false && ['working', 'completed'].includes(status.state) && !session.resumePromptSubmitted) return;
+      if (status.state === 'working') session.resumeTurnObserved = true;
       if (status.state === 'working' && session.programStatus?.data?.state !== 'working') session.turnStartedAt = Date.now();
       status = session.turnStatus.observe(status);
       if (session.programStatus?.data?.state === status.state && session.programStatus?.data?.attention === status.attention) return;
@@ -384,6 +413,7 @@ export class AdeSessions {
     child.on('exit', () => { this.helpers.delete(child); stopped(); });
     child.on('error', stopped);
     child.on('message', (message: any) => {
+      if (message.type === 'data' && this.live.get(record.id) !== session) return;
       if (message.type === 'data' && typeof message.data === 'string' && message.data.length <= 32768) {
         if (record.provider === 'terminal') {
           session.shellTail = ((session.shellTail ?? '') + message.data).slice(-32768);
@@ -477,17 +507,18 @@ export class AdeSessions {
     if (!session?.live) throw new CliError('RUNTIME_UNAVAILABLE', 'Agent terminal is no longer running; start a new agent');
     session.inputRevision = (session.inputRevision ?? 0) + 1;
     const sent = this.command(session, { type: 'input', data });
+    if (session.resumeTurnObserved === false && /[\r\n]/.test(data)) session.resumePromptSubmitted = true;
     const interrupt = data === '\x1b' || data === '\x03' || /^\x1b\[27(?:;1(?::[12])?)?u$/.test(data);
     session.turnStatus.input(data, Date.now(), interrupt ? this.status(projectId, id).data?.state === 'working' : undefined);
     return sent.catch(error => { session.turnStatus.input(''); throw error; });
   }
 
-  async send(projectId: string, id: string, request: SendMessageRequest): Promise<{ ok: true; message: string }> {
+  async send(projectId: string, id: string, request: SendMessageRequest, internalWorkflow = false, submit = true): Promise<{ ok: true; message: string }> {
     const record = this.require(projectId, id), session = this.live.get(id);
     // Antigravity hides shortcuts in a nonempty composer. Preserve initial readiness
     // only within this locked send, while every write still checks fresh status/liveness.
     const initialNativeReady = record.provider === 'antigravity' && antigravityPromptReady(session?.screen?.text() ?? session?.buffer ?? '');
-    if (typeof request.message !== 'string' || request.message.length > 10000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(request.message)) throw new CliError('INVALID_ARGUMENT', 'Message must contain up to 10000 characters without terminal control codes');
+    if (typeof request.message !== 'string' || request.message.length > (internalWorkflow ? 48000 : 10000) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(request.message)) throw new CliError('INVALID_ARGUMENT', 'Message exceeds the allowed length or contains terminal control codes');
     const uploads = decodeAttachments(request.attachments);
     if (!request.message.trim() && !uploads.length) throw new CliError('INVALID_ARGUMENT', 'Enter a message or attach a file');
     if (this.sending.has(id)) throw new CliError('RATE_LIMITED', 'A message is already being sent to this agent');
@@ -515,8 +546,11 @@ export class AdeSessions {
       await write(`\x1b[200~${prompt.replace(/\r\n?/g, '\n')}\x1b[201~`);
       await new Promise(resolve => setTimeout(resolve, 300));
       writable();
-      await this.command(session!, { type: 'input', data: '\r' });
-      return { ok: true, message: 'Submitted to the agent terminal' };
+      if (submit) {
+        if (session!.resumeTurnObserved === false) session!.resumePromptSubmitted = true;
+        await this.command(session!, { type: 'input', data: '\r' });
+      }
+      return { ok: true, message: submit ? 'Submitted to the agent terminal' : 'Staged in the agent terminal. Press Enter to submit.' };
     } catch (error) {
       if (staged) throw new CliError('CLI_FAILED', 'Delivery may be partial. Inspect Terminal before sending again; the message was not automatically retried.');
       throw error;
@@ -543,15 +577,37 @@ export class AdeSessions {
 
   closeSession(projectId: string, id: string): void {
     if (this.starting.has(id)) throw new CliError('INVALID_ARGUMENT', 'Wait for this terminal to finish starting');
+    if (this.store.sessions(projectId).find(record => record.id === id)?.closed) return;
     const record = this.require(projectId, id);
     const session = this.live.get(id);
-    if (session?.process.connected) { session.process.send({ type: 'stop' }); session.live = false; setTimeout(() => session.process.kill(), 1000).unref(); }
+    if (session) {
+      session.live = false;
+      for (const pending of session.pending.values()) { clearTimeout(pending.timer); pending.reject(new CliError('RUNTIME_UNAVAILABLE', 'Terminal tab was closed.')); }
+      session.pending.clear();
+      if (session.process.connected) { try { session.process.send({ type: 'stop' }, () => {}); } catch { /* Already exited. */ } }
+      setTimeout(() => { if (!session.process.killed) session.process.kill(); }, 1000).unref();
+    }
     this.live.delete(id);
     session?.screen?.dispose();
+    if (session) session.screen = undefined;
     this.statusOwners.delete(id);
     this.store.saveSession({ ...record, closed: true });
     this.changed(id);
     this.statusChanged(projectId);
+  }
+  isClosed(projectId: string, id: string): boolean { return !this.shutdown.signal.aborted && this.store.sessions(projectId).find(record => record.id === id)?.closed === true; }
+
+  /** Keep the tab/history, and require a native PTY exit before another writer uses its checkout. */
+  async stopWorkflowWorker(projectId: string, id: string): Promise<void> {
+    this.require(projectId, id);
+    const session = this.live.get(id); if (!session?.live) return;
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); session.process.off('message', onMessage); };
+      const onMessage = (message: any) => { if (message.type === 'exit') { cleanup(); resolve(); } };
+      const timer = setTimeout(() => { cleanup(); reject(new CliError('CLI_TIMEOUT', 'Worker exit was not confirmed. Stop it in Terminal before continuing.')); }, 10000);
+      session.process.on('message', onMessage);
+      session.process.send({ type: 'stop' }, error => { if (error) { cleanup(); reject(new CliError('CLI_FAILED', 'Worker stop could not be confirmed')); } });
+    });
   }
 
   close(): void {

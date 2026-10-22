@@ -10,6 +10,13 @@ export interface AnchorBox {
   height: number;
 }
 
+export function workflowEdgePath(source: AnchorBox, target: AnchorBox): string {
+  const startX = source.x + source.width, startY = source.y + source.height / 2;
+  const endX = target.x, endY = target.y + target.height / 2;
+  const dx = Math.max(40, Math.abs(endX - startX) * 0.5);
+  return `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`;
+}
+
 export interface AggregatedEdge {
   id: string;
   source: string;
@@ -94,8 +101,7 @@ export const WorkflowEdgesSvg: React.FC<WorkflowEdgesSvgProps> = ({
       const endY = tgtPos.y + tgtPos.height / 2;
 
       // Smooth horizontal cubic bezier curve
-      const dx = Math.max(40, Math.abs(endX - startX) * 0.5);
-      const pathData = `M ${startX} ${startY} C ${startX + dx} ${startY}, ${endX - dx} ${endY}, ${endX} ${endY}`;
+      const pathData = workflowEdgePath(srcPos, tgtPos);
 
       return (
         <g key={`${edge.source}->${edge.target}`} className={`edge-group ${edge.isActive ? 'edge-active-group' : ''}`}>

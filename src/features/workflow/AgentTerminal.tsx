@@ -3,10 +3,10 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { TerminalClientMessage, TerminalServerMessage } from '../../../shared/contracts';
-import { resumeTerminal } from '../../api/client';
+import { markTabClosed, resumeTerminal } from '../../api/client';
 import { isTerminalReply, isTerminalClipboardShortcut } from './terminalInput';
 
-export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId: string; nodeId: string; onStatusChange?: () => void }) {
+export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, streamPath }: { projectId: string; nodeId: string; provider?: string; onStatusChange?: () => void; streamPath?: string }) {
   const statusChange = useRef(onStatusChange); statusChange.current = onStatusChange;
   const host = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +34,14 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
       fontFamily: 'Consolas, monospace', allowProposedApi: false,
       theme: { background: rootStyle.getPropertyValue('--canvas-bg').trim(), foreground: rootStyle.getPropertyValue('--text-main').trim() } });
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current);
+    // Codex mouse reporting captures browser selection and wheel scrolling.
+    // Keep the embedded transcript selectable; keyboard interaction stays native.
+    const mouseMode = provider === 'codex' ? terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, params => params.length > 0 && params.every(value => typeof value === 'number' && [1000, 1002, 1003, 1006, 1007, 1015].includes(value))) : null;
+    if (provider === 'codex') terminal.attachCustomWheelEventHandler(event => {
+      event.preventDefault();
+      terminal.scrollLines(Math.sign(event.deltaY) * Math.max(1, Math.round(Math.abs(event.deltaY) / (event.deltaMode === 0 ? 24 : 1))));
+      return false;
+    });
     // Let Chromium deliver native clipboard events before xterm's Kitty encoder claims them.
     terminal.attachCustomKeyEventHandler(event => {
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v' && navigator.clipboard?.readText) {
@@ -51,6 +59,14 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
     let cursor = 0, active = true, failed = false, initialPage = true, lastLive: boolean | undefined;
     let socket: WebSocket | null = null, frame = 0, inputTimer: ReturnType<typeof setTimeout> | undefined;
     let queuedInput = '', sentSize = '';
+    const closedTab = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId: string; nodeId: string }>).detail;
+      if (detail?.projectId !== projectId || detail.nodeId !== nodeId) return;
+      failed = true; queuedInput = ''; clearTimeout(inputTimer);
+      const previous = socket; socket = null; previous?.close();
+      setError(null); setLive(false); setResumable(false); setRestartable(false);
+    };
+    window.addEventListener('ade:session-closed', closedTab);
     const fail = (error: unknown) => { if (active) { failed = true; queuedInput = ''; setError((error as Error).message); } };
     const send = (message: TerminalClientMessage) => {
       if (!socket || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 1024 * 1024) throw new Error('Terminal disconnected. Inspect before repeating input.');
@@ -79,7 +95,7 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
     });
     const connect = () => {
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const current = new WebSocket(`${protocol}//${location.host}/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/terminal-stream?cursor=${cursor}`);
+      const current = new WebSocket(`${protocol}//${location.host}${streamPath ?? `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/terminal-stream`}?cursor=${cursor}`);
       socket = current; sentSize = '';
       current.onopen = () => { /* Restore the host-sized screen before asking the PTY to resize. */ };
       current.onmessage = async event => {
@@ -90,13 +106,13 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
           if (message.type !== 'output') throw new Error('Invalid terminal stream');
           const page = message.page;
           if (page.reset) terminal.reset();
-          if (page.cols && page.rows) terminal.resize(page.cols, page.rows);
+          if (page.cols && page.rows && (terminal.cols !== page.cols || terminal.rows !== page.rows)) terminal.resize(page.cols, page.rows);
           if (page.data) await new Promise<void>(resolve => terminal.write(page.data, resolve));
           if (!active || socket !== current) return;
           fitTerminal(); terminal.refresh(0, terminal.rows - 1);
-          cursor = page.cursor; setLive(page.live); setResumable(Boolean(page.resumable)); setRestartable(Boolean(page.restartable));
+          cursor = page.cursor; setLive(page.live); setResumable(!streamPath && Boolean(page.resumable)); setRestartable(!streamPath && Boolean(page.restartable));
           if (lastLive !== page.live) { lastLive = page.live; statusChange.current?.(); }
-          const autoResume = initialPage && !page.live && page.recoverable;
+          const autoResume = !streamPath && initialPage && !page.live && page.recoverable;
           initialPage = false;
           if (autoResume) {
             setResuming(true); socket = null; current.close();
@@ -107,17 +123,25 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
           } else send({ type: 'ack', cursor });
         } catch (error) { fail(error); }
       };
-      current.onclose = () => { if (active && socket === current) fail(new Error('Terminal connection closed. Inspect before repeating input.')); };
+      current.onclose = event => {
+        if (!active || socket !== current) return;
+        if (event.code === 1000 && event.reason === 'Tab closed') {
+          if (!streamPath) markTabClosed(projectId, nodeId);
+          else { failed = true; queuedInput = ''; setError(null); setLive(false); }
+          return;
+        }
+        fail(new Error('Terminal connection closed. Inspect before repeating input.'));
+      };
       current.onerror = () => { if (active && socket === current) fail(new Error('Terminal connection unavailable. Reconnect to try again.')); };
     };
     const observer = new ResizeObserver(() => { cancelAnimationFrame(frame); frame = requestAnimationFrame(fitTerminal); }); observer.observe(host.current);
     fitTerminal(); terminal.focus(); connect();
-    return () => { active = false; clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); terminal.dispose(); };
-  }, [projectId, nodeId, retry]);
+    return () => { active = false; window.removeEventListener('ade:session-closed', closedTab); clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); mouseMode?.dispose(); terminal.dispose(); };
+  }, [projectId, nodeId, retry, streamPath, provider]);
   return <section className="agent-terminal" aria-label="Agent terminal">
     {error && <div className="panel-alert alert-error" role="alert">{error} <button className="btn btn-secondary btn-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button><span> Inspect the terminal before repeating input.</span></div>}
     <div ref={host} className="agent-terminal-screen" />
-    <p className="text-xs text-muted" role="status">{resuming ? restartable ? 'Opening a fresh shell…' : 'Resuming the same conversation…' : live === false ? restartable ? 'Shell stopped. Reopen in the same folder. Previous commands will not be replayed.' : resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native terminal · authentication and permission prompts appear here.'}</p>
+    <p className="text-xs text-muted" role="status">{streamPath ? live === false ? 'Installation terminal stopped. Use Install or Update to open a new one.' : 'Installation terminal · press Enter to run the staged command.' : resuming ? restartable ? 'Opening a fresh shell…' : 'Resuming the same conversation…' : live === false ? restartable ? 'Shell stopped. Reopen in the same folder. Previous commands will not be replayed.' : resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native terminal · authentication and permission prompts appear here.'}</p>
     {live === false && (resumable || restartable) && !resuming && <button type="button" className="btn btn-secondary" onClick={() => void resume()}>{restartable ? 'Reopen terminal' : 'Resume session'}</button>}
   </section>;
 }

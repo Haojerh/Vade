@@ -8,6 +8,7 @@ import { agentCatalog } from '../runtime/sessions.js';
 import { createResponseHelpers, parseJsonBody } from './httpUtils.js';
 import { listProjectFolders } from '../runtime/projectFolders.js';
 import { addProject } from '../runtime/projects.js';
+import { projectShortcuts, runProjectShortcut, saveProjectShortcuts } from '../runtime/projectShortcuts.js';
 
 function text(value: unknown, label: string, max = 100): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max || /[\x00-\x1f\x7f]/.test(value)) throw new CliError('INVALID_ARGUMENT', `Invalid ${label}`);
@@ -33,6 +34,45 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     return value;
   };
   try {
+    if (pathname === '/api/workflow/setup-terminal') { requireMethod('POST'); queryKeys(); await body<{}>([]); sendJson(200, await runtime.organization.setup.prepareTerminal()); return; }
+    if (pathname === '/api/workflow/setup-terminal/close') { requireMethod('POST'); queryKeys(); const owner = await body<{ projectId: string; nodeId: string }>(['projectId', 'nodeId']); runtime.organization.setup.closeTerminal(text(owner.projectId, 'setup project ID', 36), text(owner.nodeId, 'setup terminal ID', 36)); sendJson(200, { ok: true }); return; }
+    if (pathname === '/api/workflow/config') {
+      queryKeys();
+      if (method === 'POST') sendJson(200, await runtime.organization.configure(await body<import('../../shared/contracts.js').OrganizationConfig>(['version', 'enabled', 'isolatedWorktrees', 'nodes', 'edges', 'orchestratorPosition'], 150000)));
+      else { requireMethod('GET'); sendJson(200, runtime.organization.config()); } return;
+    }
+    if (pathname === '/api/workflow/setup') {
+      queryKeys();
+      requireMethod('GET'); sendJson(200, runtime.organization.setup.status()); return;
+    }
+    if (pathname === '/api/workflow/models') {
+      requireMethod('GET'); queryKeys('provider'); const provider = query.get('provider');
+      if (!['codex', 'claude', 'antigravity'].includes(provider ?? '')) throw new CliError('INVALID_ARGUMENT', 'Select a supported provider');
+      sendJson(200, await runtime.organization.models.list(provider as import('../../shared/contracts.js').WorkflowProvider)); return;
+    }
+    if (pathname === '/api/workflow/runs') {
+      requireMethod('GET'); queryKeys('projectId'); const projectId = query.get('projectId') ?? undefined;
+      if (projectId) runtime.store.project(projectId);
+      sendJson(200, runtime.organization.runs(projectId)); return;
+    }
+    const workflowCancel = pathname.match(/^\/api\/workflow\/runs\/([0-9a-f-]{36})\/cancel$/i);
+    if (workflowCancel) { requireMethod('POST'); queryKeys(); await body<{}>([]); await runtime.organization.cancel(workflowCancel[1]); sendJson(200, { ok: true }); return; }
+    if (pathname === '/api/workflow/control') {
+      requireMethod('POST'); queryKeys();
+      const request = await body<any>(['action', 'runId', 'sessionId', 'nodes', 'reason', 'streams', 'nodeId', 'task', 'to', 'text', 'outcome', 'summary'], 24000);
+      sendJson(200, await runtime.organization.control(req.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1], request)); return;
+    }
+    const shortcutRoute = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/shortcuts(?:\/([a-zA-Z0-9_-]+)\/run)?$/);
+    if (shortcutRoute) {
+      queryKeys();
+      if (shortcutRoute[2]) {
+        requireMethod('POST'); const request = await body<{ worktreeId: string }>(['worktreeId']);
+        sendJson(200, await runProjectShortcut(runtime, shortcutRoute[1], shortcutRoute[2], text(request.worktreeId, 'worktree ID')));
+      } else if (method === 'POST') {
+        const request = await body<{ shortcuts: unknown }>(['shortcuts'], 350000); sendJson(200, saveProjectShortcuts(runtime.store, shortcutRoute[1], request.shortcuts));
+      } else { requireMethod('GET'); sendJson(200, projectShortcuts(runtime.store, shortcutRoute[1])); }
+      return;
+    }
     if (pathname === '/api/agent-history') {
       requireMethod('GET'); queryKeys('scope', 'projectId', 'worktreeId', 'search', 'offset', 'refresh');
       const scope = query.get('scope') ?? 'project';
@@ -102,8 +142,20 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       catalog.defaultAgentId = catalog.installed.find(agent => agent.id === preferences.defaultAgent)?.id ?? catalog.installed[0]?.id ?? null;
       sendJson(200, catalog); return;
     }
-    if (pathname === '/api/connections') { requireMethod('GET'); queryKeys(); sendJson(200, await runtime.connectionsService.connections()); return; }
+    if (pathname === '/api/connections') { requireMethod('GET'); queryKeys('scope', 'refresh'); if (query.has('refresh') && query.get('refresh') !== '1') throw new CliError('INVALID_ARGUMENT', 'Invalid refresh'); const scope = query.get('scope') ?? 'all'; if (scope !== 'all' && scope !== 'accounts' && scope !== 'integrations') throw new CliError('INVALID_ARGUMENT', 'Invalid connection scope'); sendJson(200, await runtime.connectionsService.connections(scope, query.get('refresh') === '1')); return; }
     if (pathname === '/api/usage') { requireMethod('GET'); queryKeys('refresh'); if (query.has('refresh') && query.get('refresh') !== '1') throw new CliError('INVALID_ARGUMENT', 'refresh must be 1'); sendJson(200, await runtime.connectionsService.usage(query.get('refresh') === '1')); return; }
+    if (pathname === '/api/computer-awake') {
+      queryKeys();
+      if (method === 'POST') { const request = await body<{ mode: string }>(['mode']); sendJson(200, runtime.awake.set(request.mode)); }
+      else { requireMethod('GET'); sendJson(200, runtime.awake.status()); }
+      return;
+    }
+    if (pathname === '/api/resources/details') {
+      requireMethod('GET'); queryKeys(); sendJson(200, await runtime.resources.details(runtime.sessions.processGroups(), runtime.desktopMemory)); return;
+    }
+    if (pathname === '/api/ports') { requireMethod('GET'); queryKeys(); sendJson(200, await runtime.ports.read()); return; }
+    const stopPort = pathname.match(/^\/api\/ports\/([a-f0-9]{40})\/stop$/);
+    if (stopPort) { requireMethod('POST'); queryKeys(); await body<{}>([]); sendJson(200, await runtime.ports.stop(stopPort[1])); return; }
     if (pathname === '/api/resources') {
       requireMethod('GET'); queryKeys();
       sendJson(200, await runtime.resources.read(runtime.sessions.processRoots(), runtime.desktopMemory)); return;
@@ -227,17 +279,19 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
         if (conversation.data?.nextCursor) cursor = conversation.data.nextCursor;
         if (first || conversation.data?.messages.length || conversation.meta.issue) res.write(`event: conversation\ndata: ${JSON.stringify(conversation)}\n\n`);
       };
-      const timer = setInterval(async () => {
+      const update = async () => {
         if (closed || busy || res.writableNeedDrain) return;
         busy = true;
         try { publish(await read()); }
         catch { if (!closed) res.write('event: stream-reset\ndata: {}\n\n'); close(); }
         finally { busy = false; }
-      }, 2000);
+      };
+      const stopWatching = runtime.conversations.watch(runtime.sessions.require(projectId, nodeId), () => { void update(); });
+      const timer = setInterval(update, 2000);
       const heartbeat = setInterval(() => { if (!closed && !res.writableNeedDrain) res.write(': heartbeat\n\n'); }, 15000);
       const close = () => {
         if (closed) return;
-        closed = true; clearInterval(timer); clearInterval(heartbeat); runtime.connections--; runtime.streams.delete(close); res.end();
+        closed = true; clearInterval(timer); clearInterval(heartbeat); stopWatching(); runtime.connections--; runtime.streams.delete(close); res.end();
       };
       runtime.streams.add(close); res.once('close', close); publish(initial, true); return;
     }
@@ -270,14 +324,14 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       await runtime.git.remove(project, nodeId);
     } else if (action === 'message') {
       const request = await body<SendMessageRequest>(['message', 'attachments'], 29 * 1024 * 1024);
-      sendJson(200, await runtime.sessions.send(projectId, nodeId, request)); return;
+      sendJson(200, await runtime.organization.send(projectId, nodeId, request)); return;
     }
     else throw new CliError('METHOD_NOT_ALLOWED', 'Action is not available in standalone ADE');
     sendJson(200, { ok: true });
   } catch (error) {
     if (res.headersSent) { res.end(); return; }
     const issue = error instanceof CliError ? error.issue : { code: 'INTERNAL' as const, message: 'Standalone ADE operation failed', retryable: false };
-    const status = issue.code === 'INVALID_ARGUMENT' ? 400 : issue.code === 'METHOD_NOT_ALLOWED' ? 405 : issue.code.endsWith('_NOT_FOUND') ? 404 : issue.code === 'RATE_LIMITED' ? 429 : 500;
+    const status = issue.code === 'FORBIDDEN_ORIGIN' ? 403 : issue.code === 'INVALID_ARGUMENT' ? 400 : issue.code === 'METHOD_NOT_ALLOWED' ? 405 : issue.code.endsWith('_NOT_FOUND') ? 404 : issue.code === 'RATE_LIMITED' ? 429 : 500;
     sendError(status, issue.code, issue.message, issue.retryable);
   }
 }

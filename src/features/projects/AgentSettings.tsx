@@ -13,10 +13,10 @@ export function AgentSettings() {
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(false);
   const controller = useRef<AbortController | null>(null);
-  const load = () => {
+  const load = (force = false) => {
     controller.current?.abort(); const abort = new AbortController(); controller.current = abort;
     setError(''); setLoading(true);
-    Promise.all([fetchAgentPreferences(abort.signal), fetchAgentCatalog(abort.signal)]).then(([next, agents]) => {
+    Promise.all([fetchAgentPreferences(abort.signal), fetchAgentCatalog(abort.signal, force)]).then(([next, agents]) => {
       if (!abort.signal.aborted) { setValue(next); setCatalog(agents); }
     }).catch(e => { if (!abort.signal.aborted) setError(e.message); }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
   };
@@ -31,7 +31,7 @@ export function AgentSettings() {
     finally { if (!abort.signal.aborted) setSaving(false); }
   };
   return <section className="settings-preferences" aria-label="Agent preferences" aria-busy={saving}>
-    <div className="settings-page-row"><div><h2>Default agent and permissions</h2><p>Apply to new and resumed sessions. Running agents keep their launch mode.</p></div><button className="btn btn-secondary btn-sm" aria-label="Refresh detected agents" disabled={saving || loading} onClick={load}><RefreshIcon busy={loading} />Refresh</button></div>
+    <div className="settings-page-row"><div><h2>Default agent and permissions</h2><p>Apply to new and resumed sessions. Running agents keep their launch mode.</p></div><button className="btn btn-secondary btn-sm" aria-label="Refresh detected agents" disabled={saving || loading} onClick={() => load(true)}><RefreshIcon busy={loading} />Refresh</button></div>
     {!value && !error && <p role="status">Loading agent settings…</p>}
     {value && [true, false].map(installed => {
       const agents = catalog?.available.filter(agent => Object.hasOwn(value.providers, agent.id) && agent.installed === installed) ?? [];

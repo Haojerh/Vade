@@ -3,6 +3,36 @@ import assert from 'node:assert/strict';
 import { agyQuota, claudeQuota, codexQuota, LocalConnections, quotaWindow } from './connections.js';
 import type { CommandRunner } from '../integrations/cli.js';
 
+test('integrations returns immediately while GitHub auth is pending and avoids provider credential reads', async () => {
+  let finish!: (result: { exitCode: number; stdout: string; stderr: string }) => void;
+  const service = new LocalConnections(async (_exe, args) => args[0] === '--version' ? { exitCode: 0, stdout: 'gh', stderr: '' } : new Promise(resolve => { finish = resolve; }), {
+    credentials: async () => { throw new Error('Unrelated provider credentials must not delay integrations'); }, resolve: () => null,
+  });
+  const initial = await service.connections('integrations');
+  assert.equal(initial.meta.partial, true);
+  assert.equal(initial.data?.connections.length, 1);
+  assert.equal(initial.data?.connections[0].connected, null);
+  const during = await service.connections('integrations'); assert.equal(during, initial);
+  finish({ exitCode: 0, stderr: '', stdout: JSON.stringify({ hosts: { 'github.com': [{ state: 'success' }] } }) });
+  await new Promise(resolve => setImmediate(resolve));
+  const confirmed = await service.connections('integrations');
+  assert.equal(confirmed.meta.partial, false);
+  assert.equal(confirmed.data?.connections[0].connected, true);
+});
+
+test('provider account detection skips GitHub probes and shares concurrent reads', async () => {
+  let credentials = 0, probes = 0;
+  const service = new LocalConnections(async () => { probes++; throw new Error('Accounts must not wait for GitHub'); }, {
+    credentials: async () => { credentials++; return [null, null]; }, resolve: () => null,
+  });
+  const [first, second] = await Promise.all([service.connections('accounts'), service.connections('accounts')]);
+  assert.equal(credentials, 1);
+  assert.equal(probes, 0);
+  assert.equal(first, second);
+  assert.equal(first.data?.connections.some(connection => connection.id === 'github'), false);
+  assert.equal(first.data?.connections.length, 3);
+});
+
 test('quota parsers preserve zero, distinguish unknown from zero, and use structured disabled pool evidence', () => {
   assert.equal(quotaWindow('unknown', null, null), null);
   assert.equal(quotaWindow('invalid', 101, null), null);

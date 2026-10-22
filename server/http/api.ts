@@ -165,6 +165,7 @@ export function createApiHandler(options: ApiServerOptions = {}) {
 export function createServer(options: ApiServerOptions = {}): http.Server {
   const handler = createApiHandler(options);
   const server = http.createServer(handler);
+  if (options.localRuntime) server.on('listening', () => { const address = server.address(); if (address && typeof address !== 'string') options.localRuntime!.organization.setPort(address.port); });
   if (options.localRuntime) attachTerminalSockets(server, options.localRuntime, options.allowedOrigins);
   return server;
 }

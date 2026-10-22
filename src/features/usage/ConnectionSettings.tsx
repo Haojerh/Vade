@@ -27,10 +27,10 @@ export function ConnectionSettings({ kind }: { kind: 'integrations' | 'accounts'
   busyRef.current.loading = loading || selectionPending;
   const updateAccounts = (provider: AccountProvider, accounts: ProviderAccount[]) => setSection(previous => previous?.data ? { ...previous, data: { ...previous.data, connections: previous.data.connections.map(c => c.id === provider ? { ...c, accounts } : c) } } : previous);
   const request = useRef<AbortController | null>(null);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (force = false) => {
     request.current?.abort(); const abort = new AbortController(); request.current = abort;
     setLoading(true);
-    try { const data = await fetchConnections(abort.signal); if (!abort.signal.aborted) { setSection(data); setError(null); } }
+    try { const data = await fetchConnections(abort.signal, kind === 'accounts' ? 'accounts' : 'integrations', force); if (!abort.signal.aborted) { setSection(data); setError(null); } }
     catch { if (!abort.signal.aborted) setError('Could not detect local connections. Re-check to retry.'); }
     finally { if (!abort.signal.aborted) setLoading(false); }
   }, []);
@@ -40,6 +40,10 @@ export function ConnectionSettings({ kind }: { kind: 'integrations' | 'accounts'
     window.addEventListener('ade:usage-updated', usageUpdated);
     return () => { request.current?.abort(); window.removeEventListener('ade:usage-updated', usageUpdated); };
   }, [refresh, kind]);
+  useEffect(() => {
+    if (!section?.meta.partial || kind !== 'integrations') return;
+    const timer = setTimeout(() => { void refresh(); }, 1000); return () => clearTimeout(timer);
+  }, [section, kind, refresh]);
   const copy = async (id: string, command: string) => {
     try { await navigator.clipboard.writeText(command); setCopied(id); }
     catch { setError('Clipboard unavailable. Select and copy the command below.'); }
@@ -98,8 +102,9 @@ export function ConnectionSettings({ kind }: { kind: 'integrations' | 'accounts'
   const connections = section?.data?.connections.filter(c => kind === 'integrations' ? c.id === 'github' : c.id !== 'github') ?? [];
   const host = section?.data?.host ?? 'local';
   return <div className="connection-settings">
-    <div className="connection-settings-toolbar"><span>Account scope: Local {host}</span><button className="btn btn-secondary btn-sm" disabled={loading || adding} onClick={() => void refresh()}><RefreshIcon busy={loading} size={13} />Re-check</button></div>
+    <div className="connection-settings-toolbar"><span>Account scope: Local {host}</span><button className="btn btn-secondary btn-sm" disabled={loading || adding} onClick={() => void refresh(true)}><RefreshIcon busy={loading} size={13} />Re-check</button></div>
     {error && <p role="alert" className="text-danger">{error}</p>}
+    
     {loading && !section && <p role="status">Detecting local connections…</p>}
     {connections.map(connection => {
       const managed = connection.id === 'codex' || connection.id === 'claude';

@@ -13,7 +13,7 @@ else {
   app.whenReady().then(async () => {
     backend = utilityProcess.fork(path.join(__dirname, '../build/server.cjs'), [], {
       cwd: app.getAppPath(),
-      env: { ...process.env, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.getAppPath(), 'build/ptyHost.cjs') },
+      env: { ...process.env, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.getAppPath(), 'build/ptyHost.cjs'), ADE_ORCHESTRATION_RESOURCES: path.join(app.getAppPath(), 'build/orchestration') },
       stdio: 'pipe', serviceName: 'ADE local runtime',
     });
     backend.stdout?.on('data', data => process.stdout.write(data));

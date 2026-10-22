@@ -145,15 +145,14 @@ export function useNodeDetailsActions({
     try {
       await closeAgentTab(projectId, details.node.id);
       closeAgentTabConfirmation.close();
-      setActionSuccess('Agent tab closed');
-      setTimeout(() => setActionSuccess(null), 3000);
+      handleClose();
       onRefresh();
     } catch (err: any) {
       setCloseTabError(err?.message || 'Failed to close agent tab');
     } finally {
       setIsClosingAgentTab(false);
     }
-  }, [projectId, details?.node, isClosingAgentTab, closeAgentTabConfirmation, onRefresh]);
+  }, [projectId, details?.node, isClosingAgentTab, closeAgentTabConfirmation, handleClose, onRefresh]);
 
   const handleRenameTitle = useCallback(
     async (newTitle: string) => {

@@ -105,7 +105,26 @@ import { AgentChatMetadata } from '../features/workflow/AgentChatMetadata';
 import { useConfirmationState } from '../hooks/useConfirmationState';
 import type { PrerequisitesStatus } from '../../shared/contracts';
 import { useDashboardLayoutPrefs } from '../app/useDashboardLayoutPrefs';
-import { resumeTerminal } from '../api/client';
+import { cachedAgentCatalog, fetchAgentCatalog, resumeTerminal, saveAgentPreferences } from '../api/client';
+
+test('agent catalog shares reads, isolates cancellation and invalidates after preferences change', async () => {
+  const original = globalThis.fetch;
+  let calls = 0, release!: (response: Response) => void;
+  globalThis.fetch = async () => { calls++; return new Promise<Response>(resolve => { release = resolve; }); };
+  const value = { runtime: 'ade', installed: [], available: [], defaultAgentId: null };
+  try {
+    const abort = new AbortController();
+    const cancelled = fetchAgentCatalog(abort.signal, true);
+    const cancelledCheck = assert.rejects(cancelled, /abort/i);
+    const active = fetchAgentCatalog(undefined, true);
+    assert.equal(calls, 1); abort.abort();
+    release(new Response(JSON.stringify(value))); await cancelledCheck; await active;
+    assert.deepEqual(cachedAgentCatalog(), value);
+    await fetchAgentCatalog(); assert.equal(calls, 1);
+    const save = saveAgentPreferences({} as any); release(new Response('{}')); await save;
+    assert.equal(cachedAgentCatalog(), null);
+  } finally { globalThis.fetch = original; }
+});
 
 test('concurrent terminal recovery shares one exact-session request and allows later explicit recovery', async () => {
   const original = globalThis.fetch;

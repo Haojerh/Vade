@@ -1,4 +1,24 @@
 import { readTerminalShell } from '../app/terminalShellPreference';
+import type { OrganizationConfig, WorkflowSetupStatus, WorkflowModel, WorkflowProvider, WorkflowRun } from '../../shared/contracts';
+
+export async function workflowRequest<T>(path: string, value?: object, signal?: AbortSignal): Promise<T> {
+  return handleResponse(await fetch(`/api/workflow/${path}`, { ...(value ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) } : {}), signal }));
+}
+export const fetchOrganization = (signal?: AbortSignal) => workflowRequest<OrganizationConfig>('config', undefined, signal);
+export const saveOrganization = (config: OrganizationConfig) => workflowRequest<OrganizationConfig>('config', config);
+export const fetchWorkflowSetup = (signal?: AbortSignal) => workflowRequest<WorkflowSetupStatus>('setup', undefined, signal);
+export const fetchWorkflowModels = (provider: WorkflowProvider, signal?: AbortSignal) => workflowRequest<WorkflowModel[]>(`models?provider=${encodeURIComponent(provider)}`, undefined, signal);
+export const fetchWorkflowRuns = (signal?: AbortSignal) => workflowRequest<WorkflowRun[]>('runs', undefined, signal);
+export const cancelWorkflowRun = (id: string) => workflowRequest<{ ok: boolean }>(`runs/${encodeURIComponent(id)}/cancel`, {});
+export async function systemRequest<T>(path: 'computer-awake' | 'resources/details' | 'ports' | `ports/${string}/stop`, value?: object, signal?: AbortSignal): Promise<T> {
+  return handleResponse(await fetch(`/api/${path}`, { signal, ...(value ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) } : {}) }));
+}
+export async function projectShortcutsRequest<T>(projectId: string, shortcuts?: import('../../shared/contracts').ProjectShortcut[], signal?: AbortSignal): Promise<T> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/shortcuts`, { signal, ...(shortcuts ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ shortcuts }) } : {}) }));
+}
+export async function runProjectShortcutRequest(projectId: string, id: string, worktreeId: string): Promise<import('../../shared/contracts').RunProjectShortcutResponse> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/shortcuts/${encodeURIComponent(id)}/run`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ worktreeId }) }));
+}
 import type { AgentHistoryPage, ResumeHistoryRequest } from '../../shared/contracts';
 
 export async function fetchAgentHistory(query: { scope: string; projectId?: string; worktreeId?: string; search?: string; offset?: number; refresh?: boolean }, signal?: AbortSignal): Promise<AgentHistoryPage> {
@@ -17,7 +37,9 @@ export async function fetchAgentPreferences(signal?: AbortSignal): Promise<Agent
   return handleResponse(await fetch('/api/agents/settings', { signal }));
 }
 export async function saveAgentPreferences(value: AgentPreferences, signal?: AbortSignal): Promise<AgentPreferences> {
-  return handleResponse(await fetch('/api/agents/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value), signal }));
+  const next = await handleResponse<AgentPreferences>(await fetch('/api/agents/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value), signal }));
+  catalogGeneration++; catalogCache = null; catalogPending = null;
+  return next;
 }
 export async function fetchAgentInteraction(projectId: string, nodeId: string, signal?: AbortSignal): Promise<Section<AgentInteraction>> {
   return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/interaction`, { signal }));
@@ -49,8 +71,8 @@ import type {
   CommitGraphData,
 } from '../../shared/contracts';
 
-export async function fetchConnections(signal?: AbortSignal): Promise<Section<import('../../shared/contracts').LocalConnectionsData>> {
-  return handleResponse(await fetch('/api/connections', { signal }));
+export async function fetchConnections(signal?: AbortSignal, scope: 'all' | 'accounts' | 'integrations' = 'all', force = false): Promise<Section<import('../../shared/contracts').LocalConnectionsData>> {
+  return handleResponse(await fetch(`/api/connections?scope=${scope}${force ? '&refresh=1' : ''}`, { signal }));
 }
 export async function addProviderAccount(provider: import('../../shared/contracts').AccountProvider, request: import('../../shared/contracts').AddProviderAccountRequest, signal?: AbortSignal): Promise<import('../../shared/contracts').ProviderAccount[]> {
   return handleResponse(await fetch(`/api/provider-accounts/${provider}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal }));
@@ -188,7 +210,21 @@ export async function fetchSnapshot(
     headers: { Accept: 'application/json' },
     signal,
   });
-  return handleResponse<DashboardSnapshot>(res);
+  return withoutClosedTabs(await handleResponse<DashboardSnapshot>(res));
+}
+
+const closedTabs = new Map<string, true>();
+export function markTabClosed(projectId: string, nodeId: string): void {
+  closedTabs.set(`${projectId}:${nodeId}`, true);
+  if (closedTabs.size > 2000) closedTabs.delete(closedTabs.keys().next().value!);
+  if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('ade:session-closed', { detail: { projectId, nodeId } }));
+}
+export function withoutClosedTabs(snapshot: DashboardSnapshot): DashboardSnapshot {
+  if (!snapshot.graph.data || !closedTabs.size) return snapshot;
+  const nodes = snapshot.graph.data.nodes.filter(node => !closedTabs.has(`${snapshot.projectId}:${node.id}`));
+  if (nodes.length === snapshot.graph.data.nodes.length) return snapshot;
+  const ids = new Set(nodes.map(node => node.id));
+  return { ...snapshot, graph: { ...snapshot.graph, data: { ...snapshot.graph.data, nodes, edges: snapshot.graph.data.edges.filter(edge => ids.has(edge.source) && ids.has(edge.target)) } } };
 }
 
 export async function fetchNodeDetails(
@@ -297,7 +333,7 @@ export function subscribeProjectEvents(
   const snapshotHandler = (e: MessageEvent) => {
     try {
       const snap = JSON.parse(e.data) as DashboardSnapshot;
-      onSnapshot(snap);
+      onSnapshot(withoutClosedTabs(snap));
     } catch (err) {
       console.error('Failed to parse snapshot SSE event:', err);
     }
@@ -364,7 +400,11 @@ export async function closeAgentTab(
       signal,
     },
   );
-  return handleResponse<{ ok: boolean; message?: string }>(res);
+  const result = await handleResponse<{ ok: boolean; message?: string }>(res);
+  if (result.ok) {
+    markTabClosed(projectId, nodeId);
+  }
+  return result;
 }
 
 export async function deleteWorktree(
@@ -428,12 +468,22 @@ export async function createWorktreeAgent(
   return handleResponse<CreateAgentResponse>(res);
 }
 
-export async function fetchAgentCatalog(signal?: AbortSignal): Promise<AgentCatalogResponse> {
-  const res = await fetch('/api/agents/catalog', {
-    headers: { Accept: 'application/json' },
-    signal,
-  });
-  return handleResponse<AgentCatalogResponse>(res);
+let catalogCache: { value: AgentCatalogResponse; expires: number } | null = null;
+let catalogPending: Promise<AgentCatalogResponse> | null = null;
+let catalogGeneration = 0;
+export function cachedAgentCatalog(): AgentCatalogResponse | null { return catalogCache && Date.now() < catalogCache.expires ? catalogCache.value : null; }
+export async function fetchAgentCatalog(signal?: AbortSignal, force = false): Promise<AgentCatalogResponse> {
+  signal?.throwIfAborted();
+  const cached = !force && cachedAgentCatalog(); if (cached) return cached;
+  if (!catalogPending) {
+    const generation = catalogGeneration;
+    const pending = fetch('/api/agents/catalog', { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+      .then(handleResponse<AgentCatalogResponse>).then(value => { if (generation === catalogGeneration) catalogCache = { value, expires: Date.now() + 15000 }; return value; })
+      .finally(() => { if (catalogPending === pending) catalogPending = null; });
+    catalogPending = pending;
+  }
+  // Callers cancel their own subscription, without cancelling another picker's shared read.
+  const result = await catalogPending; signal?.throwIfAborted(); return result;
 }
 
 export async function createProjectWorktree(projectId: string, body: CreateWorktreeRequest): Promise<CreateWorktreeResponse> {

@@ -20,6 +20,7 @@ export interface SessionRecord {
   bindingToken?: string;
   statusToken?: string;
   shell?: TerminalShell;
+  workflowLaunch?: { model: string | null; effort: string | null };
 }
 
 export function adeDataDirectory(): string {
@@ -38,6 +39,7 @@ export class AdeStore {
       CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS titles (id TEXT PRIMARY KEY, title TEXT NOT NULL);`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS workflow_runs (id TEXT PRIMARY KEY, updated_at TEXT NOT NULL, data TEXT NOT NULL);`);
     this.db.exec(`CREATE TABLE IF NOT EXISTS provider_accounts (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS provider_account_selection (provider TEXT PRIMARY KEY, account_id TEXT NOT NULL);`);
   }
@@ -72,12 +74,14 @@ export class AdeStore {
 
   deleteProject(projectId: string): void {
     this.project(projectId);
+    if (this.db.prepare("SELECT id FROM workflow_runs WHERE json_extract(data, '$.projectId') = ? AND json_extract(data, '$.state') NOT IN ('completed','failed','cancelled') LIMIT 1").get(projectId)) throw new CliError('INVALID_ARGUMENT', 'Finish or cancel this project’s workflows before deleting it');
     if (this.sessions(projectId).some(session => !session.closed)) throw new CliError('INVALID_ARGUMENT', 'Close this project’s agent tabs before deleting the project');
     this.db.exec('BEGIN');
     try {
       this.db.prepare('DELETE FROM titles WHERE id IN (SELECT id FROM sessions WHERE project_id = ?)').run(projectId);
       this.db.prepare('DELETE FROM sessions WHERE project_id = ?').run(projectId);
       this.db.prepare("DELETE FROM turn_results WHERE json_extract(data, '$.projectId') = ?").run(projectId);
+      this.db.prepare("DELETE FROM workflow_runs WHERE json_extract(data, '$.projectId') = ?").run(projectId);
       this.db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }

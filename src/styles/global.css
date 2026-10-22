@@ -9,5 +9,6 @@
 @import './modals.css';
 @import './standalone.css';
 @import './settings.css';
+@import '../features/organization/organization.css';
 @import './usage.css';
 @import '@xterm/xterm/css/xterm.css';

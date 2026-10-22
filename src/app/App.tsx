@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { useDashboard } from './useDashboard';
 import { useDashboardLayoutPrefs } from './useDashboardLayoutPrefs';
@@ -76,27 +76,6 @@ export const App: React.FC = () => {
   } = useDashboard();
 
   const [rightSection, setRightSection] = useState<'source' | 'agents'>(() => { try { return localStorage.getItem('vade:right-section') === 'agents' ? 'agents' : 'source'; } catch { return 'source'; } });
-  const rightTabsRef = useRef<HTMLElement>(null);
-  const [rightTabLine, setRightTabLine] = useState({ left: 0, width: 0 });
-  useLayoutEffect(() => {
-    const bar = rightTabsRef.current;
-    if (!bar) return;
-    const measure = () => {
-      const tab = bar.querySelector<HTMLButtonElement>('[aria-selected="true"]');
-      if (!tab) return;
-      const style = getComputedStyle(tab);
-      const paddingLeft = parseFloat(style.paddingLeft);
-      const paddingRight = parseFloat(style.paddingRight);
-      const left = tab.offsetLeft + tab.clientLeft + paddingLeft;
-      const width = Math.max(0, tab.clientWidth - paddingLeft - paddingRight);
-      setRightTabLine((current) => current.left === left && current.width === width ? current : { left, width });
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(bar);
-    bar.querySelectorAll('button').forEach((tab) => observer.observe(tab));
-    return () => observer.disconnect();
-  }, [rightSection]);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [historyDrag, setHistoryDrag] = useState<HistoryDrag | null>(null);
   const historyProject = useRef(selectedProjectId); historyProject.current = selectedProjectId;
@@ -451,15 +430,7 @@ export const App: React.FC = () => {
         ariaLabel="Source Control and Agents Sidebar"
       >
         <div className="right-tools">
-          <nav ref={rightTabsRef} className="right-tool-tabs github-tabs-nav" data-section={rightSection} role="tablist" aria-label="Right sidebar sections">
-            <span
-              className="github-tab-indicator"
-              aria-hidden="true"
-              style={{
-                transform: `translateX(${rightTabLine.left}px) scaleX(${rightTabLine.width})`,
-                opacity: rightTabLine.width ? 1 : 0,
-              }}
-            />
+          <nav className="right-tool-tabs github-tabs-nav" data-section={rightSection} role="tablist" aria-label="Right sidebar sections">
             {(['source', 'agents'] as const).map(section => <button key={section} className={`tab-btn ${rightSection === section ? 'active' : ''}`} role="tab" aria-label={section === 'source' ? 'Source Control' : 'Agents'} title={section === 'source' ? 'Source Control' : 'Agents'} aria-selected={rightSection === section} onClick={() => { setRightSection(section); try { localStorage.setItem('vade:right-section', section); } catch {} }}><Icon name={section === 'source' ? 'git-branch' : 'message-square'} size={15} /></button>)}
             <button type="button" className="btn-icon right-tool-collapse" aria-label="Collapse tools sidebar" title="Collapse tools sidebar" onClick={() => handleToggleRight(false)}><Icon name="chevrons-right" size={14} /></button>
           </nav>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import type { DashboardSnapshot } from '../../shared/contracts';
-import { fetchSnapshot, subscribeProjectEvents } from '../api/client';
+import { fetchSnapshot, subscribeProjectEvents, withoutClosedTabs } from '../api/client';
 
 export interface UseSnapshotSubscriptionProps {
   selectedProjectId: string | null;
@@ -41,6 +41,17 @@ export function useSnapshotSubscription({
   // Stable callback ref
   const onSnapshotArrivedRef = useRef(onSnapshotArrived);
   onSnapshotArrivedRef.current = onSnapshotArrived;
+  const snapshotRef = useRef(snapshot); snapshotRef.current = snapshot;
+  useEffect(() => {
+    const closed = (event: Event) => {
+      const detail = (event as CustomEvent<{ projectId: string }>).detail, current = snapshotRef.current;
+      if (!current || detail?.projectId !== current.projectId) return;
+      const next = withoutClosedTabs(current); snapshotRef.current = next;
+      setSnapshot(next); onSnapshotArrivedRef.current(next);
+    };
+    window.addEventListener('ade:session-closed', closed);
+    return () => window.removeEventListener('ade:session-closed', closed);
+  }, []);
 
   // Staleness watchdog (marks stale after 15s without successful observation)
   useEffect(() => {

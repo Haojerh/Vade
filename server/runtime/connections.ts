@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { LocalConnection, LocalConnectionsData, ProviderUsage, Section, UsageData, UsageWindow } from '../../shared/contracts.js';
 import { GH_PATH, type CommandRunner } from '../integrations/cli.js';
-import { resolveAgent } from './sessions.js';
+import { executableOnPath, resolveAgent } from './sessions.js';
 import { hasCredential, ProviderAccounts, readCredentialJson } from './providerAccounts.js';
 
 // Provider endpoint/response contracts checked against stablyai/orca's MIT-licensed
@@ -70,9 +70,8 @@ export class LocalConnections {
   private cached: Section<UsageData> | null = null;
   private expires = 0;
   private pending?: Promise<Section<UsageData>>;
-  private connectionCache?: Section<LocalConnectionsData>;
-  private connectionExpires = 0;
-  private connectionPending?: Promise<Section<LocalConnectionsData>>;
+  private connectionCache = new Map<string, { section: Section<LocalConnectionsData>; expires: number }>();
+  private connectionPending = new Map<string, Promise<Section<LocalConnectionsData>>>();
   constructor(private runner: CommandRunner, private options: {
     credentials?: () => Promise<[any, any]>;
     request?: typeof requestUsage;
@@ -83,7 +82,7 @@ export class LocalConnections {
 
   invalidate(): void {
     this.revision++; this.cached = null; this.expires = 0; this.pending = undefined;
-    this.connectionCache = undefined; this.connectionExpires = 0; this.connectionPending = undefined;
+    this.connectionCache.clear(); this.connectionPending.clear();
   }
   private syncSelection(): void {
     const key = this.options.accounts?.selectionKey() ?? 'system';
@@ -101,18 +100,29 @@ export class LocalConnections {
     ]);
   }
 
-  connections(): Promise<Section<LocalConnectionsData>> {
+  connections(scope: 'all' | 'accounts' | 'integrations' = 'all', force = false): Promise<Section<LocalConnectionsData>> {
     this.syncSelection();
-    if (this.connectionPending) return this.connectionPending;
-    if (this.connectionCache && this.now() < this.connectionExpires) return Promise.resolve(this.connectionCache);
-    const pending = this.detectConnections(this.revision).finally(() => { if (this.connectionPending === pending) this.connectionPending = undefined; });
-    return this.connectionPending = pending;
+    if (scope === 'integrations') {
+      const cached = this.connectionCache.get(scope);
+      if (cached && (this.connectionPending.has(scope) || (!force && this.now() < cached.expires))) return Promise.resolve(cached.section);
+      const section: Section<LocalConnectionsData> = { data: cached?.section.data ?? { host: process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux', connections: [{ ...definitions[0], installed: Boolean(executableOnPath('gh')), connected: null, message: '' }] }, meta: { ...this.meta('ready'), partial: true, stale: Boolean(cached) } };
+      this.connectionCache.set(scope, { section, expires: 0 });
+      const pending = this.detectConnections(this.revision, scope).catch(() => {
+        this.connectionCache.set(scope, { section: { ...section, meta: { ...this.meta('unavailable'), partial: false, issue: { code: 'RUNTIME_UNAVAILABLE', message: 'GitHub sign-in check failed. Re-check to retry.', retryable: true } } }, expires: this.now() + 3000 });
+        return section;
+      }).finally(() => { if (this.connectionPending.get(scope) === pending) this.connectionPending.delete(scope); });
+      this.connectionPending.set(scope, pending); return Promise.resolve(section);
+    }
+    const previous = this.connectionPending.get(scope); if (previous) return previous;
+    const cached = this.connectionCache.get(scope); if (cached && this.now() < cached.expires) return Promise.resolve(cached.section);
+    const pending = this.detectConnections(this.revision, scope).finally(() => { if (this.connectionPending.get(scope) === pending) this.connectionPending.delete(scope); });
+    this.connectionPending.set(scope, pending); return pending;
   }
 
-  private async detectConnections(revision: number): Promise<Section<LocalConnectionsData>> {
-    const [codex, claude] = await this.credentials();
+  private async detectConnections(revision: number, scope: 'all' | 'accounts' | 'integrations'): Promise<Section<LocalConnectionsData>> {
+    const [codex, claude] = scope === 'integrations' ? [null, null] : await this.credentials();
     let githubInstalled = false, githubConnected = false;
-    try {
+    if (scope !== 'accounts') try {
       const result = await this.runner(GH_PATH, ['--version'], { timeoutMs: 5000, maxStdout: 4096, maxStderr: 1024 });
       githubInstalled = result.exitCode === 0;
       if (githubInstalled) {
@@ -121,7 +131,7 @@ export class LocalConnections {
         githubConnected = Array.isArray(entries) && entries.some(entry => entry.state === 'success');
       }
     } catch { /* Leave detection explicit. */ }
-    const connections = await Promise.all(definitions.map(async def => {
+    const connections = await Promise.all(definitions.filter(def => scope === 'all' || (scope === 'integrations' ? def.id === 'github' : def.id !== 'github')).map(async def => {
       const installed = def.id === 'github' ? githubInstalled : Boolean(this.resolve(def.id));
       const connected = def.id === 'github' ? githubConnected : def.id === 'codex' ? hasCredential('codex', codex, !this.options.accounts || this.options.accounts.selected('codex') === 'system')
         : def.id === 'claude' ? hasCredential('claude', claude)
@@ -131,7 +141,7 @@ export class LocalConnections {
         : def.id === 'antigravity' ? 'Open agy and complete its native sign-in, then re-check usage.' : 'Sign in with the native CLI on this host, then re-check.' };
     }));
     const result: Section<LocalConnectionsData> = { data: { host: process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux', connections }, meta: this.meta('ready') };
-    if (revision === this.revision) { this.connectionCache = result; this.connectionExpires = this.now() + 3000; }
+    if (revision === this.revision) { this.connectionCache.set(scope, { section: result, expires: this.now() + (scope === 'integrations' ? 30000 : 3000) }); }
     return result;
   }
 
@@ -191,7 +201,7 @@ export class LocalConnections {
     const result: Section<UsageData> = { data: { providers }, meta: { ...this.meta(hasData ? 'ready' : 'unavailable'), partial: providers.some(p => p.meta.availability !== 'ready'), stale: providers.some(p => p.meta.stale) } };
     if (revision === this.revision) {
       this.cached = result; this.expires = this.now() + (hasData ? 60000 : 10000);
-      this.connectionCache = undefined; this.connectionExpires = 0;
+      this.connectionCache.clear();
     }
     return result;
   }

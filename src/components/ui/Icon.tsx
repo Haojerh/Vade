@@ -1,6 +1,7 @@
 import React from 'react';
 
 export type IconName =
+  | 'users' | 'workflow' | 'download' | 'key' | 'puzzle' | 'play' | 'coffee' | 'plug' | 'copy'
   | 'chevron-down'
   | 'chevron-up'
   | 'chevron-left'
@@ -61,6 +62,19 @@ export const Icon: React.FC<IconProps> = ({
 }) => {
   const renderPaths = () => {
     switch (name) {
+      case 'copy':
+        return <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>;
+      case 'coffee':
+        return <><path d="M4 8h12v8a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4ZM16 9h2a3 3 0 1 1 0 6h-2M6 2v3M10 2v3M14 2v3M2 22h18" /></>;
+      case 'plug':
+        return <path d="M8 2v6M16 2v6M6 8h12v4a6 6 0 0 1-12 0ZM12 18v4" />;
+      case 'play':
+        return <path d="m8 5 11 7-11 7Z" />;
+      case 'users': return <><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M22 21v-2a4 4 0 0 0-3-3.87M16 3a4 4 0 0 1 0 8" /><circle cx="9" cy="7" r="4" /></>;
+      case 'workflow': return <><rect x="3" y="3" width="6" height="6" rx="1.5" /><rect x="15" y="15" width="6" height="6" rx="1.5" /><path d="M6 9v5a4 4 0 0 0 4 4h5M9 6h5a4 4 0 0 1 4 4v5" /></>;
+      case 'download': return <><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M12 3v12M7 10l5 5 5-5" /></>;
+      case 'key': return <><circle cx="8" cy="8" r="5" /><path d="m12 12 9 9m-3-3 3-3m-6 0 3-3" /></>;
+      case 'puzzle': return <path d="M8 3H4a1 1 0 0 0-1 1v4a3 3 0 1 1 0 6v6a1 1 0 0 0 1 1h5a3 3 0 1 1 6 0h5a1 1 0 0 0 1-1v-5a3 3 0 1 1 0-6V4a1 1 0 0 0-1-1h-5a3 3 0 1 1-6 0Z" />;
       case 'memory':
         return <><rect x="3" y="5" width="18" height="12" rx="2" /><path d="M7 17v3M11 17v3M15 17v3M19 17v3M7 9h3v4H7zM14 9h3v4h-3z" /></>;
       case 'globe':

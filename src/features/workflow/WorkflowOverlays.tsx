@@ -88,13 +88,14 @@ export function useWorkflowOverlays({
     try {
       await closeAgentTab(projectId, node.id);
       closeAgentTabConfirmation.close();
+      onRefresh?.();
       scheduleUpdate();
     } catch (err: any) {
       setCloseTabError(err.message || 'Failed to close agent tab');
     } finally {
       setIsClosingAgentTab(false);
     }
-  }, [projectId, closeAgentTabConfirmation, scheduleUpdate]);
+  }, [projectId, closeAgentTabConfirmation, scheduleUpdate, onRefresh]);
 
   const handleConfirmRename = useCallback(
     async (newTitle: string) => {

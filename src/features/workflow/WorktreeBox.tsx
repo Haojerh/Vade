@@ -102,7 +102,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
       aria-label={`Worktree container: ${wt.label}`}
       onDragOverCapture={e => {
         if (!onResumeHistory || !e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) return;
-        e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setSessionHover(true);
+        e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = historyDrag?.id.startsWith('shortcut:') ? 'copy' : 'move'; setSessionHover(true);
         if (historyDrag && sessionPreview?.id !== historyDrag.id) setSessionPreview(historyDrag);
         const preview = e.currentTarget.querySelector('.worktree-drop-preview-slot')?.getBoundingClientRect();
         if (sessionPlacement && preview && e.clientY >= preview.top && e.clientY <= preview.bottom) return;
@@ -117,7 +117,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
         if (!onResumeHistory || !e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) return;
         e.preventDefault(); e.stopPropagation(); setSessionHover(false);
         const id = e.dataTransfer.getData(SESSION_DRAG_TYPE);
-        if (sessionBusy || !/^[a-f0-9]{40}$/.test(id)) return;
+        if (sessionBusy || (!/^[a-f0-9]{40}$/.test(id) && !/^shortcut:[a-zA-Z0-9_-]{1,80}$/.test(id))) return;
         setSessionBusy(true); setSessionError('');
         void onResumeHistory(id, wt.id, sessionPlacement ?? undefined).catch(error => setSessionError(error.message)).finally(() => { setSessionBusy(false); setSessionPlacement(null); });
       }}
