@@ -48,8 +48,8 @@
   .toolbar-title-group { width: 100%; gap: 4px; }
   .graph-title { white-space: nowrap; }
   .graph-toolbar-actions { flex-wrap: wrap; gap: 8px; width: 100%; }
-  .graph-toolbar-actions > .btn { flex: 0 0 auto; white-space: nowrap; min-height: 30px; }
-  .graph-legend { gap: 10px; margin-left: auto; flex-wrap: wrap; font-size: 10px; }
+  .graph-toolbar-actions > .btn { flex: 0 0 auto; white-space: nowrap; }
+  .graph-legend { gap: 10px; margin-right: auto; flex-wrap: wrap; font-size: 10px; }
 }
 .btn-reset-layout {
   display: inline-flex;
@@ -972,3 +972,20 @@
 }
 @keyframes tool-event-fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes tool-event-fade-out { from { opacity: 1; } to { opacity: 0; } }
+.agent-interaction { padding: 16px; border: 1px solid var(--border-main); border-radius: 8px; background: var(--surface-2); margin-bottom: 12px; }
+.agent-interaction > strong { color: var(--text-main); }
+.agent-interaction p { margin: 8px 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }
+.agent-interaction-detail { padding: 10px; margin-bottom: 12px; background: var(--surface-1); border-radius: 6px; max-height: 180px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.agent-interaction-options { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.agent-interaction-options button { white-space: normal; text-align: left; }
+.agent-interaction form { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px; }
+.agent-interaction label { display: grid; gap: 6px; flex: 1; min-width: 160px; }
+.agent-interaction input { color: var(--text-main); background: var(--surface-1); padding: 8px; border: 1px solid var(--border-strong); border-radius: 6px; }
+/* Wrap against the actual center-column width, including when both sidebars are open. */
+.graph-toolbar { flex-wrap: wrap; gap: 12px; padding: 12px 20px; }
+.toolbar-title-group { flex: 0 0 auto; }
+.graph-title { white-space: nowrap; }
+.graph-toolbar-actions { flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: wrap; gap: 8px; }
+.graph-toolbar-actions > .btn { flex-shrink: 0; white-space: nowrap; }
+.graph-legend { flex-wrap: wrap; gap: 10px; }
+.legend-item { white-space: nowrap; }

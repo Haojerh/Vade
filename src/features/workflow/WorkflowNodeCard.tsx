@@ -98,15 +98,17 @@ export const NodeChatExtension: React.FC<NodeChatExtensionProps> = ({
 };
 
 export interface WorktreeDropPreviewSlotProps {
-  draggedNode: Node | null | undefined;
-  targetNode: Node;
+  draggedNode: Pick<Node, 'agentType' | 'label'> | null | undefined;
+  targetNode?: Pick<Node, 'label'>;
   position: 'before' | 'after';
+  pending?: boolean;
 }
 
 export const WorktreeDropPreviewSlot: React.FC<WorktreeDropPreviewSlotProps> = ({
   draggedNode,
   targetNode,
   position,
+  pending = false,
 }) => {
   return (
     <div className="worktree-drop-preview-slot" aria-hidden="true">
@@ -119,11 +121,11 @@ export const WorktreeDropPreviewSlot: React.FC<WorktreeDropPreviewSlotProps> = (
           </div>
           <span className="node-badge-state preview-pill">
             <Icon name={position === 'before' ? 'arrow-up' : 'arrow-down'} size={10} />
-            <span>Move here</span>
+            <span>{pending ? 'Resuming...' : 'Move here'}</span>
           </span>
         </div>
         <div className="preview-hint-text font-mono text-xs">
-          Drop to position {position} {targetNode.label}
+          {targetNode ? `Drop to position ${position} ${targetNode.label}` : 'Drop to resume in this worktree'}
         </div>
       </div>
     </div>
@@ -156,7 +158,7 @@ export const WorkflowNodeCardBody: React.FC<WorkflowNodeCardBodyProps> = ({
           <span className="agent-label font-semibold">{node.label}</span>
         </div>
         {node.kind !== 'terminal' && <span className={`node-badge-state state-${node.state}`} title={node.agentStatus?.meta.issue?.message ?? (node.agentStatus?.data ? `Observed ${node.agentStatus.data.event}` : undefined)}>
-          {node.state}
+          {node.state === 'waiting' && node.agentStatus?.data?.attention === 'question' ? 'Question' : node.state === 'waiting' && node.agentStatus?.data?.attention === 'approval' ? 'Approval' : node.state}
         </span>}
       </div>
 

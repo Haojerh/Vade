@@ -26,7 +26,10 @@ else {
     try {
       await ready;
       // Electron reports its own main/renderer/GPU/utility processes; agents are separate.
-      const reportMemory = () => backend?.postMessage({ type: 'desktop-memory', bytes: app.getAppMetrics().reduce((total, metric) => total + metric.memory.workingSetSize * 1024, 0) });
+      const reportMemory = () => {
+        const metrics = app.getAppMetrics();
+        backend?.postMessage({ type: 'desktop-memory', bytes: metrics.reduce((total, metric) => total + metric.memory.workingSetSize * 1024, 0), pids: metrics.map(metric => metric.pid) });
+      };
       reportMemory();
       const memoryTimer = setInterval(reportMemory, 5000);
       backend.once('exit', () => clearInterval(memoryTimer));
@@ -34,7 +37,7 @@ else {
         title: 'Vade', show: false, backgroundColor: '#181818',
         ...(process.platform === 'win32' ? {
           titleBarStyle: 'hidden',
-          titleBarOverlay: { color: '#202020', symbolColor: '#d4d4d4', height: 36 },
+          titleBarOverlay: { color: '#202020', symbolColor: '#d4d4d4', height: 35 },
         } : {}),
         webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs') } });
       window.setMenuBarVisibility(false);

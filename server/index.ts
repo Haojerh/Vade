@@ -33,8 +33,8 @@ process.on('SIGINT', handleShutdown);
 process.on('SIGTERM', handleShutdown);
 (process as NodeJS.Process & { parentPort?: { on: (event: string, listener: (event: { data: unknown }) => void) => void } }).parentPort?.on('message', event => {
   if (event.data === 'shutdown') handleShutdown();
-  const message = event.data as { type?: string; bytes?: number } | null;
+  const message = event.data as { type?: string; bytes?: number; pids?: number[] } | null;
   if (message?.type === 'desktop-memory' && typeof message.bytes === 'number' && Number.isFinite(message.bytes) && message.bytes > 0) {
-    runtime.desktopMemory = { bytes: message.bytes, at: Date.now() };
+    runtime.desktopMemory = { bytes: message.bytes, at: Date.now(), pids: Array.isArray(message.pids) && message.pids.length <= 128 && message.pids.every(pid => Number.isInteger(pid) && pid > 0) ? message.pids : undefined };
   }
 });

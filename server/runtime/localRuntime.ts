@@ -8,6 +8,8 @@ import { AdeSessions } from './sessions.js';
 import { AdeConversations } from './conversation.js';
 import { LocalConnections } from './connections.js';
 import { ProviderAccounts } from './providerAccounts.js';
+import { ResourceReader } from './resources.js';
+import { AgentHistory } from './agentHistory.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
   const now = new Date().toISOString();
@@ -21,7 +23,9 @@ export class LocalRuntime {
   readonly conversations = new AdeConversations();
   readonly connectionsService: LocalConnections;
   readonly accounts: ProviderAccounts;
-  desktopMemory: { bytes: number; at: number } | null = null;
+  readonly resources = new ResourceReader();
+  readonly history: AgentHistory;
+  desktopMemory: { bytes: number; at: number; pids?: number[] } | null = null;
   readonly id = crypto.randomUUID();
   connections = 0;
   private lastGood = new Map<string, DashboardSnapshot>();
@@ -29,6 +33,7 @@ export class LocalRuntime {
 
   constructor(readonly store = new AdeStore(), runner: CommandRunner = defaultCommandRunner, connectionsService?: LocalConnections) {
     this.git = new AdeGit(store, runner);
+    this.history = new AgentHistory(store);
     this.accounts = new ProviderAccounts(store, runner);
     this.connectionsService = connectionsService ?? new LocalConnections(runner, { accounts: this.accounts });
     this.sessions = new AdeSessions(store);

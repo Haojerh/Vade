@@ -14,6 +14,7 @@ import { useWorkflowOverlays, WorkflowOverlays } from './WorkflowOverlays';
 import { useLiveGraphActivity } from './useLiveGraphActivity';
 import { ToolActivityOverlay } from './ToolActivityOverlay';
 import { buildCardPrompt, KANBAN_DRAG_TYPE, type KanbanCard } from '../kanban/kanban';
+import type { HistoryDrag } from '../agents/historyDrag';
 
 interface WorkflowGraphProps {
   projectId: string | null;
@@ -28,6 +29,8 @@ interface WorkflowGraphProps {
   toolActivityEnabled?: boolean;
   project?: Project | null;
   onRefresh?: () => void;
+  onResumeHistory?: (id: string, worktreeId: string) => Promise<string>;
+  historyDrag?: HistoryDrag | null;
   onDropKanbanCard?: (cardId: string, node: Node) => KanbanCard | undefined;
   onSendKanbanCard?: (cardId: string, node: Node, message: string, files: File[]) => Promise<{ ok: boolean; message?: string }>;
 }
@@ -94,6 +97,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   toolActivityEnabled = true,
   project,
   onRefresh,
+  onResumeHistory,
+  historyDrag,
   onDropKanbanCard,
   onSendKanbanCard,
 }) => {
@@ -764,6 +769,11 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                     renderChatExtension={renderChatExtension}
                     isValidReorder={isValidReorder}
                     onSelectNode={onSelectNode}
+                    historyDrag={historyDrag}
+                    onResumeHistory={onResumeHistory ? async (id, worktreeId, placement) => {
+                      const nodeId = await onResumeHistory(id, worktreeId);
+                      handleReorderMember(worktreeId, nodeId, placement?.targetId ?? '', placement?.position ?? 'after');
+                    } : undefined}
                     onNodeDragStart={handleNodeDragStart}
                     onOpenAddAgent={(worktree) => overlays.addAgentConfirmation.open(worktree)}
                     onOpenWorktreeContextMenu={(x, y, worktree) =>

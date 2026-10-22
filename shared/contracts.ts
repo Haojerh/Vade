@@ -99,7 +99,8 @@ export interface LocalConnectionsData {
 
 export interface AppResources {
   memoryBytes: number;
-  scope: 'desktop-app' | 'backend';
+  scope: 'desktop-app' | 'backend' | 'desktop-tree' | 'backend-tree';
+  processCount?: number;
   observedAt: ISO;
 }
 
@@ -138,7 +139,22 @@ export interface Node {
   toolActivity?: Section<ToolActivity[]>;
 }
 
-export interface AgentStatus { state: State; source: 'provider-hook' | 'provider-terminal'; event: string }
+export interface AgentStatus { state: State; source: 'provider-hook' | 'provider-terminal'; event: string; attention?: 'question' | 'approval' | 'auth'; toolCall?: { name: string; summary: string } }
+
+export type AgentPermissionMode = 'manual' | 'auto' | 'yolo';
+export interface AgentPreferences {
+  defaultAgent: 'codex' | 'claude' | 'antigravity';
+  providers: Record<'codex' | 'claude' | 'antigravity', { enabled: boolean; mode: AgentPermissionMode }>;
+}
+export interface AgentInteraction {
+  id: string;
+  kind: 'question' | 'approval';
+  question: string;
+  detail?: string;
+  options: { id: string; label: string }[];
+  textOptionId?: string;
+}
+export interface AnswerAgentRequest { promptId: string; optionId: string; text?: string }
 
 /** Observed tool calls, with bounded edit-input excerpts; never tool output or private reasoning. */
 export interface ToolEditPreview {
@@ -449,6 +465,7 @@ export interface AgentCatalogEntry {
   installed: boolean;
   isDefault?: boolean;
   homepageUrl?: string;
+  permissionCommands?: Partial<Record<AgentPermissionMode, string>>;
 }
 
 export interface AgentCatalogResponse {
@@ -466,9 +483,9 @@ export interface InboxItem {
   projectName: string;
   entityId: string;
   title: string;
-  outcome: 'succeeded' | 'failed';
+  outcome: 'succeeded' | 'failed' | 'completed' | 'interrupted';
   at: ISO;
-  source: 'agent' | 'task';
+  source: 'agent' | 'task' | 'turn';
 }
 
 export interface InboxData { items: InboxItem[] }
@@ -487,7 +504,37 @@ export interface LocalFolders {
   limited: boolean;
 }
 export type AdeProvider = 'codex' | 'claude' | 'antigravity' | 'terminal';
+export interface AgentHistorySession {
+  id: string;
+  provider: Exclude<AdeProvider, 'terminal'>;
+  title: string;
+  cwd: string | null;
+  lastMessage: string | null;
+  messageCount: number;
+  limited: boolean;
+  updatedAt: string;
+  model: string | null;
+  projectId: string | null;
+  groupId: string;
+  groupName: string;
+  activeNodeId: string | null;
+  activeProjectId: string | null;
+}
+export interface AgentHistoryPage {
+  sessions: AgentHistorySession[];
+  groups: { id: string; name: string; total: number; projectTotal: number }[];
+  total: number;
+  indexed: number;
+  scannedFiles: number;
+  scannedAt: string;
+  limited: boolean;
+  nextOffset: number | null;
+  warnings: string[];
+}
+export interface ResumeHistoryRequest { sessionId: string; worktreeId: string }
 export interface TerminalPage {
+  cols?: number;
+  rows?: number;
   restartable?: boolean;
   recoverable?: boolean;
   resumable?: boolean;

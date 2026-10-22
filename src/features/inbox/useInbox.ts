@@ -48,8 +48,12 @@ export function useInbox(enabled: boolean) {
       return next;
     });
   }, []);
-  const items = section?.data?.items ?? [];
-  return { section, items, loading, error, refresh, handled, markHandled,
+  const [cleared, setCleared] = useState(() => { try { return readHandled(localStorage.getItem('vade:inbox-cleared:v1')); } catch { return new Set<string>(); } });
+  const clearItems = useCallback((ids: string[]) => {
+    setCleared(current => { const next = new Set([...current, ...ids].slice(-2000)); try { localStorage.setItem('vade:inbox-cleared:v1', JSON.stringify([...next])); } catch { /* Session-only fallback. */ } return next; });
+  }, []);
+  const items = (section?.data?.items ?? []).filter(item => !cleared.has(item.id));
+  return { section, items, loading, error, refresh, handled, markHandled, clearItems,
     unreadCount: items.filter(item => !handled.has(item.id)).length,
     failedProjectIds: failedInboxProjects(items, handled) };
 }

@@ -37,12 +37,13 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
     return null;
   }
 
-  if (prerequisites?.runtime === 'ade') return <div className="prereq-gate-overlay">
-    <div className="prereq-gate-card" role="alert">
-      <h1 className="prereq-gate-title">Vade needs your local tools</h1>
-      <p>Start the Vade backend and make Git available on PATH.</p>
-      {prerequisites.issues?.map(issue => <p key={issue}>{issue}</p>)}
-      <button className="btn btn-primary" onClick={onRecheck} disabled={isChecking}>{isChecking ? 'Checking…' : 'Check again'}</button>
+  if (!prerequisites || prerequisites.runtime === 'ade') return <div className="prereq-gate-overlay">
+    <div className="prereq-gate-card prereq-local-card" role="alert">
+      <div className="prereq-gate-header"><Icon name="terminal" size={24} /><h1 className="prereq-gate-title">Connect to your workspace</h1></div>
+      <p>Vade could not connect to the local backend or a required tool.</p>
+      <div className="prereq-local-help"><strong>Get connected</strong><p>In the desktop app, reopen Vade. For the web app, start the backend with <code>npm start</code> in your Vade folder.</p><p>Make sure Git is installed and available on PATH.</p></div>
+      {prerequisites?.issues?.map(issue => <p className="text-muted text-xs" key={issue}>{issue}</p>)}
+      <div><button className="btn btn-primary" onClick={onRecheck} disabled={isChecking}><RefreshIcon busy={isChecking} />{isChecking ? 'Checking...' : 'Try again'}</button></div>
     </div>
   </div>;
 

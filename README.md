@@ -1,5 +1,27 @@
 # ADE
 
+### Agent session history
+
+The right sidebar switches between Source Control and Agents. Agents indexes local Codex, Claude Code and Antigravity transcripts, with Workspace, Project and All scopes, search, project totals, public message previews/counts, observed models and last-interaction times. Expand a session to resume manually in the selected worktree, or drag a stopped session onto a graph worktree and drop on **Move here**. This reuses its exact provider identity and moves its Vade workspace association; it does not move project files or rewrite transcripts. A session running in another Vade worktree must be stopped first.
+
+Discovery is cached for 30 seconds and bounded to 20,000 directory entries, 2,000 newest transcript files and 64 MiB of new reads per scan. Each transcript reads at most 4 MiB, retaining its beginning and newest end for large files. Truncated counts show +. Project badges show matching / project totals when a scope or search narrows the list. Provider read failures appear as warnings. Only public conversation turns enter previews; tools and thinking are excluded. Antigravity workspace attribution uses exact saved conversation IDs from native history/cache metadata or Vade's owned session records.
+
+APIs: `GET /api/agent-history` accepts bounded scope/projectId/worktreeId/search/offset/refresh queries. `POST /api/projects/:projectId/resume-history` accepts only an opaque indexed sessionId and a discovered worktreeId. The backend revalidates source identity before using fixed provider resume arguments, uses the selected worktree as cwd and refuses duplicate live writers.
+
+### Agent settings, Inbox and attention prompts
+
+Settings → Agents configures the default agent, enabled launchers and per-provider permission mode. Preferences are stored in the local SQLite registry and apply to new/resumed sessions; live processes keep their launch flags. Manual uses provider permission prompts; Codex Auto uses `--approve-for-me`, Claude Code Auto uses `--permission-mode auto`, and Yolo uses their permission-bypass flags. Antigravity supports Manual and Yolo here; Auto is explicitly unavailable. These fixed mappings follow the [Orca TUI permission table](https://github.com/stablyai/orca/blob/main/src/shared/tui-agent-permissions.ts). No client command strings or arbitrary flags are accepted.
+
+Inbox stores up to 200 observed completed, failed and interrupted agent turns across projects, survives restarts, and retains browser-local handled/unread controls. “Turn completed” describes the provider returning a turn result, not task success. Text, tool failures and process exits do not create results, and these turn observations cannot complete Kanban tasks as explicit task successes.
+
+Question and Approval badges distinguish waiting attention. In Chat, recognized numbered single-choice prompts expose their current options; supported Other rows accept free text. Answers go once to the exact owned terminal under the existing input lock, fenced to the current prompt and launch. Stale cards, changed terminal input and duplicate answers are rejected. Approval cards show bounded visible command context. Authentication, multi-select and unrecognized native dialogs keep an explicit Open Terminal fallback. No answer is automatically retried or treated as proof that the agent resumed.
+
+RAM includes backend/desktop processes, owned terminal helpers, agent processes and their descendants. A bounded OS process snapshot sums each PID once, with a five-second cache; browser memory is excluded in web mode. If process enumeration fails, the tooltip explicitly identifies the smaller backend/desktop-only fallback.
+
+Agent preferences save automatically. The settings page groups detected agents separately from agents requiring installation and displays the fixed permission-mode command. Terminal reattachment restores a bounded current-screen checkpoint before streaming new output; clipboard shortcuts use native clipboard text and xterm bracketed paste. Handled Inbox results can be cleared locally.
+
+New standalone APIs: `GET/POST /api/agents/settings`, `GET/POST /api/projects/:projectId/nodes/:nodeId/interaction`, observed-turn `GET /api/inbox`, and process-tree `GET /api/resources`. All preserve loopback origin checks and server-side validation.
+
 Standalone local agent development environment for the browser and Electron desktop. The production entry uses ADE's own runtime; Orca does not need to be installed or running.
 
 ## Standalone v1 increment
@@ -34,7 +56,7 @@ Open **https://127.0.0.1:5173**. In Projects, add an absolute local Git reposito
 
 ### Standalone storage and architecture
 
-Metadata lives at `~/.ade/ade.sqlite`; new checkouts live under `~/.ade/worktrees/<project-id>/`. Set `ADE_DATA_DIR` to override. Web and desktop share storage by default. Session records survive restarts; live processes and bounded scrollback do not. Resume a stopped bound session from its Terminal; closing its tab removes that ADE recovery entry. Closing desktop closes owned terminals. New and resumed terminals skip tool approval prompts: Codex uses `--dangerously-bypass-approvals-and-sandbox` (also disables its command sandbox); Claude Code and Antigravity use `--dangerously-skip-permissions`. Authentication remains required. Already-running terminals retain their launch settings until restarted/resumed. Terminal lifecycle events immediately publish a fresh project snapshot so resumed cards return to live without waiting for the periodic refresh.
+Metadata lives at `~/.ade/ade.sqlite`; new checkouts live under `~/.ade/worktrees/<project-id>/`. Set `ADE_DATA_DIR` to override. Web and desktop share storage by default. Session records survive restarts; live processes and bounded scrollback do not. Resume a stopped bound session from its Terminal; closing its tab removes that ADE recovery entry. Closing desktop closes owned terminals. Permission preferences initially retain the existing Yolo behavior; Settings → Agents changes the fixed launch mapping for new and resumed sessions. Authentication and workspace/hook trust remain native provider requirements. Already-running terminals retain their launch settings until restarted/resumed. Terminal lifecycle events immediately publish a fresh project snapshot so resumed cards return to live without waiting for the periodic refresh.
 
 Codex binding uses fixed local app-server methods (`initialize`, `thread/start`, `thread/name/set`, `thread/read`) without submitting a model turn. ADE saves the returned UUID and starts `codex resume <exact-id>`. Recovery checks the saved thread ID and working directory and refuses duplicate starts. It never uses `--last`, guesses from terminal text, scans other conversations, or accepts a client-supplied thread ID. A Codex installation that cannot establish this binding reports an explicit startup failure.
 

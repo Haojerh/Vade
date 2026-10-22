@@ -30,7 +30,7 @@ export function attachTerminalSockets(server: http.Server, runtime: LocalRuntime
         timer = undefined;
         if (awaiting !== null || ws.readyState !== WebSocket.OPEN) return;
         try {
-          const page = runtime.sessions.page(projectId, nodeId, cursor);
+          const page = runtime.sessions.page(projectId, nodeId, cursor, true);
           if (!page.data && !page.reset && page.live === lastLive && page.resumable === lastResume) return;
           awaiting = page.cursor; cursor = page.cursor; lastLive = page.live; lastResume = page.resumable;
           send({ type: 'output', page });

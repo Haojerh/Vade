@@ -18,7 +18,7 @@ import { SettingsPage } from '../app/SettingsPage';
 import { primaryWindow, remainingTime, usageGroups } from '../features/usage/usagePresentation';
 import { ProviderUsageDetails } from '../features/usage/UsagePanel';
 import type { ProviderUsage } from '../../shared/contracts';
-import { isTerminalReply } from '../features/workflow/terminalInput';
+import { isTerminalReply, isTerminalClipboardShortcut } from '../features/workflow/terminalInput';
 import { ConversationToolCall, compactEditLines } from '../features/workflow/ConversationToolCall';
 import { conversationTimeline } from '../features/workflow/ConversationHistory';
 
@@ -647,4 +647,24 @@ test('Icon component renders arrow-down and arrow-up paths correctly', () => {
 
   const upHtml = renderToStaticMarkup(createElement(Icon, { name: 'arrow-up', size: 12 }));
   assert.ok(upHtml.includes('<polyline points="5 12 12 5 19 12"'), 'arrow-up polyline must render');
+});
+
+
+test('clipboard shortcuts bypass Kitty encoding without stealing Ctrl+C interruption', () => {
+  const key = { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false, key: 'v' };
+  assert.equal(isTerminalClipboardShortcut(key, false), true);
+  assert.equal(isTerminalClipboardShortcut({ ...key, shiftKey: true }, false), true);
+  assert.equal(isTerminalClipboardShortcut({ ...key, key: 'c' }, false), false);
+  assert.equal(isTerminalClipboardShortcut({ ...key, key: 'c' }, true), true);
+  assert.equal(isTerminalClipboardShortcut({ ...key, key: 'Insert', shiftKey: true, ctrlKey: false }, false), true);
+  assert.equal(isTerminalClipboardShortcut({ ...key, key: 'a' }, false), false);
+});
+
+import { AgentHistoryPanel } from '../features/agents/AgentHistoryPanel';
+test('agent history exposes workspace/project/all scopes and an explicit target worktree', () => {
+  const html = renderToStaticMarkup(createElement(AgentHistoryPanel, { projectId: 'project', worktrees: [{ id: 'worktree', label: 'Main checkout', kind: 'worktree' } as any], onResume: async () => {}, onOpen: () => {} }));
+  assert.match(html, /Session scope/);
+  for (const label of ['Workspace', 'Project', 'All', 'Target worktree', 'Search sessions', 'Refresh session history']) assert.ok(html.includes(label));
+  assert.match(html, /Main checkout/);
+  assert.match(html, /Drag a stopped session/);
 });

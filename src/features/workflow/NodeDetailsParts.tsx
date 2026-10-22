@@ -286,7 +286,7 @@ export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
             {node && (
               <div className="modal-status-group">
                 {node.kind !== 'terminal' && <span className={`node-badge-state state-${node.state}`} title={node.agentStatus?.meta.issue?.message ?? (node.agentStatus?.data ? `Observed ${node.agentStatus.data.event}` : undefined)}>
-                  {node.state}
+                  {node.state === 'waiting' && node.agentStatus?.data?.attention === 'question' ? 'Question' : node.state === 'waiting' && node.agentStatus?.data?.attention === 'approval' ? 'Approval' : node.state}
                 </span>}
                 <div className="modal-liveness-tag" title={`Liveness: ${node.liveness}`}>
                   <span className={`badge-liveness-dot dot-${node.liveness}`} />

@@ -1,5 +1,6 @@
 import { KANBAN_DRAG_TYPE } from '../kanban/kanban';
-import React from 'react';
+import React, { useState } from 'react';
+import { SESSION_DRAG_TYPE, type HistoryDrag, type HistoryPlacement } from '../agents/historyDrag';
 import type { Node } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
 import { WorkflowNodeCardBody, WorktreeDropPreviewSlot } from './WorkflowNodeCard';
@@ -27,6 +28,8 @@ export interface WorktreeBoxProps {
     position: 'before' | 'after'
   ) => boolean;
   onSelectNode: (id: string) => void;
+  onResumeHistory?: (id: string, worktreeId: string, placement?: HistoryPlacement) => Promise<void>;
+  historyDrag?: HistoryDrag | null;
   onNodeDragStart: (id: string, e: React.PointerEvent) => void;
   onOpenAddAgent: (worktree: Node) => void;
   onOpenWorktreeContextMenu: (x: number, y: number, worktree: Node) => void;
@@ -64,6 +67,8 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
   renderChatExtension,
   isValidReorder,
   onSelectNode,
+  onResumeHistory,
+  historyDrag,
   onNodeDragStart,
   onOpenAddAgent,
   onOpenWorktreeContextMenu,
@@ -76,6 +81,12 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
   onGitHubDrop,
 }) => {
   const isSelected = wt.id === selectedNodeId;
+  const [sessionHover, setSessionHover] = useState(false);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  const [sessionError, setSessionError] = useState('');
+  const [sessionPlacement, setSessionPlacement] = useState<HistoryPlacement | null>(null);
+  const [sessionPreview, setSessionPreview] = useState<HistoryDrag | null>(null);
+  const sessionNode = { label: sessionPreview?.title ?? 'Saved session', agentType: sessionPreview?.provider ?? null };
 
   return (
     <div
@@ -89,6 +100,27 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
           : undefined
       }
       aria-label={`Worktree container: ${wt.label}`}
+      onDragOverCapture={e => {
+        if (!onResumeHistory || !e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) return;
+        e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'; setSessionHover(true);
+        if (historyDrag && sessionPreview?.id !== historyDrag.id) setSessionPreview(historyDrag);
+        const preview = e.currentTarget.querySelector('.worktree-drop-preview-slot')?.getBoundingClientRect();
+        if (sessionPlacement && preview && e.clientY >= preview.top && e.clientY <= preview.bottom) return;
+        const cards = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[data-agent-member]'));
+        const before = cards.find(card => { const rect = card.getBoundingClientRect(); return e.clientY < rect.top + rect.height / 2; });
+        const target = before ?? cards[cards.length - 1];
+        const next = target ? { targetId: target.dataset.agentMember!, position: before ? 'before' as const : 'after' as const } : null;
+        if (next?.targetId !== sessionPlacement?.targetId || next?.position !== sessionPlacement?.position) setSessionPlacement(next);
+      }}
+      onDragLeaveCapture={e => { if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node)) setSessionHover(false); }}
+      onDropCapture={e => {
+        if (!onResumeHistory || !e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) return;
+        e.preventDefault(); e.stopPropagation(); setSessionHover(false);
+        const id = e.dataTransfer.getData(SESSION_DRAG_TYPE);
+        if (sessionBusy || !/^[a-f0-9]{40}$/.test(id)) return;
+        setSessionBusy(true); setSessionError('');
+        void onResumeHistory(id, wt.id, sessionPlacement ?? undefined).catch(error => setSessionError(error.message)).finally(() => { setSessionBusy(false); setSessionPlacement(null); });
+      }}
       onContextMenu={(e) => {
         if ((e.target as HTMLElement).closest('.agent-card, .node-card-chat-extension, button, input, textarea')) {
           return;
@@ -146,6 +178,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
         </div>
       </div>
 
+      {sessionError && <p className="worktree-session-error" role="alert">{sessionError}</p>}
       {/* Member Agents Vertically Stacked Inside */}
       <div
         className="worktree-agents-stack"
@@ -186,7 +219,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
           }
         }}
       >
-        {members.length === 0 ? (
+        {members.length === 0 && (sessionHover || sessionBusy) ? <WorktreeDropPreviewSlot draggedNode={sessionNode} position="after" pending={sessionBusy} /> : members.length === 0 ? (
           <div className="worktree-empty-agents text-xs text-muted">
             No member agents in this worktree
           </div>
@@ -219,6 +252,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
 
             return (
               <React.Fragment key={ag.id}>
+                {(sessionHover || sessionBusy) && sessionPlacement?.targetId === ag.id && sessionPlacement.position === 'before' && <WorktreeDropPreviewSlot draggedNode={sessionNode} targetNode={ag} position="before" pending={sessionBusy} />}
                 {showPreviewBefore && (
                   <WorktreeDropPreviewSlot
                     key={`drop-preview-before-${ag.id}`}
@@ -230,6 +264,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
 
                 <div
                   role="button"
+                  data-agent-member={ag.id}
                   tabIndex={0}
                   {...previewEvents(ag)}
                   ref={(el) => registerRef(ag.id, el)}
@@ -342,6 +377,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
                     position="after"
                   />
                 )}
+                {(sessionHover || sessionBusy) && sessionPlacement?.targetId === ag.id && sessionPlacement.position === 'after' && <WorktreeDropPreviewSlot draggedNode={sessionNode} targetNode={ag} position="after" pending={sessionBusy} />}
               </React.Fragment>
             );
           })

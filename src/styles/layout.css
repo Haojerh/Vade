@@ -40,6 +40,8 @@
 .sidebar-edge-tab:hover { color: var(--text-main); background: var(--surface-hover); }
 .sidebar-edge-left { left: 0; border-left: 0; border-radius: 0 5px 5px 0; }
 .sidebar-edge-right { right: 0; border-right: 0; border-radius: 5px 0 0 5px; }
+.dashboard-workspace:has(> .sidebar-edge-left) .graph-toolbar { padding-left: 44px; }
+.dashboard-workspace:has(> .sidebar-edge-right) .graph-toolbar { padding-right: 44px; }
 .app-statusbar {
   flex: 0 0 30px;
   display: flex;

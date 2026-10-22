@@ -32,7 +32,7 @@ process.on('message', message => {
         if (process.connected) process.send({ type: 'ended' }, () => process.exit(0));
         else process.exit(0);
       });
-      send({ type: 'ready' });
+      send({ type: 'ready', pid: terminal.pid });
     } else if (message.type === 'stop') shutdown();
     else if (message.type === 'input' && terminal) { terminal.write(message.data); send({ type: 'ack', id: message.id }); }
     else if (message.type === 'resize' && terminal) { terminal.resize(message.cols, message.rows); send({ type: 'ack', id: message.id }); }

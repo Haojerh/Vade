@@ -1,10 +1,14 @@
 import headless from '@xterm/headless';
+import { SerializeAddon } from '@xterm/addon-serialize';
 
 /** A bounded terminal screen, not an ANSI-stripped recording of redraw operations. */
 export class TerminalScreen {
+  private serializer = new SerializeAddon();
+  private parsedCursor = 0;
   private terminal = new headless.Terminal({ cols: 100, rows: 28, scrollback: 100, allowProposedApi: true,
     theme: { foreground: '#ededed', background: '#181818' } });
   constructor(reply: (data: string) => void, parsed: () => void) {
+    this.terminal.loadAddon(this.serializer);
     this.terminal.onData(reply);
     this.terminal.onWriteParsed(parsed);
     // Headless xterm has no renderer color service. Answer the fixed host theme here.
@@ -15,7 +19,12 @@ export class TerminalScreen {
       });
     }
   }
-  write(data: string): void { this.terminal.write(data); }
+  write(data: string): void { this.terminal.write(data, () => { this.parsedCursor += data.length; }); }
+  checkpoint(): { data: string; cursor: number; cols: number; rows: number } | null {
+    if (!this.parsedCursor) return null;
+    const data = this.serializer.serialize({ scrollback: 100 });
+    return data.length <= 524288 ? { data, cursor: this.parsedCursor, cols: this.terminal.cols, rows: this.terminal.rows } : null;
+  }
   resize(cols: number, rows: number): void { this.terminal.resize(cols, rows); }
   text(): string | null {
     const buffer = this.terminal.buffer.active;

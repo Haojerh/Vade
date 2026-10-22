@@ -1,5 +1,6 @@
 import type http from 'node:http';
-import type { CreateWorktreeRequest, GitHubQuery, RegisterProjectRequest, SendMessageRequest, TerminalShell } from '../../shared/contracts.js';
+import type { AgentPreferences, AnswerAgentRequest, CreateWorktreeRequest, GitHubQuery, InboxItem, RegisterProjectRequest, SendMessageRequest, TerminalShell } from '../../shared/contracts.js';
+import { permissionArgs, readAgentPreferences, saveAgentPreferences } from '../runtime/agentPreferences.js';
 import { CliError } from '../integrations/cli.js';
 import { collectGitHubData } from '../integrations/github.js';
 import { LocalRuntime, section } from '../runtime/localRuntime.js';
@@ -32,6 +33,30 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     return value;
   };
   try {
+    if (pathname === '/api/agent-history') {
+      requireMethod('GET'); queryKeys('scope', 'projectId', 'worktreeId', 'search', 'offset', 'refresh');
+      const scope = query.get('scope') ?? 'project';
+      if (!['workspace', 'project', 'all'].includes(scope) || (query.has('refresh') && query.get('refresh') !== '1')) throw new CliError('INVALID_ARGUMENT', 'Invalid history scope or refresh');
+      const projectId = query.get('projectId') ?? undefined;
+      if (scope !== 'all' && !projectId) throw new CliError('INVALID_ARGUMENT', 'Select a project for this history scope');
+      const project = projectId ? runtime.store.project(projectId) : null;
+      const trees = project ? await runtime.git.worktrees(project) : [];
+      const workspace = query.get('worktreeId') ? trees.find(tree => tree.id === query.get('worktreeId')) : trees.find(tree => tree.main);
+      if (query.has('worktreeId') && !workspace) throw new CliError('NODE_NOT_FOUND', 'Worktree does not belong to the selected project');
+      const offset = query.get('offset') ?? '0', search = query.get('search') ?? '';
+      if (!/^\d{1,6}$/.test(offset) || Number(offset) > 100000 || search.length > 200) throw new CliError('INVALID_ARGUMENT', 'Invalid history offset or search');
+      await runtime.history.refresh(query.get('refresh') === '1');
+      sendJson(200, runtime.history.list({ scope: scope as 'workspace' | 'project' | 'all', projectId, paths: trees.map(tree => tree.path), workspace: workspace?.path, search, offset: Number(offset) }, (projectId, id) => runtime.sessions.page(projectId, id, Number.MAX_SAFE_INTEGER).live)); return;
+    }
+    const historyResume = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/resume-history$/);
+    if (historyResume) {
+      requireMethod('POST'); queryKeys();
+      const request = await body<{ sessionId: string; worktreeId: string }>(['sessionId', 'worktreeId']);
+      const project = runtime.store.project(historyResume[1]), tree = await runtime.git.requireWorktree(project, text(request.worktreeId, 'worktree ID'));
+      const source = await runtime.history.get(text(request.sessionId, 'history session ID', 40));
+      const record = await runtime.sessions.resumeHistory(project.id, tree.id, tree.path, source);
+      sendJson(200, { nodeId: record.id, projectId: record.projectId }); return;
+    }
     const accountRoute = pathname.match(/^\/api\/provider-accounts\/(codex|claude)(?:\/(select|login|delete))?$/);
     if (accountRoute) {
       queryKeys();
@@ -59,15 +84,40 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       sendJson(200, { runtime: 'ade', git, ready: git, orcaApp: false, orcaAppOpen: false, orcaCli: false, orcaCliSkill: false,
         orchestrationSkill: false, version: 'ADE v1', issues: git ? [] : ['Install Git and make it available on PATH, then retry.'] }); return;
     }
-    if (pathname === '/api/agents/catalog') { requireMethod('GET'); queryKeys(); sendJson(200, agentCatalog()); return; }
+    if (pathname === '/api/agents/settings') {
+      queryKeys();
+      if (method === 'POST') saveAgentPreferences(runtime.store, await body<AgentPreferences>(['defaultAgent', 'providers']));
+      else requireMethod('GET');
+      sendJson(200, readAgentPreferences(runtime.store)); return;
+    }
+    if (pathname === '/api/agents/catalog') {
+      requireMethod('GET'); queryKeys();
+      const catalog = agentCatalog(), preferences = readAgentPreferences(runtime.store);
+      catalog.installed = catalog.installed.filter(agent => agent.id === 'terminal' || preferences.providers[agent.id as keyof typeof preferences.providers]?.enabled);
+      for (const entry of catalog.available) {
+        entry.isDefault = entry.id === preferences.defaultAgent;
+        const modes = permissionArgs[entry.id as keyof typeof permissionArgs];
+        if (modes) entry.permissionCommands = Object.fromEntries(Object.entries(modes).filter(([, args]) => args !== null).map(([mode, args]) => [mode, [entry.command, ...args!].join(' ')]));
+      }
+      catalog.defaultAgentId = catalog.installed.find(agent => agent.id === preferences.defaultAgent)?.id ?? catalog.installed[0]?.id ?? null;
+      sendJson(200, catalog); return;
+    }
     if (pathname === '/api/connections') { requireMethod('GET'); queryKeys(); sendJson(200, await runtime.connectionsService.connections()); return; }
     if (pathname === '/api/usage') { requireMethod('GET'); queryKeys('refresh'); if (query.has('refresh') && query.get('refresh') !== '1') throw new CliError('INVALID_ARGUMENT', 'refresh must be 1'); sendJson(200, await runtime.connectionsService.usage(query.get('refresh') === '1')); return; }
     if (pathname === '/api/resources') {
       requireMethod('GET'); queryKeys();
-      const desktop = runtime.desktopMemory && Date.now() - runtime.desktopMemory.at < 15000 ? runtime.desktopMemory : null;
-      sendJson(200, { memoryBytes: desktop?.bytes ?? process.memoryUsage().rss, scope: desktop ? 'desktop-app' : 'backend', observedAt: new Date(desktop?.at ?? Date.now()).toISOString() }); return;
+      sendJson(200, await runtime.resources.read(runtime.sessions.processRoots(), runtime.desktopMemory)); return;
     }
-    if (pathname === '/api/inbox') { requireMethod('GET'); queryKeys(); sendJson(200, section({ items: [] }, 'unsupported', 'Standalone ADE does not yet collect structured task outcomes.')); return; }
+    if (pathname === '/api/inbox') {
+      requireMethod('GET'); queryKeys();
+      const open = new Map<string, Set<string>>();
+      const items: InboxItem[] = runtime.store.db.prepare('SELECT data FROM turn_results ORDER BY at DESC LIMIT 200').all().map(row => {
+        const item: InboxItem = JSON.parse(String(row.data));
+        if (!open.has(item.projectId)) open.set(item.projectId, new Set(runtime.store.sessions(item.projectId).filter(session => !session.closed).map(session => session.id)));
+        return item.nodeId && !open.get(item.projectId)!.has(item.nodeId) ? { ...item, nodeId: null } : item;
+      });
+      sendJson(200, section({ items }, items.length ? 'ready' : 'empty')); return;
+    }
     const deleteProject = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)$/);
     if (deleteProject && pathname !== '/api/projects/folders') {
       requireMethod('DELETE'); queryKeys();
@@ -86,10 +136,18 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       } else { requireMethod('GET'); sendJson(200, section({ projects: runtime.store.projects() })); }
       return;
     }
-    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(terminal|terminal-input|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|events))?)$/);
+    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(interaction|terminal|terminal-input|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|events))?)$/);
     if (!match) { sendError(404, 'INVALID_ARGUMENT', 'Unknown standalone ADE endpoint'); return; }
     const [, projectId, route, nodeId, action] = match;
     const project = runtime.store.project(projectId);
+    if (action === 'interaction') {
+      queryKeys();
+      if (method === 'POST') {
+        await runtime.sessions.answer(projectId, nodeId!, await body<AnswerAgentRequest>(['promptId', 'optionId', 'text']));
+        sendJson(200, { ok: true });
+      } else { requireMethod('GET'); const prompt = runtime.sessions.interaction(projectId, nodeId!); sendJson(200, section(prompt, prompt ? 'ready' : 'empty')); }
+      return;
+    }
     if (route === 'snapshot') { requireMethod('GET'); queryKeys('runId'); sendJson(200, await runtime.snapshot(projectId)); return; }
     if (route === 'events') {
       requireMethod('GET'); queryKeys('runId');

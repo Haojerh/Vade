@@ -22,6 +22,132 @@ import { LocalConnections } from './connections.js';
 import { DatabaseSync } from 'node:sqlite';
 import { TerminalScreen } from './terminalScreen.js';
 import { agyConversationSaved } from './agyBinding.js';
+import { permissionArgs, readAgentPreferences, saveAgentPreferences } from './agentPreferences.js';
+import { processTreeMemory, ResourceReader } from './resources.js';
+import { terminalInteraction } from './interaction.js';
+
+test('agent preferences persist fixed modes and reject unsupported Auto and command injection', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vade-preferences-'));
+  let store = new AdeStore(directory);
+  try {
+    const value = readAgentPreferences(store);
+    assert.equal(value.providers.codex.mode, 'yolo');
+    value.providers.codex.mode = 'auto'; value.providers.claude.mode = 'manual';
+    saveAgentPreferences(store, value); store.close(); store = new AdeStore(directory);
+    assert.deepEqual(readAgentPreferences(store), value);
+    assert.deepEqual(permissionArgs.codex.auto, ['--approve-for-me']);
+    assert.deepEqual(permissionArgs.claude.manual, ['--permission-mode', 'default']);
+    assert.throws(() => saveAgentPreferences(store, { ...value, providers: { ...value.providers, antigravity: { enabled: true, mode: 'auto' } } }), /not supported/);
+    assert.throws(() => saveAgentPreferences(store, { ...value, providers: { ...value.providers, codex: { enabled: false, mode: 'auto' } } }), /default agent/);
+    assert.throws(() => saveAgentPreferences(store, { ...value, command: 'arbitrary' } as any), /Invalid agent/);
+  } finally { store.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('resource trees include terminals and agent descendants once and exclude unrelated processes', async () => {
+  assert.deepEqual(processTreeMemory([
+    { pid: 1, parent: 0, bytes: 10 }, { pid: 2, parent: 1, bytes: 20 }, { pid: 3, parent: 2, bytes: 30 }, { pid: 4, parent: 0, bytes: 1000 },
+  ], [1, 2, 1]), { memoryBytes: 60, processCount: 3 });
+  const value = await new ResourceReader().read([], null);
+  assert.ok(value.memoryBytes > 0);
+  assert.ok(['backend-tree', 'backend'].includes(value.scope));
+  if (value.scope === 'backend-tree') assert.ok(value.processCount! >= 1);
+});
+
+test('rendered prompt parsing is bounded, excludes multi-select and distinguishes approvals', () => {
+  assert.equal(terminalInteraction('ordinary output\n1. One\n2. Two', 'codex', 'token'), null);
+  assert.equal(terminalInteraction('Which one?\n1. One\n2. Two\nSpace to select', 'claude', 'token'), null);
+  assert.equal(terminalInteraction('Which one?\n1. One\n2. Two', 'terminal', 'token'), null);
+  const prompt = terminalInteraction('Would you like to run this command?\n$ node --version\n› 1. Yes, proceed\n  2. No, cancel', 'codex', 'token');
+  assert.equal(prompt?.kind, 'approval');
+  assert.equal(prompt?.detail, '$ node --version');
+  assert.equal(prompt?.options[1].id, '2');
+  assert.notEqual(prompt?.id, terminalInteraction('Would you like to run this command?\n$ node --version\n› 1. Yes, proceed\n  2. No, cancel', 'codex', 'new-launch')?.id);
+  assert.equal(terminalInteraction('Would you like to run this command?\n› 1. Yes, proceed\n  2. No, cancel', 'codex', 'token'), null, 'no blind approvals without command context');
+});
+
+test('all agents expose waiting questions, fence Chat answers and persist exact turn Inbox results', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vade-interaction-'));
+  const runtime = new LocalRuntime(new AdeStore(directory));
+  const id = '31234567-1234-1234-1234-123456789abc';
+    const script = String.raw`const fs=require('node:fs');const provider=process.env.ADE_STATUS_PROVIDER,id=process.env.ADE_STATUS_SESSION||'31234567-1234-1234-1234-123456789abc';
+    if(process.env.ADE_BINDING_FILE){fs.mkdirSync(require('node:path').dirname(process.env.ADE_BINDING_FILE),{recursive:true});fs.writeFileSync(process.env.ADE_BINDING_FILE,JSON.stringify({token:process.env.ADE_BINDING_TOKEN,id}));}
+    function status(state,event,attention,toolCall){fs.writeFileSync(process.env.ADE_STATUS_FILE,JSON.stringify({token:process.env.ADE_STATUS_TOKEN,provider,id,state,event,attention,toolCall,at:new Date().toISOString()}));}
+    fs.writeFileSync(process.env.ADE_STATUS_FILE+'.args',JSON.stringify(process.argv.slice(1)));
+    process.stdin.setRawMode?.(true);status('waiting','PreToolUse','question');process.stdout.write('\x1b[2J\x1b[HWhich implementation should I use?\r\n1. Small change\r\n2. Full rewrite\r\n');
+    process.stdin.on('data',data=>{if(data.toString()==='SHOW_APPROVAL'){status('working','PreToolUse',undefined,{name:'run_command',summary:'node --version'});process.stdout.write('\x1b[2J\x1b[HDo you want to proceed?\r\n$ node --version\r\n1. Yes, proceed\r\n2. No, cancel\r\nEnter to confirm, Esc to cancel');}if(data.toString()==='2'){fs.writeFileSync(process.env.ADE_STATUS_FILE+'.answer',data);status('working','PostToolUse');process.stdout.write('\x1b[2J\x1b[HContinuing');setTimeout(()=>status('completed','Stop'),150);}});`;
+  const sessions = new AdeSessions(runtime.store, () => ({ executable: process.execPath, args: ['-e', script, '--'] }), async () => id, () => {}, () => {});
+  Object.defineProperty(runtime, 'sessions', { value: sessions });
+  const server = createServer({ localRuntime: runtime });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const until = async (condition: () => boolean) => { const end = Date.now() + 8000; while (!condition()) { if (Date.now() > end) throw new Error('Interaction fixture timed out'); await new Promise(resolve => setTimeout(resolve, 20)); } };
+  try {
+    const project = runtime.store.register(directory, 'Interactive project', 'folder'), tree = (await runtime.git.worktrees(project))[0];
+    const preferences = readAgentPreferences(runtime.store);
+    preferences.providers.codex.mode = 'auto'; preferences.providers.claude.mode = 'manual'; preferences.providers.antigravity.mode = 'manual';
+    const savePreferences = (value: unknown) => fetch(base + '/api/agents/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+    assert.equal((await savePreferences({ ...preferences, command: 'arbitrary' })).status, 400);
+    assert.equal((await savePreferences(preferences)).status, 200);
+    assert.equal((await (await fetch(base + '/api/agents/settings')).json()).providers.codex.mode, 'auto');
+    saveAgentPreferences(runtime.store, { ...preferences, providers: { ...preferences.providers, claude: { enabled: false, mode: 'manual' } } });
+    await assert.rejects(sessions.launch(project.id, tree.id, tree.path, 'claude'), /disabled/);
+    saveAgentPreferences(runtime.store, preferences);
+    for (const provider of ['codex', 'claude', 'antigravity'] as const) {
+      const record = await sessions.launch(project.id, tree.id, tree.path, provider);
+      await until(() => Boolean(sessions.interaction(project.id, record.id))).catch(error => { throw new Error(`${provider}: ${error.message}; ${JSON.stringify(sessions.status(project.id, record.id))}; ${JSON.stringify(sessions.preview(project.id, record.id))}`); });
+      const prompt = sessions.interaction(project.id, record.id)!;
+      const args = JSON.parse(fs.readFileSync(statusFile(directory, record.id) + '.args', 'utf8'));
+      const expected = permissionArgs[provider][preferences.providers[provider].mode]!;
+      if (expected.length) assert.deepEqual(args.slice(-expected.length), expected);
+      else assert.deepEqual(args, []);
+      assert.equal(prompt.kind, 'question');
+      assert.equal(sessions.status(project.id, record.id).data?.attention, 'question');
+      const url = `${base}/api/projects/${project.id}/nodes/${record.id}/interaction`;
+      const post = (value: unknown) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+      assert.equal((await post({ promptId: 'stale', optionId: '2' })).status, 400);
+      assert.equal((await post({ promptId: prompt.id, optionId: 'exec arbitrary command' })).status, 400);
+      await sessions.input(project.id, record.id, '\x1b[B');
+      assert.equal((await post({ promptId: prompt.id, optionId: '2' })).status, 400, 'terminal input invalidates stale cards');
+      const fresh = sessions.interaction(project.id, record.id)!;
+      assert.equal((await post({ promptId: fresh.id, optionId: '2' })).status, 200);
+      assert.equal((await post({ promptId: fresh.id, optionId: '2' })).status, 400, 'never deliver an answer twice');
+      await until(() => sessions.status(project.id, record.id).data?.state === 'completed');
+      assert.equal(fs.readFileSync(statusFile(directory, record.id) + '.answer', 'utf8'), '2');
+      const inbox = await (await fetch(base + '/api/inbox')).json();
+      const items = inbox.data.items.filter((item: any) => item.nodeId === record.id);
+      assert.equal(items.length, 1); assert.equal(items[0].outcome, 'completed'); assert.equal(items[0].source, 'turn');
+      assert.equal((await (await fetch(base + '/api/inbox')).json()).data.items.length, inbox.data.items.length);
+      const publish = (state: string, event: string) => {
+        const current = sessions.require(project.id, record.id);
+        fs.writeFileSync(statusFile(directory, record.id), JSON.stringify({ token: current.statusToken, provider, id: current.providerThreadId, state, event, at: new Date().toISOString() }));
+        return sessions.status(project.id, record.id);
+      };
+      publish('working', provider === 'antigravity' ? 'PreInvocation' : 'UserPromptSubmit');
+      publish('interrupted', provider === 'codex' ? 'Interrupt' : 'Stop');
+      publish('working', provider === 'antigravity' ? 'PreInvocation' : 'UserPromptSubmit');
+      publish('failed', 'Stop');
+      const results = (await (await fetch(base + '/api/inbox')).json()).data.items.filter((item: any) => item.nodeId === record.id);
+      assert.deepEqual(new Set(results.map((item: any) => item.outcome)), new Set(['completed', 'interrupted', 'failed']));
+      if (provider === 'antigravity') {
+        await sessions.input(project.id, record.id, 'SHOW_APPROVAL');
+        await until(() => sessions.interaction(project.id, record.id)?.kind === 'approval');
+        const approval = sessions.interaction(project.id, record.id)!;
+        assert.equal(approval.detail, 'node --version');
+        assert.equal(sessions.status(project.id, record.id).data?.attention, 'approval');
+        await sessions.answer(project.id, record.id, { promptId: approval.id, optionId: '2' });
+        await until(() => sessions.status(project.id, record.id).data?.state === 'completed');
+      }
+    }
+    assert.equal(runtime.store.db.prepare('SELECT COUNT(*) AS n FROM turn_results').get()?.n, 10);
+    const closed = runtime.store.sessions(project.id).at(-1)!;
+    sessions.closeSession(project.id, closed.id);
+    const archived = (await (await fetch(base + '/api/inbox')).json()).data.items.filter((item: any) => item.entityId === closed.id);
+    assert.ok(archived.length > 0 && archived.every((item: any) => item.nodeId === null), 'archived results remain readable without broken agent links');
+  } finally {
+    runtime.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve()));
+    await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+  }
+});
 
 test('terminal screen resolves redraws and answers queries once without polluting previews', async () => {
   const replies: string[] = []; let parsed = () => {};
@@ -142,7 +268,7 @@ test('Antigravity native composer readiness is separate from unavailable lifecyc
 test('Chat sends text and validated attachments to all three owned terminals with ordered paste and a single submit', async () => {
   for (const provider of ['codex', 'claude', 'antigravity'] as const) {
     const f = fixture(), log = path.join(f.directory, 'input.jsonl');
-    const script = `const fs=require('node:fs');process.stdin.setRawMode(true);process.stdin.on('data',d=>fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(d.toString())+'\\n'));process.stdout.write('READY\\n? for shortcuts');`;
+    const script = `const fs=require('node:fs');process.stdin.setRawMode(true);process.stdin.on('data',d=>{fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(d.toString())+'\\n');if(d.includes('[200~'))process.stdout.write('\\x1b[2J\\x1b[H> Staged prompt');if(d.includes('\\r'))process.stdout.write('\\r\\n?\\x1b[1Cfor shortcuts');});process.stdout.write('READY\\r\\n?\\x1b[1Cfor shortcuts');`;
     const sessions = new AdeSessions(f.runtime.store, () => ({ executable: process.execPath, args: ['-e', script, '--'] }), async () => '11234567-1234-1234-1234-123456789abc', () => {}, () => {});
     Object.defineProperty(f.runtime, 'sessions', { value: sessions });
     let state = 'idle';
@@ -182,6 +308,7 @@ test('Chat sends text and validated attachments to all three owned terminals wit
       assert.equal((await post({ message: '', attachments: [attachments[0]] })).status, 200);
       state = 'working';
       assert.equal((await post({ message: 'follow-up while working' })).status, 200);
+      if (provider === 'antigravity') await until(() => antigravityPromptReady(sessions.preview(project.id, record.id).output ?? ''));
       state = 'unknown';
       assert.equal((await post({ message: 'first prompt before hooks' })).status, provider === 'antigravity' ? 200 : 500);
       state = 'idle';
@@ -346,6 +473,14 @@ test('provider status hooks preserve settings and bind observed events to the ex
       run('claude', event);
       assert.equal(readAgentStatus(directory, record, true).data?.state, state);
     }
+    run('claude', 'PermissionRequest', { tool_name: 'Bash', tool_input: { command: 'node --version', secret: 'must-not-store' } });
+    assert.equal(readAgentStatus(directory, record, true).data?.attention, 'approval');
+    assert.deepEqual(readAgentStatus(directory, record, true).data?.toolCall, { name: 'Bash', summary: 'node --version' });
+    assert.ok(!fs.readFileSync(statusFile(directory, record.id), 'utf8').includes('must-not-store'));
+    run('claude', 'PreToolUse', { tool_name: 'AskUserQuestion' });
+    assert.equal(readAgentStatus(directory, record, true).data?.attention, 'question');
+    run('claude', 'Notification', { notification_type: 'idle_prompt' });
+    assert.equal(readAgentStatus(directory, record, true).data?.attention, undefined, 'idle notifications are not questions');
     run('claude', 'PostToolUse', { tool_result: 'error failed' });
     assert.equal(readAgentStatus(directory, record, true).data?.state, 'working');
     const saved = fs.readFileSync(statusFile(directory, record.id), 'utf8');
@@ -850,7 +985,7 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     assert.equal((await fetch(base + '/api/resources?command=anything')).status, 400);
     assert.equal((await post('/api/connections', {})).status, 405);
     const resources = await (await fetch(base + '/api/resources')).json();
-    assert.equal(resources.scope, 'backend'); assert.ok(resources.memoryBytes > 0);
+    assert.ok(['backend', 'backend-tree'].includes(resources.scope)); assert.ok(resources.memoryBytes > 0);
     assert.equal((await post('/api/provider-accounts/codex', { label: 'bad', command: 'arbitrary' })).status, 400);
     assert.equal((await post('/api/provider-accounts/codex/select', { accountId: '../outside' })).status, 400);
     assert.equal((await fetch(base + '/api/provider-accounts/claude')).status, 200);
@@ -894,4 +1029,23 @@ test('terminal launches pass the chosen fixed shell, persist it for reopen and r
     sessions.closeSession(project.id, record.id);
     await new Promise(resolve => setTimeout(resolve, 500));
   } finally { sessions.close(); f.close(); }
+});
+
+
+test('terminal checkpoints restore an idle alternate-screen TUI and preserve the live output cursor', async () => {
+  let parsed = () => {}; const screen = new TerminalScreen(() => {}, () => parsed());
+  const write = (data: string) => new Promise<void>(resolve => { parsed = resolve; screen.write(data); });
+  let restoredParsed = () => {}; const restored = new TerminalScreen(() => {}, () => restoredParsed());
+  try {
+    const initial = '\x1b[?1049h\x1b[2J\x1b[HAntigravity ready\r\n> ';
+    await write(initial);
+    const checkpoint = screen.checkpoint()!;
+    assert.equal(checkpoint.cursor, initial.length);
+    assert.ok(checkpoint.data.includes('Antigravity ready'));
+    restored.resize(checkpoint.cols, checkpoint.rows);
+    await new Promise<void>(resolve => { restoredParsed = resolve; restored.write(checkpoint.data); });
+    assert.equal(restored.text(), screen.text());
+    await write('hello');
+    assert.equal(screen.checkpoint()!.cursor, initial.length + 5);
+  } finally { screen.dispose(); restored.dispose(); }
 });

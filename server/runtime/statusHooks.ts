@@ -43,7 +43,7 @@ process.stdin.on('data', chunk => {
     else if (event==='UserPromptSubmit' || event==='PreInvocation' || event==='PostInvocation' || event==='PostToolUse') state='working';
     else if (event==='PreToolUse') {
       const tool = agy ? p.toolCall?.name : p.tool_name;
-      state = ['AskUserQuestion','request_user_input','ask_question','ask_permission'].includes(tool) ? 'waiting' : 'working';
+      state = ['AskUserQuestion','request_user_input','ask_question','ask_user_question','ask_permission'].includes(tool) ? 'waiting' : 'working';
     } else if (event==='PermissionRequest') state='waiting';
     else if (event==='Notification' && ['permission_prompt','idle_prompt','elicitation_dialog','agent_needs_input'].includes(p.notification_type)) state='waiting';
     else if (event==='StopFailure' && provider==='claude') state='failed';
@@ -57,7 +57,15 @@ process.stdin.on('data', chunk => {
     if (!state) process.exit(0);
     const file = env.ADE_STATUS_FILE, temporary = file + '.' + process.pid + '.tmp';
     try {
-      fs.writeFileSync(temporary, JSON.stringify({ token:env.ADE_STATUS_TOKEN, provider,id,state,event,at:new Date().toISOString() }), {mode:0o600});
+      const tool = agy ? p.toolCall?.name : p.tool_name;
+      const attention = state!=='waiting' ? undefined : event==='PermissionRequest' || p.notification_type==='permission_prompt' || tool==='ask_permission' ? 'approval'
+        : ['AskUserQuestion','request_user_input','ask_question','ask_user_question'].includes(tool) || p.notification_type==='elicitation_dialog' ? 'question' : undefined;
+      let args = agy ? p.toolCall?.arguments ?? p.toolCall?.args : p.tool_input;
+      if(typeof args==='string' && args.length<=8192){try{args=JSON.parse(args);}catch{args=undefined;}}
+      const summary = args?.command ?? args?.cmd ?? args?.CommandLine ?? args?.file_path ?? args?.path;
+      const toolCall = ['PreToolUse','PermissionRequest'].includes(event) && typeof tool==='string' && typeof summary==='string' && summary.length<=1000
+        ? {name:tool.slice(0,80),summary:summary.replace(/[\x00-\x1f\x7f]/g,' ').slice(0,1000)} : undefined;
+      fs.writeFileSync(temporary, JSON.stringify({ token:env.ADE_STATUS_TOKEN, provider,id,state,event,attention,toolCall,at:new Date().toISOString() }), {mode:0o600});
       fs.renameSync(temporary,file);
     } finally { try {fs.unlinkSync(temporary);} catch {} }
   } catch {}
@@ -121,6 +129,7 @@ export function readAgentStatus(directory: string, record: SessionRecord, live: 
     const event = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (event.token !== record.statusToken || event.provider !== record.provider || event.id !== record.providerThreadId || !STATUS_EVENTS[record.provider].includes(event.event as never)
       || !['working','waiting','idle','completed','failed','interrupted'].includes(event.state) || !Number.isFinite(Date.parse(event.at)) || Date.parse(event.at) > Date.now() + 5000) return missing;
-    return { data: { state: event.state, source: 'provider-hook', event: event.event }, meta: { availability: live ? 'ready' : 'unavailable', observedAt: event.at, attemptedAt: now, partial: false, stale: !live, issue: live ? null : missing.meta.issue } };
+    const toolCall = typeof event.toolCall?.name === 'string' && event.toolCall.name.length <= 80 && typeof event.toolCall?.summary === 'string' && event.toolCall.summary.length <= 1000 ? event.toolCall : undefined;
+    return { data: { state: event.state, source: 'provider-hook', event: event.event, ...(toolCall ? { toolCall } : {}), ...(['question', 'approval', 'auth'].includes(event.attention) ? { attention: event.attention } : {}) }, meta: { availability: live ? 'ready' : 'unavailable', observedAt: event.at, attemptedAt: now, partial: false, stale: !live, issue: live ? null : missing.meta.issue } };
   } catch { return missing; }
 }

@@ -34,7 +34,8 @@ export function programStatusReader(onStatus: (status: AgentStatus) => void, onQ
       const state = fields.get('state');
       const mapped = state === 'working' ? 'working' : state === 'idle' ? 'idle' : state === 'done' ? 'completed' : state === 'error' ? 'failed'
         : state === 'blocked' ? ['permission', 'question', 'auth'].includes(fields.get('kind') ?? '') ? 'waiting' : 'blocked' : null;
-      if (mapped) onStatus({ state: mapped, source: 'provider-terminal', event: `OSC7501:${state}` });
+      if (mapped) onStatus({ state: mapped, source: 'provider-terminal', event: `OSC7501:${state}`,
+        ...(mapped === 'waiting' ? { attention: fields.get('kind') === 'permission' ? 'approval' as const : fields.get('kind') === 'auth' ? 'auth' as const : 'question' as const } : {}) });
     }
   };
 }

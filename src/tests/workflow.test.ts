@@ -996,3 +996,15 @@ test('WorkflowGraph respects worktreeMemberOrder from localStorage to order work
     (globalThis as any).localStorage = originalLocalStorage;
   }
 });
+
+import { placeWorkflowMember } from '../features/workflow/workflowOrder';
+test('resumed sessions insert at the selected member position without duplicating existing members', () => {
+  const original = ['a', 'b', 'c'];
+  assert.deepEqual(placeWorkflowMember(original, 'resumed', 'b', 'before'), ['a', 'resumed', 'b', 'c']);
+  assert.deepEqual(placeWorkflowMember(original, 'resumed', 'b', 'after'), ['a', 'b', 'resumed', 'c']);
+  assert.deepEqual(placeWorkflowMember(original, 'c', 'a', 'before'), ['c', 'a', 'b']);
+  assert.deepEqual(placeWorkflowMember(original, 'a', 'c', 'after'), ['b', 'c', 'a']);
+  assert.deepEqual(placeWorkflowMember([], 'resumed', '', 'after'), ['resumed']);
+  assert.deepEqual(placeWorkflowMember(original, 'resumed', 'missing', 'before'), original);
+  assert.deepEqual(original, ['a', 'b', 'c']);
+});

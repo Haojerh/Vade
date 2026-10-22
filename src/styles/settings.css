@@ -1,7 +1,7 @@
 .settings-page { display: flex; height: 100dvh; width: 100%; background: var(--canvas-bg); color: var(--text-main); }
 .settings-window { display: flex; flex-direction: column; height: 100dvh; min-height: 0; }
 .settings-window > .settings-page { flex: 1 1 0; min-height: 0; height: auto; }
-.desktop-custom-titlebar .settings-window { height: calc(100dvh - 36px); }
+.desktop-custom-titlebar .settings-window { height: 100dvh; }
 .desktop-custom-titlebar .settings-window > .settings-page { height: auto; }
 .settings-sidebar { width: 256px; flex-shrink: 0; background: var(--surface-2); border-right: 1px solid var(--border-main); overflow-y: auto; }
 .settings-back { display: flex; align-items: center; gap: 10px; width: calc(100% - 24px); min-height: 36px; margin: 12px; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); text-align: left; cursor: pointer; font: inherit; font-weight: 600; line-height: 20px; transition: background 140ms ease-out, color 140ms ease-out; }
@@ -72,6 +72,14 @@ dialog.node-modal-dialog.provider-account-dialog { min-height: 0; width: min(480
 .settings-page-row input[role="switch"]:checked::after { transform: translateX(14px); background: var(--canvas-bg); }
 .settings-page-row input[role="switch"]:disabled { opacity: .5; cursor: default; }
 .settings-no-results { padding: 24px 0; color: var(--text-secondary); }
+.agent-setting-name { display: flex; align-items: center; gap: 12px; }
+.agent-setting-controls { display: flex; align-items: center; justify-content: flex-end; gap: 16px; flex-wrap: wrap; }
+.agent-setting-controls label { display: flex; align-items: center; gap: 6px; white-space: nowrap; font-size: 12px; }
+.agent-setting-controls input { accent-color: var(--text-main); }
+.agent-setting-controls .select-wrapper { min-width: 100px; }
+.agent-settings-note { color: var(--text-secondary); line-height: 1.6; margin: 12px 0; font-size: 12px; }
+.agent-settings-actions { display: flex; align-items: center; gap: 12px; padding: 12px 0 20px; }
+@media (max-width: 800px) { .agent-settings-row { align-items: flex-start; flex-direction: column; gap: 16px; } .agent-setting-controls { justify-content: flex-start; } }
 @media (max-width: 640px) {
   .settings-page { flex-direction: column; }
   .settings-sidebar { width: 100%; overflow: visible; border-right: 0; border-bottom: 1px solid var(--border-main); }
@@ -97,3 +105,26 @@ dialog.node-modal-dialog.provider-account-dialog { min-height: 0; width: min(480
 .connection-oauth { margin: 8px 0 16px; }
 .connection-active-tag.is-inactive { color: var(--text-muted); background: transparent; }
 @media (hover: none) { .connection-account-delete { opacity: 1; pointer-events: auto; } }
+
+.agent-settings-group { margin-top: 22px; }
+.agent-settings-group h3 { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-secondary); }
+.agent-setting-name { min-width: 0; flex: 1; }
+.agent-setting-name > div { min-width: 0; }
+.agent-setting-name code { display: block; margin-top: 3px; color: var(--text-secondary); font-size: 11px; overflow-wrap: anywhere; }
+.agent-setting-controls { gap: 10px; flex-wrap: nowrap; }
+.agent-setting-controls .custom-select-control { width: 88px; flex: 0 0 88px; }
+.agent-setting-controls select { padding-top: 5px; padding-bottom: 5px; min-height: 30px; font-size: 12px; }
+.agent-enabled-control { position: relative; display: grid; grid-template-columns: 1fr 1fr; width: 148px; padding: 3px; border: 1px solid var(--border-main); border-radius: 8px; }
+.agent-enabled-control button { position: relative; z-index: 1; border: 0; padding: 3px 6px; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: 12px; }
+.agent-enabled-control button[aria-pressed=true] { color: var(--text-main); font-weight: 600; }
+.agent-enabled-indicator { position: absolute; top: 3px; bottom: 3px; left: 3px; width: calc(50% - 3px); background: var(--surface-active); border-radius: 5px; transition: transform 180ms ease-out; }
+.agent-enabled-control[data-disabled=true] .agent-enabled-indicator { transform: translateX(100%); }
+.agent-default-control { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 30px; width: 98px; flex: 0 0 98px; border: 0; border-radius: 8px; background: transparent; color: var(--text-main); cursor: pointer; font: inherit; font-size: 12px; }
+.agent-default-control[aria-pressed=true], .agent-default-control:hover { background: var(--surface-active); }
+.agent-default-control:disabled, .agent-enabled-control button:disabled { opacity: .5; cursor: default; }
+.is-undetected .agent-setting-name { color: var(--text-secondary); }
+@media (max-width: 800px) { .agent-setting-controls { flex-wrap: wrap; } }
+@media (prefers-reduced-motion: reduce) { .agent-enabled-indicator { transition: none; } }
+.agent-settings-group.is-undetected .agent-settings-row { opacity: .55; }
+.agent-setting-controls .custom-select-native { height: 32px; min-height: 32px; padding-top: 5px; padding-bottom: 5px; }
+.agent-enabled-control, .agent-default-control { height: 32px; }

@@ -4,7 +4,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { TerminalClientMessage, TerminalServerMessage } from '../../../shared/contracts';
 import { resumeTerminal } from '../../api/client';
-import { isTerminalReply } from './terminalInput';
+import { isTerminalReply, isTerminalClipboardShortcut } from './terminalInput';
 
 export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId: string; nodeId: string; onStatusChange?: () => void }) {
   const statusChange = useRef(onStatusChange); statusChange.current = onStatusChange;
@@ -34,6 +34,17 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
       fontFamily: 'Consolas, monospace', allowProposedApi: false,
       theme: { background: rootStyle.getPropertyValue('--canvas-bg').trim(), foreground: rootStyle.getPropertyValue('--text-main').trim() } });
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current);
+    // Let Chromium deliver native clipboard events before xterm's Kitty encoder claims them.
+    terminal.attachCustomKeyEventHandler(event => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v' && navigator.clipboard?.readText) {
+        if (event.type === 'keydown') {
+          event.preventDefault(); event.stopPropagation();
+          if (!event.repeat) void navigator.clipboard.readText().then(text => { if (active) terminal.paste(text); }).catch(() => { if (active) setError('Clipboard access unavailable. Use the browser paste menu or Shift+Insert.'); });
+        }
+        return false;
+      }
+      return !isTerminalClipboardShortcut(event, terminal.hasSelection());
+    });
     try {
       const webgl = new WebglAddon(); webgl.onContextLoss(() => webgl.dispose()); terminal.loadAddon(webgl);
     } catch { /* xterm's default renderer remains available when WebGL is unavailable. */ }
@@ -70,7 +81,7 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const current = new WebSocket(`${protocol}//${location.host}/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/terminal-stream?cursor=${cursor}`);
       socket = current; sentSize = '';
-      current.onopen = fitTerminal;
+      current.onopen = () => { /* Restore the host-sized screen before asking the PTY to resize. */ };
       current.onmessage = async event => {
         if (!active || failed || socket !== current) return;
         try {
@@ -79,8 +90,10 @@ export function AgentTerminal({ projectId, nodeId, onStatusChange }: { projectId
           if (message.type !== 'output') throw new Error('Invalid terminal stream');
           const page = message.page;
           if (page.reset) terminal.reset();
+          if (page.cols && page.rows) terminal.resize(page.cols, page.rows);
           if (page.data) await new Promise<void>(resolve => terminal.write(page.data, resolve));
           if (!active || socket !== current) return;
+          fitTerminal(); terminal.refresh(0, terminal.rows - 1);
           cursor = page.cursor; setLive(page.live); setResumable(Boolean(page.resumable)); setRestartable(Boolean(page.restartable));
           if (lastLive !== page.live) { lastLive = page.live; statusChange.current?.(); }
           const autoResume = initialPage && !page.live && page.recoverable;

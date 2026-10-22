@@ -3,15 +3,15 @@ import React from 'react';
 import type { Run } from '../../shared/contracts';
 
 export interface TopBarProps {
-  topbarRef: React.RefObject<HTMLElement | null>;
-  runs: Run[];
-  selectedRunId: string | null;
-  onSelectRun: (runId: string | null) => void;
+  topbarRef?: React.RefObject<HTMLElement | null>;
+  runs?: Run[];
+  selectedRunId?: string | null;
+  onSelectRun?: (runId: string | null) => void;
 }
 
 export const TopBar: React.FC<TopBarProps> = ({
   topbarRef,
-  runs,
+  runs = [],
   selectedRunId,
   onSelectRun,
 }) => {
@@ -32,7 +32,7 @@ export const TopBar: React.FC<TopBarProps> = ({
                 id="center-run-select"
                 className="center-run-select"
                 value={selectedRunId || ''}
-                onChange={(e) => onSelectRun(e.target.value || null)}
+                onChange={(e) => onSelectRun?.(e.target.value || null)}
                 aria-label="Select active workflow run"
               >
                 <option value="">Default run ({runs[0]?.sourceRunId || 'auto'})</option>

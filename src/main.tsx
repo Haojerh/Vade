@@ -13,7 +13,6 @@ if (window.adeDesktop?.customTitleBar) document.documentElement.classList.add('d
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
-    {window.adeDesktop?.customTitleBar && <div className="desktop-titlebar">ADE</div>}
     <App />
   </React.StrictMode>,
 );

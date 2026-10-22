@@ -93,7 +93,7 @@ dialog.node-modal-dialog.add-project-dialog { min-height: 0; width: min(440px, c
 @media (max-width: 600px) { .agent-terminal-screen { height: 50vh; padding: 4px; } }
 .dashboard-unified-header > .dashboard-topbar:has(.topbar-center-group:empty) { display: flex; align-items: center; gap: 12px; padding: 0 12px; }
 .dashboard-unified-header > .dashboard-topbar .topbar-left-group { align-self: center; }
-.rail-projects-section > .rail-section-header, .github-header-top { height: 40px; min-height: 40px; box-sizing: border-box; }
+.rail-projects-section > .rail-section-header, .github-header-top { box-sizing: border-box; }
 .swatch-tool { background: var(--state-completed-text, #69b888); }
 .project-rail { padding-top: 10px; }
 .github-panel { padding-top: 10px; }

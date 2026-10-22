@@ -1,4 +1,5 @@
 import { WorktreeHistory } from '../github/WorktreeHistory';
+import { AgentInteraction } from './AgentInteraction';
 import { Disclosure } from '../../components/ui/Disclosure';
 import { Modal } from '../../components/ui/Modal';
 import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -267,6 +268,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
 
                 {activeVisibleSections.chatbox && !isWorktree && (!details?.session || (sessionView === 'chat' && details.session.chat)) && (
                   <div className="modal-section agent-chatbox-section">
+                    {projectId && details?.session?.chat && <AgentInteraction key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} waiting={(selectedNode ?? node).state === 'waiting'} onTerminal={() => setSessionView('terminal')} />}
                     {chatStatus?.type === 'error' && <div className="section-header-row">
 
                       {chatStatus && (

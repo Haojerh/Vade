@@ -2,7 +2,7 @@
 
 Read the root AGENTS.md first.
 
-- Standalone runtime lives in `runtime/` and routes through `http/localRoutes.ts`. Never fall back to Orca from standalone routes. Preserve provider authentication; user-requested permission bypass flags apply to new and resumed terminals and stay fixed server-side.
+- Standalone runtime lives in `runtime/` and routes through `http/localRoutes.ts`. Never fall back to Orca from standalone routes. Preserve provider authentication and trust. Persisted agent preferences choose only the fixed server-side Manual/Auto/Yolo launch mappings for new/resumed terminals; never accept arbitrary flags. Prompt answers must be exact-session, current-screen fenced and one-shot under the message/terminal input lock.
 
 - Keep `index.ts` as the process entry; route/validate in `http/`, access fixed upstream sources in `integrations/`, decode provider formats in `providers/`, and manage snapshots in `services/`.
 - Keep tests beside their implementation. Include new suites in the root `npm test` command.

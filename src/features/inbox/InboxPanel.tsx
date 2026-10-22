@@ -12,6 +12,7 @@ interface InboxPanelProps {
   items: InboxItem[];
   handled: ReadonlySet<string>;
   onHandle: (ids: string[]) => void;
+  onClear?: (ids: string[]) => void;
   loading: boolean;
   issue: string | null;
   partial: boolean;
@@ -37,7 +38,7 @@ export function InboxPanel(props: InboxPanelProps) {
         <button aria-pressed={!showHandled} onClick={() => setShowHandled(false)}>Unread <span className={unread.length ? 'inbox-count' : undefined}>{unread.length}</span></button>
         <button aria-pressed={showHandled} onClick={() => setShowHandled(true)}>Handled</button>
       </div>
-      <button className="inbox-handle-all" disabled={!unread.length} onClick={() => props.onHandle(unread.map(item => item.id))}>Mark all handled</button>
+      <button className="inbox-handle-all" disabled={!items.length} onClick={() => showHandled ? props.onClear?.(items.map(item => item.id)) : props.onHandle(unread.map(item => item.id))}>{showHandled ? 'Clear All' : 'Mark all handled'}</button>
     </div>
     {props.issue && <p className="inbox-notice" role="status">{props.issue}</p>}
     <div className="inbox-results" aria-busy={props.loading}>
@@ -45,8 +46,8 @@ export function InboxPanel(props: InboxPanelProps) {
       <ul>{items.map(item => <li key={item.id} className={`inbox-row result-${item.outcome}`}>
         <button className={`inbox-result ${props.handled.has(item.id) ? 'is-handled' : ''}`} onClick={() => props.onHandle([item.id])} aria-label={`${item.title}, ${item.outcome}, mark handled`}>
           <span className="inbox-unread-dot" aria-hidden="true" />
-          <span className="inbox-result-content"><strong title={item.title}>{item.title}</strong><span className="inbox-project"><Icon name="folder" size={12} /><span>{item.projectName}</span><span className="inbox-source">{item.source === 'agent' ? 'Agent result' : 'Task result'}</span></span>
-            <span className="inbox-result-footer"><span className={`inbox-outcome outcome-${item.outcome}`}>{item.outcome === 'failed' ? 'Failed' : 'Succeeded'}</span><time dateTime={item.at} title={new Date(item.at).toLocaleString()}>{new Date(item.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time></span>
+          <span className="inbox-result-content"><strong title={item.title}>{item.title}</strong><span className="inbox-project"><Icon name="folder" size={12} /><span>{item.projectName}</span><span className="inbox-source">{item.source === 'turn' ? 'Agent turn' : item.source === 'agent' ? 'Agent result' : 'Task result'}</span></span>
+            <span className="inbox-result-footer"><span className={`inbox-outcome outcome-${item.outcome}`}>{item.outcome === 'failed' ? 'Failed' : item.outcome === 'completed' ? 'Turn completed' : item.outcome === 'interrupted' ? 'Interrupted' : 'Succeeded'}</span><time dateTime={item.at} title={new Date(item.at).toLocaleString()}>{new Date(item.at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</time></span>
           </span>
         </button>
         <button className="inbox-open-project" disabled={!item.nodeId || props.isClosing} onClick={() => props.onOpenAgent(item)} aria-label={`Open agent details for ${item.title}`} title={item.nodeId ? 'Open agent details' : 'Agent is no longer available'}><Icon name="chevron-right" size={16} /></button>

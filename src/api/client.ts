@@ -1,4 +1,30 @@
 import { readTerminalShell } from '../app/terminalShellPreference';
+import type { AgentHistoryPage, ResumeHistoryRequest } from '../../shared/contracts';
+
+export async function fetchAgentHistory(query: { scope: string; projectId?: string; worktreeId?: string; search?: string; offset?: number; refresh?: boolean }, signal?: AbortSignal): Promise<AgentHistoryPage> {
+  const params = new URLSearchParams({ scope: query.scope });
+  for (const key of ['projectId', 'worktreeId', 'search'] as const) if (query[key]) params.set(key, query[key]!);
+  if (query.offset) params.set('offset', String(query.offset));
+  if (query.refresh) params.set('refresh', '1');
+  return handleResponse(await fetch(`/api/agent-history?${params}`, { signal }));
+}
+export async function resumeHistorySession(projectId: string, request: ResumeHistoryRequest): Promise<{ projectId: string; nodeId: string }> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/resume-history`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }));
+}
+import type { AgentPreferences, AgentInteraction, AnswerAgentRequest } from '../../shared/contracts';
+
+export async function fetchAgentPreferences(signal?: AbortSignal): Promise<AgentPreferences> {
+  return handleResponse(await fetch('/api/agents/settings', { signal }));
+}
+export async function saveAgentPreferences(value: AgentPreferences, signal?: AbortSignal): Promise<AgentPreferences> {
+  return handleResponse(await fetch('/api/agents/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value), signal }));
+}
+export async function fetchAgentInteraction(projectId: string, nodeId: string, signal?: AbortSignal): Promise<Section<AgentInteraction>> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/interaction`, { signal }));
+}
+export async function answerAgentInteraction(projectId: string, nodeId: string, value: AnswerAgentRequest, signal?: AbortSignal): Promise<{ ok: boolean }> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/interaction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value), signal }));
+}
 import type {
   AgentChatOptions,
   ConversationPage,

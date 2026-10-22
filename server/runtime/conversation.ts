@@ -47,14 +47,14 @@ function verifyJsonSession(file: string, record: SessionRecord): boolean {
         const row = JSON.parse(line);
         const metadata = record.provider === 'codex' && row.type === 'session_meta' ? row.payload : record.provider === 'claude' ? row : null;
         const id = record.provider === 'codex' ? metadata?.id : metadata?.sessionId;
-        if (id === record.providerThreadId && typeof metadata.cwd === 'string' && path.resolve(metadata.cwd) === path.resolve(record.cwd)) return true;
+        if (id === record.providerThreadId && typeof metadata.cwd === 'string' && [record.cwd, record.sourceCwd].some(cwd => cwd && path.resolve(metadata.cwd) === path.resolve(cwd))) return true;
       } catch { /* A partial or non-message record cannot establish provenance. */ }
     }
     return false;
   } finally { fs.closeSync(fd); }
 }
 
-function publicMessage(record: SessionRecord, line: string, sourceIdentity: string) {
+export function publicMessage(record: SessionRecord, line: string, sourceIdentity: string) {
   try {
     const row = JSON.parse(line);
     if (record.provider !== 'antigravity') {

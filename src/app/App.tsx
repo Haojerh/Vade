@@ -1,10 +1,14 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 import { useDashboard } from './useDashboard';
 import { useDashboardLayoutPrefs } from './useDashboardLayoutPrefs';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { WorkflowGraph } from '../features/workflow/WorkflowGraph';
 import { NodeDetails } from '../features/workflow/NodeDetails';
+import { AgentHistoryPanel } from '../features/agents/AgentHistoryPanel';
+import type { HistoryDrag } from '../features/agents/historyDrag';
+import '../features/agents/agents.css';
+import { resumeHistorySession } from '../api/client';
 import { GitHubPanel } from '../features/github/GitHubPanel';
 import { ResizableSidebar } from '../components/ui/ResizableSidebar';
 import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
@@ -71,6 +75,38 @@ export const App: React.FC = () => {
     refreshAll,
   } = useDashboard();
 
+  const [rightSection, setRightSection] = useState<'source' | 'agents'>(() => { try { return localStorage.getItem('vade:right-section') === 'agents' ? 'agents' : 'source'; } catch { return 'source'; } });
+  const rightTabsRef = useRef<HTMLElement>(null);
+  const [rightTabLine, setRightTabLine] = useState({ left: 0, width: 0 });
+  useLayoutEffect(() => {
+    const bar = rightTabsRef.current;
+    if (!bar) return;
+    const measure = () => {
+      const tab = bar.querySelector<HTMLButtonElement>('[aria-selected="true"]');
+      if (!tab) return;
+      const style = getComputedStyle(tab);
+      const paddingLeft = parseFloat(style.paddingLeft);
+      const paddingRight = parseFloat(style.paddingRight);
+      const left = tab.offsetLeft + tab.clientLeft + paddingLeft;
+      const width = Math.max(0, tab.clientWidth - paddingLeft - paddingRight);
+      setRightTabLine((current) => current.left === left && current.width === width ? current : { left, width });
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    bar.querySelectorAll('button').forEach((tab) => observer.observe(tab));
+    return () => observer.disconnect();
+  }, [rightSection]);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const [historyDrag, setHistoryDrag] = useState<HistoryDrag | null>(null);
+  const historyProject = useRef(selectedProjectId); historyProject.current = selectedProjectId;
+  const resumeSavedSession = useCallback(async (id: string, worktreeId: string) => {
+    if (!selectedProjectId) throw new Error('Select a project before resuming a session');
+    const result = await resumeHistorySession(selectedProjectId, { sessionId: id, worktreeId });
+    setHistoryRevision(value => value + 1);
+    if (historyProject.current === result.projectId) { refreshAll(); openInboxNode(result.projectId, result.nodeId, null); }
+    return result.nodeId;
+  }, [selectedProjectId, refreshAll, openInboxNode]);
   // Prerequisites State (Enforces Orca App, CLI, and Orchestration skill)
   const [prerequisites, setPrerequisites] = useState<PrerequisitesStatus | null>(null);
   const [prerequisitesLoading, setPrerequisitesLoading] = useState<boolean>(true);
@@ -247,7 +283,7 @@ export const App: React.FC = () => {
 
       <div className="dashboard-workspace">
       {!leftSidebarOpen && <button type="button" className="sidebar-edge-tab sidebar-edge-left" aria-label="Open projects sidebar" title="Open projects sidebar" onClick={() => handleToggleLeft(true)}><Icon name="chevrons-right" size={14} /></button>}
-      {!rightSidebarOpen && <button type="button" className="sidebar-edge-tab sidebar-edge-right" aria-label="Open GitHub sidebar" title="Open GitHub sidebar" onClick={() => handleToggleRight(true)}><Icon name="chevrons-left" size={14} /></button>}
+      {!rightSidebarOpen && <button type="button" className="sidebar-edge-tab sidebar-edge-right" aria-label="Open tools sidebar" title="Open tools sidebar" onClick={() => handleToggleRight(true)}><Icon name="chevrons-left" size={14} /></button>}
       {/* 1. Left Project Navigation (Resizable Sidebar) */}
       {isNarrow && (leftSidebarOpen || rightSidebarOpen) && (
         <button className="sidebar-backdrop" aria-label="Close sidebar" onClick={() => {
@@ -362,6 +398,8 @@ export const App: React.FC = () => {
                 ? kanban.assign(cardId, selectedProjectId, node, selectedRunId, message, files)
                 : Promise.resolve({ ok: false, message: 'No active project.' })}
               project={currentProject}
+              onResumeHistory={resumeSavedSession}
+              historyDrag={historyDrag}
               onRefresh={refreshAll}
               projectId={selectedProjectId}
               runId={selectedRunId}
@@ -410,8 +448,22 @@ export const App: React.FC = () => {
         storageKey="orca-sidebar-right"
         isOpen={rightSidebarOpen}
         onToggle={handleToggleRight}
-        ariaLabel="GitHub Activity Sidebar"
+        ariaLabel="Source Control and Agents Sidebar"
       >
+        <div className="right-tools">
+          <nav ref={rightTabsRef} className="right-tool-tabs github-tabs-nav" data-section={rightSection} role="tablist" aria-label="Right sidebar sections">
+            <span
+              className="github-tab-indicator"
+              aria-hidden="true"
+              style={{
+                transform: `translateX(${rightTabLine.left}px) scaleX(${rightTabLine.width})`,
+                opacity: rightTabLine.width ? 1 : 0,
+              }}
+            />
+            {(['source', 'agents'] as const).map(section => <button key={section} className={`tab-btn ${rightSection === section ? 'active' : ''}`} role="tab" aria-label={section === 'source' ? 'Source Control' : 'Agents'} title={section === 'source' ? 'Source Control' : 'Agents'} aria-selected={rightSection === section} onClick={() => { setRightSection(section); try { localStorage.setItem('vade:right-section', section); } catch {} }}><Icon name={section === 'source' ? 'git-branch' : 'message-square'} size={15} /></button>)}
+            <button type="button" className="btn-icon right-tool-collapse" aria-label="Collapse tools sidebar" title="Collapse tools sidebar" onClick={() => handleToggleRight(false)}><Icon name="chevrons-right" size={14} /></button>
+          </nav>
+          <div className="right-tool-content" hidden={rightSection !== 'source'}>
         <GitHubPanel
           commitGraphEnabled={commitGraphEnabled}
           projectId={selectedProjectId}
@@ -421,13 +473,15 @@ export const App: React.FC = () => {
           loading={gitHubLoading}
           error={gitHubError}
           onRefresh={refreshGitHub}
-          onCollapse={() => handleToggleRight(false)}
         />
+          </div>
+          {rightSection === 'agents' && <div className="right-tool-content"><AgentHistoryPanel key={selectedProjectId ?? 'all'} projectId={selectedProjectId} worktrees={graph?.nodes.filter(node => node.kind === 'worktree') ?? []} onResume={resumeSavedSession} onDragSession={setHistoryDrag} onOpen={(projectId, nodeId) => openInboxNode(projectId, nodeId, null)} revision={historyRevision} /></div>}
+        </div>
       </ResizableSidebar>
 
       {/* 4. Native Dialog Modal for Node Inspection */}
       <InboxPanel isOpen={inboxModal.present} isClosing={inboxModal.closing} onClose={inboxModal.close}
-        items={inbox.items} handled={inbox.handled} onHandle={inbox.markHandled} loading={inbox.loading}
+        items={inbox.items} handled={inbox.handled} onHandle={inbox.markHandled} onClear={inbox.clearItems} loading={inbox.loading}
         issue={inbox.error || inbox.section?.meta.issue?.message || null} partial={Boolean(inbox.section?.meta.partial)}
         onRefresh={() => { void inbox.refresh(); }} onOpenAgent={item => {
           if (!item.nodeId) return;

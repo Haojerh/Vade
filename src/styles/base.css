@@ -29,7 +29,7 @@ html, body {
 
 /* Windows desktop chrome; the browser layout keeps its full viewport. */
 .desktop-custom-titlebar #root {
-  padding-top: 36px;
+  padding-top: 0;
 }
 
 .desktop-titlebar {
@@ -53,7 +53,7 @@ html, body {
 .desktop-custom-titlebar .dashboard-main-stage,
 .desktop-custom-titlebar .settings-page,
 .desktop-custom-titlebar .resizable-sidebar {
-  height: calc(100dvh - 36px);
+  height: 100dvh;
 }
 
 .desktop-custom-titlebar:has(.dashboard-unified-header) #root { padding-top: 0; }
@@ -316,3 +316,6 @@ button {
     transition: none !important;
   }
 }
+
+.desktop-custom-titlebar .dashboard-unified-header > .dashboard-topbar::after { content: ""; position: absolute; left: 0; right: 0; bottom: 0; height: 1px; background: var(--border-main); pointer-events: none; }
+.desktop-custom-titlebar .dashboard-unified-header > .dashboard-topbar { position: relative; }

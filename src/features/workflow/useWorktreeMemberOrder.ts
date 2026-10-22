@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react';
 import type { Node } from '../../../shared/contracts';
-import { compareWorkflowNodes } from './workflowOrder';
+import { compareWorkflowNodes, placeWorkflowMember } from './workflowOrder';
 
 export interface UseWorktreeMemberOrderOptions {
   projectId: string | null;
@@ -95,19 +95,7 @@ export function useWorktreeMemberOrder({
       const currentOrdered = getOrderedMembers(worktreeId, rawMembers);
       const ids = currentOrdered.map((m) => m.id);
 
-      const fromIdx = ids.indexOf(draggedAgentId);
-      if (fromIdx === -1) return;
-
-      const newIds = [...ids];
-      newIds.splice(fromIdx, 1);
-      const insertIdx = newIds.indexOf(targetAgentId);
-      if (insertIdx === -1) return;
-
-      if (position === 'after') {
-        newIds.splice(insertIdx + 1, 0, draggedAgentId);
-      } else {
-        newIds.splice(insertIdx, 0, draggedAgentId);
-      }
+      const newIds = placeWorkflowMember(ids, draggedAgentId, targetAgentId, position);
 
       if (newIds.every((id, i) => id === ids[i])) return;
 

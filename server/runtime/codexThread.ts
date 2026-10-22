@@ -6,7 +6,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function validCodexThreadId(value: unknown): value is string { return typeof value === 'string' && UUID.test(value); }
 
 // Fixed local methods only. Never start a turn or expose provider RPC to HTTP clients.
-export async function codexThread(resolved: { executable: string; args: string[] }, cwd: string, title: string, threadId?: string, signal?: AbortSignal): Promise<string> {
+export async function codexThread(resolved: { executable: string; args: string[] }, cwd: string, title: string, threadId?: string, signal?: AbortSignal, sourceCwd = cwd): Promise<string> {
   if (signal?.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
   const env = { ...process.env }; delete env.CODEX_THREAD_ID;
   for (const key of Object.keys(env)) if (key.startsWith('ORCA_')) delete env[key];
@@ -50,7 +50,7 @@ export async function codexThread(resolved: { executable: string; args: string[]
       ? await call('thread/read', { threadId, includeTurns: false })
       : await call('thread/start', { cwd });
     const thread = response?.thread;
-    if (!validCodexThreadId(thread?.id) || (threadId && thread.id !== threadId) || thread.ephemeral !== false || typeof thread.cwd !== 'string' || path.resolve(thread.cwd) !== path.resolve(cwd)) throw failure();
+    if (!validCodexThreadId(thread?.id) || (threadId && thread.id !== threadId) || thread.ephemeral !== false || typeof thread.cwd !== 'string' || ![cwd, sourceCwd].some(root => path.resolve(thread.cwd) === path.resolve(root))) throw failure();
     // Empty threads are not durable until a persisted mutation; setting their title materializes them.
     if (!threadId) await call('thread/name/set', { threadId: thread.id, name: title });
     child.stdin.end();
