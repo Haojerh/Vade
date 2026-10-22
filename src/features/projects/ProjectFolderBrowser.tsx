@@ -21,7 +21,7 @@ export function ProjectFolderBrowser({ initialPath, busy, onSelect }: { initialP
     return () => controller.abort();
   }, [directory, retry]);
   return <div className="project-folder-browser">
-    <p className="add-project-note">Choose a local folder on the computer running ADE.</p>
+    <p className="add-project-note">Choose a local folder on the computer running Vade.</p>
     <form className="project-folder-address" onSubmit={event => { event.preventDefault(); setDirectory(input.trim()); setRetry(value => value + 1); }}>
       <input aria-label="Folder path" value={input} onChange={event => setInput(event.target.value)} placeholder="Enter a folder path" disabled={busy} autoComplete="off" spellCheck={false} />
       <button className="btn btn-secondary" disabled={busy || !input.trim()}>Go</button>

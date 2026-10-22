@@ -22,7 +22,7 @@ export function DeleteProject({ project, onDeleted }: { project: Project; onDele
       onClick={() => { setError(null); overlay.open(); }}><Icon name="trash" size={12} /></button>
     <Modal isOpen={overlay.present} isClosing={overlay.closing} busy={busy} onClose={overlay.close} className="confirmation-dialog" aria-label="Delete project">
       <h2>Delete project?</h2>
-      <p>Remove <strong>{project.name}</strong> from ADE? Its folder, files, and Git worktrees will stay on disk.</p>
+      <p>Remove <strong>{project.name}</strong> from Vade? Its folder, files, and Git worktrees will stay on disk.</p>
       <p>Close any agent tabs in this project first.</p>
       <DialogError error={error} />
       <DialogActions onCancel={overlay.close} onConfirm={confirm} busy={busy} confirmLabel="Delete project" busyLabel="Deleting…" variant="danger" autoFocusCancel />

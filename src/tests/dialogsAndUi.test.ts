@@ -140,6 +140,7 @@ test('shared disclosures keep collapsed controls inert and defer lazy history lo
 
 test('ProjectSelector renders settings controls in sidebar', () => {
   const html = renderToStaticMarkup(createElement(ProjectSelector, {
+    standalone: true,
     inventorySection: null,
     loading: false,
     error: null,
@@ -158,6 +159,8 @@ test('ProjectSelector renders settings controls in sidebar', () => {
   }));
   assert.ok(html.includes('Dashboard settings'));
   assert.ok(html.includes('Settings'));
+  assert.ok(html.includes('Vade') && html.includes('vade.svg'));
+  assert.ok(!html.includes('Your local agent workspace') && !html.includes('runtime-status-card'));
 });
 
 test('ProjectSelector renders expandable chevron toggle and all projects when expanded', () => {
@@ -405,7 +408,7 @@ test('PrerequisitesGate renders loading state when initially loading without dat
     onRecheck: () => {},
     isChecking: false,
   }));
-  assert.ok(html.includes('Connecting to ADE'));
+  assert.ok(html.includes('Connecting to Vade'));
   assert.ok(html.includes('prereq-spinner'));
 });
 

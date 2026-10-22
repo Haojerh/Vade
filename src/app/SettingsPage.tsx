@@ -8,7 +8,7 @@ type SettingsPageProps = Pick<ProjectSelectorProps, 'theme' | 'onToggleTheme' | 
   & { section: string; onBack: () => void };
 
 const sections = [
-  { id: 'general', label: 'General', description: 'Make ADE comfortable for the way you work.' },
+  { id: 'general', label: 'General', description: 'Make Vade comfortable for the way you work.' },
   { id: 'workflow', label: 'Workflow', description: 'Control what appears in your project workspace.' },
 ];
 
@@ -27,7 +27,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = props => {
   const showAppearance = query ? matches('Appearance Dark Light Theme', 'Choose your preferred color theme.') : current.id === 'general';
   return <div className="settings-page">
     <aside className="settings-sidebar">
-      <button className="settings-back" onClick={props.onBack}><Icon name="chevron-left" size={18} />Back to app</button>
+      <button className="settings-back" onClick={props.onBack}><Icon name="chevron-left" size={16} /><span>Back to app</span></button>
       <div className="settings-search"><Icon name="search" size={16} /><input type="search" aria-label="Search settings" placeholder="Search settings" value={search} onChange={event => setSearch(event.target.value)} /></div>
       <nav aria-label="Settings sections">{sections.map(section => <a key={section.id} href={`#/settings/${section.id}`} aria-current={!query && section.id === current.id ? 'page' : undefined} onClick={() => setSearch('')}>
         <Icon name={section.id === 'general' ? 'settings' : 'layers'} size={17} />{section.label}

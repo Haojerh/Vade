@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "dev.ade.desktop",
-    "productName": "ADE",
+    "productName": "Vade",
     "directories": {
       "output": "release"
     },

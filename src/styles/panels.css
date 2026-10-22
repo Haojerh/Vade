@@ -202,11 +202,14 @@
   background: var(--surface-hover);
 }
 .brand-icon {
+  display: block;
   color: var(--text-main);
   flex-shrink: 0;
   object-fit: contain;
 }
 .brand-name {
+  display: block;
+  line-height: 24px;
   font-size: 15px;
   color: var(--text-main);
 }

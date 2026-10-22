@@ -50,15 +50,10 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
   error,
   selectedProjectId,
   onSelectProject,
-  snapshot,
-  isLocallyStale,
-  connectionMode,
   onCollapse,
 }) => {
 
   const projects = inventorySection?.data?.projects ?? [];
-  const runtime = snapshot?.runtime?.data;
-  const runtimeMeta = snapshot?.runtime?.meta;
 
   const [isProjectsExpanded, setIsProjectsExpanded] = React.useState<boolean>(() => {
     try {
@@ -95,63 +90,6 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
     return projects[0]?.id ?? null;
   }, [projects, selectedProjectId]);
 
-  const renderRuntimeStatus = () => {
-    const graphMeta = snapshot?.graph?.meta;
-    const isUnavailable = graphMeta ? graphMeta.availability !== 'ready' : false;
-    const isStale = isLocallyStale || Boolean(graphMeta?.stale);
-    const isHealthy = connectionMode === 'sse' && !isStale && !isUnavailable;
-
-    const dotClass =
-      connectionMode === 'disconnected' || isUnavailable
-        ? 'dot-offline'
-        : isHealthy
-        ? 'dot-live'
-        : 'dot-polling';
-
-    const statusTitle =
-      connectionMode === 'disconnected'
-        ? 'Disconnected'
-        : isUnavailable
-        ? `Unavailable (${graphMeta?.availability})`
-        : isStale
-        ? `Stale (${connectionMode === 'sse' ? 'SSE' : 'Polling'})`
-        : connectionMode === 'sse'
-        ? 'Live SSE'
-        : 'Polling';
-
-    return (
-      <div className="runtime-status-card" role="status">
-        <div className="runtime-status-header">
-          <span className={`status-dot ${dotClass}`} aria-hidden="true" />
-          <span className="runtime-title">{statusTitle}</span>
-        </div>
-        <div className="runtime-meta-details">
-          {runtime?.version ? (
-            <div className="runtime-meta-row">
-              <span className="meta-label">{standalone ? 'ADE:' : 'Orca:'}</span>
-              <span className="meta-val font-mono">{runtime.version}</span>
-            </div>
-          ) : runtimeMeta?.issue ? (
-            <div className="runtime-meta-row text-warning">
-              <span className="meta-label">Runtime:</span>
-              <span className="meta-val">{runtimeMeta.issue.code}</span>
-            </div>
-          ) : (
-            <div className="runtime-meta-row text-muted">
-              <span className="meta-label">Runtime:</span>
-              <span className="meta-val">Active</span>
-            </div>
-          )}
-          {snapshot?.revision && (
-            <div className="runtime-meta-row">
-              <span className="meta-label">Rev:</span>
-              <span className="meta-val font-mono">{snapshot.revision.slice(0, 8)}</span>
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  };
 
   return (
     <nav className="project-rail" aria-label="Projects navigation">
@@ -159,8 +97,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       <div className="rail-brand">
         <div className="brand-title-row">
           <div className="brand-title-main">
-            {standalone ? <Icon name="layers" size={24} /> : <img src={new URL('../../assets/brand/orca.png', import.meta.url).href} width={24} height={24} className="brand-icon" alt="" />}
-            <span className="brand-name font-bold">{standalone ? 'ADE' : 'Orca Live'}</span>
+            <img src={standalone ? new URL('../../assets/brand/vade.svg', import.meta.url).href : new URL('../../assets/brand/orca.png', import.meta.url).href} width={24} height={24} className="brand-icon" alt="" />
+            <span className="brand-name font-bold">{standalone ? 'Vade' : 'Orca Live'}</span>
           </div>
 
           {onCollapse && (
@@ -175,7 +113,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             </button>
           )}
         </div>
-        <div className="brand-tagline">{standalone ? 'Your local agent workspace' : 'Workflow Atlas'}</div>
+        {!standalone && <div className="brand-tagline">Workflow Atlas</div>}
       </div>
 
       {/* Mobile Selector Dropdown */}
@@ -282,9 +220,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
         </div>
       </div>
 
-      {/* Rail Footer: Anchored to viewport bottom with SSE status & monitor text */}
+      {/* Sidebar controls */}
       <div className="rail-footer">
-        {renderRuntimeStatus()}
 
         <div className="rail-footer-controls">
           <button type="button" className="btn btn-secondary btn-xs" onClick={onOpenSettings}

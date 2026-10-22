@@ -5,7 +5,7 @@ let backend;
 let quitting = false;
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
-  app.setName('ADE');
+  app.setName('Vade');
   app.on('second-instance', () => {
     const window = BrowserWindow.getAllWindows()[0];
     if (window) { if (window.isMinimized()) window.restore(); window.focus(); }
@@ -26,7 +26,7 @@ else {
     try {
       await ready;
       const window = new BrowserWindow({ width: 1440, height: 920, minWidth: 760, minHeight: 540,
-        title: 'ADE', show: false, backgroundColor: '#181818',
+        title: 'Vade', show: false, backgroundColor: '#181818',
         webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs') } });
       const origin = 'http://127.0.0.1:4317';
       ipcMain.handle('ade:choose-folder', async event => {

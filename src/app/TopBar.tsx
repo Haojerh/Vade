@@ -60,7 +60,7 @@ export const TopBar: React.FC<TopBarProps> = ({
         <div className="topbar-project-info">
           <div className="project-title-row">
             <h1 className="active-project-heading">
-              {currentProject ? currentProject.name : 'ADE'}
+              {currentProject ? currentProject.name : 'Vade'}
             </h1>
             {currentProject && (
               <span className={`project-kind-tag kind-${currentProject.kind}`}>

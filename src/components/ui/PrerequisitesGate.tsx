@@ -23,7 +23,7 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
       <div className="prereq-gate-overlay" data-testid="prerequisites-loading">
         <div className="prereq-gate-card prereq-gate-card--loading">
           <div className="prereq-spinner" aria-hidden="true" />
-          <h2 className="prereq-loading-title">Connecting to ADE…</h2>
+          <h2 className="prereq-loading-title">Connecting to Vade…</h2>
           <p className="prereq-loading-desc">
             Checking the local backend and development tools.
           </p>
@@ -39,8 +39,8 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
 
   if (prerequisites?.runtime === 'ade') return <div className="prereq-gate-overlay">
     <div className="prereq-gate-card" role="alert">
-      <h1 className="prereq-gate-title">ADE needs your local tools</h1>
-      <p>Start the ADE backend and make Git available on PATH.</p>
+      <h1 className="prereq-gate-title">Vade needs your local tools</h1>
+      <p>Start the Vade backend and make Git available on PATH.</p>
       {prerequisites.issues?.map(issue => <p key={issue}>{issue}</p>)}
       <button className="btn btn-primary" onClick={onRecheck} disabled={isChecking}>{isChecking ? 'Checking…' : 'Check again'}</button>
     </div>
