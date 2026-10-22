@@ -299,8 +299,10 @@ export function useWorkflowCanvas({
     });
 
     // Content extent based on layout content geometry and repositioned node bounds
-    let contentWidth = container.clientWidth;
-    let contentHeight = container.clientHeight;
+    // CSS fills the viewport. Measure only content here so scrollbar appearance
+    // cannot feed the viewport size back into the canvas extent at 100% zoom.
+    let contentWidth = 0;
+    let contentHeight = 0;
 
     const layoutEl = layoutRef.current;
     if (layoutEl) {
@@ -308,8 +310,8 @@ export function useWorkflowCanvas({
       const layoutScrollH = layoutEl.scrollHeight || layoutEl.offsetHeight;
       const rightExtent = (layoutEl.offsetLeft || 40) + layoutScrollW + 40;
       const bottomExtent = (layoutEl.offsetTop || 32) + layoutScrollH + 32;
-      contentWidth = Math.max(container.clientWidth, rightExtent);
-      contentHeight = Math.max(container.clientHeight, bottomExtent);
+      contentWidth = rightExtent;
+      contentHeight = bottomExtent;
     }
 
     elementRefs.current.forEach((el) => {

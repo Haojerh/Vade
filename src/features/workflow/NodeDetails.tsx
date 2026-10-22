@@ -5,6 +5,7 @@ import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } f
 import type { Node, NodeDetails as NodeDetailsType } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
 import { ConversationHistory } from './ConversationHistory';
+import { ConversationToolCall } from './ConversationToolCall';
 import { sendNodeMessage } from '../../api/client';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
@@ -41,6 +42,7 @@ interface NodeDetailsProps {
   onSessionChange?: () => void;
   visibleSections?: NodeDetailsVisibleSections;
   commitGraphEnabled?: boolean;
+  chatToolCallsEnabled?: boolean;
 }
 
 export const NodeDetails: React.FC<NodeDetailsProps> = ({
@@ -56,6 +58,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   onSessionChange,
   visibleSections,
   commitGraphEnabled = false,
+  chatToolCallsEnabled = true,
 }) => {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [showBackToBottom, setShowBackToBottom] = useState(false);
@@ -137,10 +140,11 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const convData = conversation?.data;
   const convMeta = conversation?.meta;
   const isUnstartedAgentConvo =
-    convMeta?.issue?.code === 'CONVERSATION_UNSUPPORTED' &&
+    Boolean(details?.session?.reason) || convMeta?.issue?.code === 'CONVERSATION_UNSUPPORTED' &&
     (convMeta.issue.message.includes('provenance not found') ||
       convMeta.issue.message.includes('not found or unsupported'));
   const messages = convData?.messages ?? [];
+  const tools = chatToolCallsEnabled ? (selectedNode?.id === selectedNodeId ? selectedNode.toolActivity?.data : undefined) ?? node?.toolActivity?.data ?? [] : [];
 
   const isWorktree = node?.kind === 'worktree';
   return (
@@ -164,7 +168,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
             onClose={handleClose}
           />
 
-          {isMatchingDetails && !isWorktree && details?.session && projectId && <div className="session-view-toolbar">
+          {isMatchingDetails && !isWorktree && details?.session?.chat && projectId && <div className="session-view-toolbar">
             <button type="button" className="session-view-switch" role="switch" aria-label="Terminal view" aria-checked={sessionView === 'terminal'} onClick={() => setSessionView(view => view === 'chat' ? 'terminal' : 'chat')}>
               <span className={sessionView === 'chat' ? 'is-active' : ''}>Chat</span>
               <span className="session-view-track" aria-hidden="true"><span /></span>
@@ -227,7 +231,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 )}
 
                 {!isWorktree && details?.session && projectId && <>
-                  {sessionView === 'terminal' && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} onStatusChange={onSessionChange} /></Suspense>}
+                  {(sessionView === 'terminal' || !details.session.chat) && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} onStatusChange={onSessionChange} /></Suspense>}
                 </>}
 
                 {activeVisibleSections.conversation && !isWorktree && (!details?.session || (sessionView === 'chat' && details.session.history)) && (
@@ -245,16 +249,18 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                       </div>
                     )}
 
-                    {messages.length === 0 && !convData?.nextCursor ? (
-                      <div className="empty-hint">
-                        {convMeta?.availability === 'empty' || isUnstartedAgentConvo
+                    {messages.length === 0 && tools.length === 0 && !convData?.nextCursor ? (
+                      <div className="conversation-empty" role="status"><Icon name="message-square" size={28} /><strong>{isUnstartedAgentConvo ? 'Ready for your first conversation' : 'No messages yet'}</strong><p>
+                        {details?.session?.reason ?? (
+                        convMeta?.availability === 'empty' || isUnstartedAgentConvo
                           ? 'No conversation messages recorded for this session.'
                           : convMeta?.availability === 'unsupported'
                             ? 'Structured transcript unavailable.'
-                            : 'No messages in current transcript window.'}
+                            : 'Messages will appear here when the provider records them.')}
+                        </p>
                       </div>
                     ) : (
-                      <ConversationHistory key={`${projectId}:${selectedNodeId}:${selectedRunId}:${convData?.sourceIdentity}`} projectId={projectId!} nodeId={selectedNodeId} runId={selectedRunId ?? null} page={convData!} scrollContainerRef={bodyRef} />
+                      convData ? <ConversationHistory key={`${projectId}:${selectedNodeId}:${selectedRunId}:${convData?.sourceIdentity}`} projectId={projectId!} nodeId={selectedNodeId} runId={selectedRunId ?? null} page={convData} tools={tools} scrollContainerRef={bodyRef} /> : <div className="conversation-thread">{tools.map(tool => <ConversationToolCall key={tool.id} tool={tool} />)}</div>
                     )}
                   </section>
                 )}

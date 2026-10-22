@@ -322,7 +322,7 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
                     onOpenNodeContextMenu(e.clientX, e.clientY, ag);
                   }}
                   aria-pressed={isAgSelected}
-                  aria-label={`Agent: ${ag.label}, state: ${ag.state}, liveness: ${ag.liveness}`}
+                  aria-label={ag.kind === 'terminal' ? `Terminal: ${ag.label}, liveness: ${ag.liveness}` : `Agent: ${ag.label}, state: ${ag.state}, liveness: ${ag.liveness}`}
                 >
                   <WorkflowNodeCardBody
                     node={ag}

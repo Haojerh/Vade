@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import type { AdeProvider, Project } from '../../shared/contracts.js';
+import type { AdeProvider, Project, TerminalShell } from '../../shared/contracts.js';
 import { CliError } from '../integrations/cli.js';
 
 export interface SessionRecord {
@@ -18,6 +18,7 @@ export interface SessionRecord {
   providerThreadId?: string;
   bindingToken?: string;
   statusToken?: string;
+  shell?: TerminalShell;
 }
 
 export function adeDataDirectory(): string {
@@ -34,6 +35,8 @@ export class AdeStore {
       CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS titles (id TEXT PRIMARY KEY, title TEXT NOT NULL);`);
+    this.db.exec(`CREATE TABLE IF NOT EXISTS provider_accounts (id TEXT PRIMARY KEY, provider TEXT NOT NULL, label TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS provider_account_selection (provider TEXT PRIMARY KEY, account_id TEXT NOT NULL);`);
   }
 
   projects(): Project[] {

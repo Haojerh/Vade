@@ -51,11 +51,11 @@ export function RegisterProject({ onRegistered }: { onRegistered: (id: string) =
   return <>
     <button type="button" className="btn-icon project-add-button" aria-label="Add a project" title="Add a project"
       aria-haspopup="dialog" aria-expanded={overlay.present && !overlay.closing}
-      onClick={() => { setMode('choose'); setPath(''); setName(''); setUrl(''); setError(null); overlay.open(); }}><Icon name="plus" size={16} /></button>
+      onClick={() => { setMode('choose'); setPath(''); setName(''); setUrl(''); setError(null); overlay.open(); }}><Icon name="plus" size={14} /></button>
     <Modal isOpen={overlay.present} isClosing={overlay.closing} busy={busy} onClose={overlay.close}
       className="add-project-dialog" aria-labelledby="add-project-title">
       <div className="add-project-heading">
-        <div>{mode !== 'choose' && <button type="button" className="add-project-back" disabled={busy} onClick={() => { setError(null); setMode(mode === 'browse' && browseFor !== 'add' ? browseFor : 'choose'); }}><Icon name="chevron-left" size={16} />Back</button>}
+        <div>{mode !== 'choose' && mode !== 'browse' && <button type="button" className="add-project-back" disabled={busy} onClick={() => { setError(null); setMode('choose'); }}><Icon name="chevron-left" size={16} />Back</button>}
           <h2 id="add-project-title">{title}</h2></div>
         <OverlayCloseButton onClick={overlay.close} disabled={busy} aria-label="Close add project" />
       </div>
@@ -72,7 +72,7 @@ export function RegisterProject({ onRegistered }: { onRegistered: (id: string) =
           <button type="button" disabled={busy} onClick={() => { setError(null); setMode('create'); }}><Icon name="plus" size={21} /><span><strong>Create new project</strong><span>Start from an empty folder</span></span></button>
         </div>
       </div>}
-      {mode === 'browse' && <ProjectFolderBrowser initialPath={path || undefined} busy={busy} onSelect={selected => {
+      {mode === 'browse' && <ProjectFolderBrowser initialPath={path || undefined} busy={busy} onBack={() => { setError(null); setMode(browseFor === 'add' ? 'choose' : browseFor); }} onSelect={selected => {
         if (browseFor === 'add') void add({ path: selected });
         else { setPath(selected); setMode(browseFor); setError(null); }
       }} />}

@@ -1,4 +1,5 @@
 import React from 'react';
+import { Icon } from '../ui/Icon';
 import { AgentLetterIcon, AiderIcon, ClaudeIcon, CopilotIcon, DroidIcon, GeminiIcon, KiloIcon, MiniMaxIcon, OmpIcon, OpenAIIcon, OpenCodeGoIcon, OpenCodeIcon, PiIcon } from './OrcaProviderGlyphs';
 import { ORCA_PROVIDER_IMAGES } from './OrcaProviderAssets';
 
@@ -39,6 +40,7 @@ const glyphs = {
 } satisfies Record<string, React.ComponentType<{ size?: number }>>;
 
 export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className = '', size = 16, showLabel = false }) => {
+  if (provider === 'terminal') return <span className={`provider-badge ${className}`}><Icon name="terminal" size={size} />{showLabel && <span>Terminal</span>}</span>;
   const { id, displayName } = normalizeProvider(provider);
   const image = imageAssets[id as keyof typeof imageAssets];
   const Glyph = glyphs[id as keyof typeof glyphs];

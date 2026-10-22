@@ -681,7 +681,7 @@ test('WorkflowGraph renders orchestrator in separate lane when orchestrationSepa
   }));
 
   assert.ok(html.includes('orchestrator-lane'), 'Orchestrator lane must be rendered');
-  assert.ok(html.includes('1 Orchestrator • 1 Worktree'), 'Count badge must include orchestrator count');
+  assert.ok(!html.includes('node-count-badge'), 'Toolbar omits the redundant node count');
   assert.ok(html.includes('Lead Orchestrator'));
 });
 
@@ -748,7 +748,7 @@ test('WorkflowGraph moves orchestrator inside worktree and omits orchestrator la
 
   assert.ok(!html.includes('orchestrator-lane'), 'Orchestrator lane must NOT be rendered');
   assert.ok(!html.includes('Orchestrator •'), 'Toolbar badge must NOT contain Orchestrator');
-  assert.ok(html.includes('1 Worktree'), 'Toolbar badge must show worktree count');
+  assert.ok(!html.includes('node-count-badge'), 'Toolbar omits the redundant worktree count');
   assert.ok(html.includes('worktree-agents-stack'), 'Worktree agents stack must be rendered');
   assert.ok(html.includes('Lead Orchestrator'), 'Orchestrator node must be placed inside the worktree');
 });

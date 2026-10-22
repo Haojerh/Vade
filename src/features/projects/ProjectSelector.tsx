@@ -1,6 +1,5 @@
 import { Select } from '../../components/ui/Select';
 import React from 'react';
-import { UsagePanel } from '../usage/UsagePanel';
 import type { DashboardSnapshot, Inventory, Section } from '../../../shared/contracts';
 import {
   type NodeDetailsVisibleSections,
@@ -10,6 +9,7 @@ import { RegisterProject } from './RegisterProject';
 import { DeleteProject } from './DeleteProject';
 
 export interface ProjectSelectorProps {
+  footerActions?: React.ReactNode;
   onOpenSettings?: () => void;
   standalone?: boolean;
   onRegistered?: (id: string) => void;
@@ -37,9 +37,12 @@ export interface ProjectSelectorProps {
   onToggleCommitGraph?: (enabled: boolean) => void;
   toolActivityEnabled?: boolean;
   onToggleToolActivity?: (enabled: boolean) => void;
+  chatToolCallsEnabled?: boolean;
+  onToggleChatToolCalls?: (enabled: boolean) => void;
 }
 
 export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
+  footerActions,
   onOpenSettings,
   standalone,
   onRegistered,
@@ -54,6 +57,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
 }) => {
 
   const projects = inventorySection?.data?.projects ?? [];
+
+
 
   const [isProjectsExpanded, setIsProjectsExpanded] = React.useState<boolean>(() => {
     try {
@@ -90,32 +95,8 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
     return projects[0]?.id ?? null;
   }, [projects, selectedProjectId]);
 
-
   return (
     <nav className="project-rail" aria-label="Projects navigation">
-      {/* Brand Header with Integrated Collapse Action */}
-      <div className="rail-brand">
-        <div className="brand-title-row">
-          <div className="brand-title-main">
-            <img src={standalone ? new URL('../../assets/brand/vade.svg', import.meta.url).href : new URL('../../assets/brand/orca.png', import.meta.url).href} width={24} height={24} className="brand-icon" alt="" />
-            <span className="brand-name font-bold">{standalone ? 'Vade' : 'Orca Live'}</span>
-          </div>
-
-          {onCollapse && (
-            <button
-              type="button"
-              className="btn-icon rail-collapse-btn"
-              onClick={onCollapse}
-              aria-label="Collapse projects sidebar"
-              title="Collapse projects sidebar"
-            >
-              <Icon name="chevrons-left" size={14} />
-            </button>
-          )}
-        </div>
-        {!standalone && <div className="brand-tagline">Workflow Atlas</div>}
-      </div>
-
       {/* Mobile Selector Dropdown */}
       <div className="rail-mobile-select">
         <label htmlFor="mobile-project-select" className="rail-section-label">
@@ -159,9 +140,10 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
             />
           </button>
           {standalone && onRegistered && <RegisterProject onRegistered={onRegistered} />}
+          {onCollapse && <button type="button" className="btn-icon project-collapse-button" onClick={onCollapse} aria-label="Collapse projects sidebar" title="Collapse projects sidebar"><Icon name="chevrons-left" size={14} /></button>}
         </div>
 
-        {loading && <div className="rail-empty-hint">Scanning projects…</div>}
+        {loading && <div className="rail-empty-hint">Scanning projectsâ€¦</div>}
 
         {error && (
           <div className="rail-error-hint" role="alert">
@@ -181,7 +163,7 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
               const isHidden = !isProjectsExpanded && !isCurrent;
               const primaryPath = proj.paths[0] || '';
               const displayPath = primaryPath.length > 32
-                ? '…' + primaryPath.slice(-30)
+                ? 'â€¦' + primaryPath.slice(-30)
                 : primaryPath;
 
               return (
@@ -224,12 +206,12 @@ export const ProjectSelector: React.FC<ProjectSelectorProps> = ({
       <div className="rail-footer">
 
         <div className="rail-footer-controls">
-          <button type="button" className="btn btn-secondary btn-xs" onClick={onOpenSettings}
+          <button type="button" className="btn-icon" onClick={onOpenSettings}
             aria-label="Dashboard settings" title="Dashboard settings">
-            <Icon name="settings" size={12} /><span className="btn-label">Settings</span>
+            <Icon name="settings" size={15} />
           </button>
+          {footerActions}
         </div>
-        <UsagePanel />
       </div>
     </nav>
   );

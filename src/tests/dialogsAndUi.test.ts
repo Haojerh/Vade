@@ -5,7 +5,70 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { normalizeProvider, ProviderIcon } from '../components/providers/ProviderIcon';
 import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
+import { TopBar } from '../app/TopBar';
+
+test('top bar keeps Vade branding in the updated application layout', () => {
+  const html = renderToStaticMarkup(createElement(TopBar, {
+    topbarRef: { current: null }, runs: [], selectedRunId: null, onSelectRun: () => {},
+  }));
+  assert.match(html, /vade\.svg/);
+  assert.match(html, />Vade<\/h1>/);
+});
 import { SettingsPage } from '../app/SettingsPage';
+import { primaryWindow, remainingTime, usageGroups } from '../features/usage/usagePresentation';
+import { ProviderUsageDetails } from '../features/usage/UsagePanel';
+import type { ProviderUsage } from '../../shared/contracts';
+import { isTerminalReply } from '../features/workflow/terminalInput';
+import { ConversationToolCall, compactEditLines } from '../features/workflow/ConversationToolCall';
+import { conversationTimeline } from '../features/workflow/ConversationHistory';
+
+test('terminal protocol responses are excluded from keyboard input while commands and navigation remain input', () => {
+  for (const reply of ['\x1b[?1;2c', '\x1b[1;2R', '\x1b]10;rgb:eded/eded/eded\x1b\\', '\x1b]11;rgb:1818/1818/1818\x07']) assert.equal(isTerminalReply(reply), true);
+  for (const input of ['node --version\r', '\x1b[A', '\x03', '\x1b[200~echo test\x1b[201~']) assert.equal(isTerminalReply(input), false);
+});
+
+test('chat tool records preserve chronological scope and edit disclosures open by default', () => {
+  const edit = { id: 'edit', at: '2026-10-21T02:00:00Z', label: 'Edit: example.ts', edits: [{ path: 'example.ts', lines: [{ kind: 'remove' as const, text: 'before' }, { kind: 'add' as const, text: 'after' }], truncated: false }] };
+  const run = { id: 'run', at: '2026-10-21T03:00:00Z', label: 'Run: npm test', detail: 'Run: npm test' };
+  const markup = renderToStaticMarkup(createElement(ConversationToolCall, { tool: edit }));
+  assert.match(markup, /aria-expanded="true"/); assert.match(markup, /tool-edit-remove/); assert.match(markup, /tool-edit-add/);
+  const plain = renderToStaticMarkup(createElement(ConversationToolCall, { tool: run }));
+  assert.match(plain, /conversation-tool-call-plain/); assert.doesNotMatch(plain, /aria-expanded/);
+  assert.match(renderToStaticMarkup(createElement(ConversationToolCall, { tool: { ...run, detail: `Run: npm test -- ${'x'.repeat(200)}` } })), /aria-expanded="false"/);
+  const excerpt = compactEditLines([...Array.from({ length: 6 }, () => ({ kind: 'remove' as const, text: 'before' })), ...Array.from({ length: 6 }, () => ({ kind: 'add' as const, text: 'after' }))]);
+  assert.equal(excerpt.filter(line => line.kind === 'remove').length, 3);
+  assert.equal(excerpt.filter(line => line.kind === 'add').length, 3);
+  const message = { id: 'user', at: '2026-10-21T01:00:00Z', role: 'user' as const, text: 'Please edit' };
+  assert.deepEqual(conversationTimeline([message], [run, edit, { ...run, id: 'old', at: '2026-10-20T00:00:00Z' }], true).map(item => item.id), ['user', 'edit', 'run']);
+});
+
+test('usage summaries preserve reset timing and distinguish Antigravity model pools', () => {
+  const now = Date.parse('2026-10-21T00:00:00Z');
+  assert.equal(remainingTime(null, now), null);
+  assert.equal(remainingTime('invalid', now), null);
+  assert.equal(remainingTime('2026-10-21T04:17:00Z', now), '4h 17m');
+  const provider: ProviderUsage = { provider: 'codex', label: 'Codex', windows: [
+    { label: '5h', usedPercent: 27, resetsAt: '2026-10-21T04:17:00Z' },
+    { label: '7d', usedPercent: 41, resetsAt: '2026-10-26T16:00:00Z' },
+  ], buckets: [], meta: { availability: 'ready', observedAt: new Date(now).toISOString(), attemptedAt: new Date(now).toISOString(), partial: false, stale: false, issue: null } };
+  assert.deepEqual(usageGroups(provider), [{ label: null, windows: provider.windows }]);
+  const agy = { ...provider, provider: 'antigravity', windows: [
+    { label: 'Gemini Models weekly', usedPercent: 56, resetsAt: null },
+    { label: 'Gemini Models 5h', usedPercent: 0, resetsAt: null },
+    { label: 'Claude and GPT models weekly', usedPercent: 6, resetsAt: null },
+  ] };
+  assert.equal(primaryWindow(agy)?.usedPercent, 0);
+  const groups = usageGroups(agy);
+  assert.deepEqual(groups.map(group => group.label), ['Gemini', 'Claude/GPT']);
+  assert.deepEqual(groups[0].windows.map(w => w.usedPercent), [0, 56]);
+  assert.equal(groups[1].windows[0].usedPercent, 6);
+  for (const id of ['codex', 'claude', 'antigravity']) {
+    const html = renderToStaticMarkup(createElement(ProviderUsageDetails, { provider: { ...provider, provider: id, label: id } }));
+    assert.match(html, /27% used/); assert.match(html, /41% used/);
+    assert.match(html, /aria-valuenow="27"/); assert.match(html, /aria-valuenow="41"/);
+    assert.match(html, /Updated/);
+  }
+});
 
 test('Settings is a dedicated page with category navigation and existing preference values', () => {
   const html = renderToStaticMarkup(createElement(SettingsPage, {
@@ -158,9 +221,9 @@ test('ProjectSelector renders settings controls in sidebar', () => {
     onResetVisibleSections: () => {},
   }));
   assert.ok(html.includes('Dashboard settings'));
-  assert.ok(html.includes('Settings'));
-  assert.ok(html.includes('Vade') && html.includes('vade.svg'));
-  assert.ok(!html.includes('Your local agent workspace') && !html.includes('runtime-status-card'));
+  assert.match(html, /aria-label="Dashboard settings"/);
+  assert.ok(!html.includes('>Settings<'));
+  assert.ok(!html.includes('runtime-status-card'));
 });
 
 test('ProjectSelector renders expandable chevron toggle and all projects when expanded', () => {
@@ -563,7 +626,7 @@ test('AddAgentDialog waits for detected agents instead of fabricating installed 
   assert.ok(html.includes('Detecting agents'));
   assert.ok(!html.includes('Codex'));
   assert.ok(!html.includes('Claude'));
-  assert.ok(html.includes('Agent command'));
+  assert.ok(!html.includes('Agent command'), 'custom commands stay hidden until a legacy catalog confirms support');
   assert.ok(html.includes('Create Agent'));
 });
 

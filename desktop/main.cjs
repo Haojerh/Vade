@@ -25,9 +25,20 @@ else {
     });
     try {
       await ready;
+      // Electron reports its own main/renderer/GPU/utility processes; agents are separate.
+      const reportMemory = () => backend?.postMessage({ type: 'desktop-memory', bytes: app.getAppMetrics().reduce((total, metric) => total + metric.memory.workingSetSize * 1024, 0) });
+      reportMemory();
+      const memoryTimer = setInterval(reportMemory, 5000);
+      backend.once('exit', () => clearInterval(memoryTimer));
       const window = new BrowserWindow({ width: 1440, height: 920, minWidth: 760, minHeight: 540,
         title: 'Vade', show: false, backgroundColor: '#181818',
+        ...(process.platform === 'win32' ? {
+          titleBarStyle: 'hidden',
+          titleBarOverlay: { color: '#202020', symbolColor: '#d4d4d4', height: 36 },
+        } : {}),
         webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs') } });
+      window.setMenuBarVisibility(false);
+      window.removeMenu();
       const origin = 'http://127.0.0.1:4317';
       ipcMain.handle('ade:choose-folder', async event => {
         if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('Folder picker is only available to ADE');

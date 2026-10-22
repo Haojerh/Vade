@@ -14,16 +14,15 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 24px 20px 24px;
-  border-bottom: 1px solid var(--border-subtle);
+  padding: 12px 36px;
   background: var(--canvas-bg);
   font-size: 12px;
 }
 .toolbar-title-group {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 8px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 .graph-title {
@@ -45,7 +44,7 @@
   gap: 14px;
 }
 @media (max-width: 600px) {
-  .graph-toolbar { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px; }
+  .graph-toolbar { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px 28px; }
   .toolbar-title-group { width: 100%; gap: 4px; }
   .graph-title { white-space: nowrap; }
   .graph-toolbar-actions { flex-wrap: wrap; gap: 8px; width: 100%; }
@@ -83,6 +82,7 @@
   flex: 1 1 0;
   min-height: 0;
   overflow: auto;
+  scrollbar-gutter: stable;
   overflow-anchor: none;
   padding: 0;
   cursor: grab;

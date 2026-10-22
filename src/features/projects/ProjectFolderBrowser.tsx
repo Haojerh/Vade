@@ -4,7 +4,7 @@ import { fetchProjectFolders } from '../../api/client';
 import { Icon } from '../../components/ui/Icon';
 import { DialogError } from '../../components/ui/DialogActions';
 
-export function ProjectFolderBrowser({ initialPath, busy, onSelect }: { initialPath?: string; busy: boolean; onSelect: (path: string) => void }) {
+export function ProjectFolderBrowser({ initialPath, busy, onSelect, onBack }: { initialPath?: string; busy: boolean; onSelect: (path: string) => void; onBack: () => void }) {
   const [directory, setDirectory] = useState(initialPath);
   const [input, setInput] = useState(initialPath ?? '');
   const [page, setPage] = useState<LocalFolders | null>(null);
@@ -27,6 +27,7 @@ export function ProjectFolderBrowser({ initialPath, busy, onSelect }: { initialP
       <button className="btn btn-secondary" disabled={busy || !input.trim()}>Go</button>
     </form>
     <div className="project-folder-toolbar">
+      <button className="btn btn-secondary btn-sm" type="button" disabled={busy} onClick={onBack}><Icon name="chevron-left" />Back</button>
       <button className="btn btn-secondary btn-sm" type="button" disabled={busy || loading || !page?.parent} onClick={() => setDirectory(page!.parent!)}><Icon name="arrow-up" />Up</button>
       <button className="btn btn-secondary btn-sm" type="button" disabled={busy || loading || !page} onClick={() => setDirectory(page!.home)}>Home</button>
     </div>

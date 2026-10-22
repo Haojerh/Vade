@@ -22,6 +22,9 @@ import { useKanban } from '../features/kanban/useKanban';
 import { KanbanBoard } from '../features/kanban/KanbanBoard';
 import '../styles/kanban.css';
 import { Modal } from '../components/ui/Modal';
+import { Icon } from '../components/ui/Icon';
+import { StatusBar } from './StatusBar';
+import { DashboardActions } from './DashboardActions';
 
 export const App: React.FC = () => {
   const [pageHash, setPageHash] = useState(() => window.location.hash);
@@ -152,6 +155,8 @@ export const App: React.FC = () => {
     setCommitGraphEnabled,
     toolActivityEnabled,
     setToolActivityEnabled,
+    chatToolCallsEnabled,
+    setChatToolCallsEnabled,
     visibleSections,
     handleToggleVisibleSection,
     handleResetVisibleSections,
@@ -223,14 +228,26 @@ export const App: React.FC = () => {
     orchestrationSeparated={orchestrationSeparated} onToggleOrchestrationSeparated={setOrchestrationSeparated}
     commitGraphEnabled={commitGraphEnabled} onToggleCommitGraph={setCommitGraphEnabled}
     toolActivityEnabled={toolActivityEnabled} onToggleToolActivity={setToolActivityEnabled}
+    chatToolCallsEnabled={chatToolCallsEnabled} onToggleChatToolCalls={setChatToolCallsEnabled}
   />;
 
   return (
     <div
-      className="dashboard-app-root"
+      className="dashboard-app-root dashboard-unified-header"
       data-card-colors={cardStateColors ? 'true' : 'false'}
       style={{ '--topbar-height': `${topbarHeight}px` } as React.CSSProperties}
     >
+        {/* Top Header Bar */}
+        <TopBar
+          topbarRef={topbarRef}
+          runs={runs}
+          selectedRunId={selectedRunId}
+          onSelectRun={setSelectedRunId}
+        />
+
+      <div className="dashboard-workspace">
+      {!leftSidebarOpen && <button type="button" className="sidebar-edge-tab sidebar-edge-left" aria-label="Open projects sidebar" title="Open projects sidebar" onClick={() => handleToggleLeft(true)}><Icon name="chevrons-right" size={14} /></button>}
+      {!rightSidebarOpen && <button type="button" className="sidebar-edge-tab sidebar-edge-right" aria-label="Open GitHub sidebar" title="Open GitHub sidebar" onClick={() => handleToggleRight(true)}><Icon name="chevrons-left" size={14} /></button>}
       {/* 1. Left Project Navigation (Resizable Sidebar) */}
       {isNarrow && (leftSidebarOpen || rightSidebarOpen) && (
         <button className="sidebar-backdrop" aria-label="Close sidebar" onClick={() => {
@@ -252,6 +269,10 @@ export const App: React.FC = () => {
         ariaLabel="Projects Navigation Sidebar"
       >
         <ProjectSelector
+          footerActions={<DashboardActions kanbanOpen={kanbanOverlay.present}
+            onToggleKanban={() => kanbanOverlay.present ? kanbanOverlay.close() : kanbanOverlay.open()}
+            onOpenInbox={() => { inboxModal.open(); void inbox.refresh(); }} unread={inbox.unreadCount}
+            refreshing={snapshotLoading || projectsLoading} onRefresh={refreshAll} />}
           onOpenSettings={() => { window.location.hash = '/settings/general'; }}
           standalone={prerequisites?.runtime === 'ade'}
           onRegistered={id => { refreshAll(); setSelectedProjectId(id); }}
@@ -276,6 +297,8 @@ export const App: React.FC = () => {
           onToggleCommitGraph={setCommitGraphEnabled}
           toolActivityEnabled={toolActivityEnabled}
           onToggleToolActivity={setToolActivityEnabled}
+          chatToolCallsEnabled={chatToolCallsEnabled}
+          onToggleChatToolCalls={setChatToolCallsEnabled}
           onToggleCardStateColors={setCardStateColors}
           orchestrationSeparated={orchestrationSeparated}
           onToggleOrchestrationSeparated={setOrchestrationSeparated}
@@ -287,26 +310,6 @@ export const App: React.FC = () => {
 
       {/* 2. Main Content Center Stage */}
       <main className="dashboard-main-stage" role="main">
-        {/* Top Header Bar */}
-        <TopBar
-          kanbanOpen={kanbanOverlay.present}
-          onToggleKanban={() => kanbanOverlay.present ? kanbanOverlay.close() : kanbanOverlay.open()}
-          onOpenInbox={() => { inboxModal.open(); void inbox.refresh(); }}
-          inboxUnreadCount={inbox.unreadCount}
-          topbarRef={topbarRef}
-          leftSidebarOpen={leftSidebarOpen}
-          onToggleLeft={handleToggleLeft}
-          rightSidebarOpen={rightSidebarOpen}
-          onToggleRight={handleToggleRight}
-          currentProject={currentProject}
-          runs={runs}
-          selectedRunId={selectedRunId}
-          onSelectRun={setSelectedRunId}
-          snapshotLoading={snapshotLoading}
-          projectsLoading={projectsLoading}
-          onRefreshAll={refreshAll}
-        />
-
         {/* Global Warning / Alert Banners if source issues exist */}
         <div className="dashboard-alerts-container" aria-live="polite">
           {runtimeMeta?.issue && (
@@ -444,7 +447,10 @@ export const App: React.FC = () => {
         onSessionChange={refreshAll}
         visibleSections={visibleSections}
         commitGraphEnabled={commitGraphEnabled}
+        chatToolCallsEnabled={chatToolCallsEnabled}
       />
+      </div>
+      <StatusBar />
     </div>
   );
 };

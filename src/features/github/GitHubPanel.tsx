@@ -103,7 +103,6 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const selectTab = (tab: GitHubTabKey) => setActiveTab(tab);
 
   const repo = data?.repository;
-  const auth = data?.auth ?? 'unknown';
 
   const pagination = useGitHubPagination(projectId, data, query, (tab, ids) => {
     const stored = history.current.get(keys[tab]) ?? readUnreadHistory(keys[tab]);
@@ -170,11 +169,6 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
           </div>
 
           <div className="panel-actions">
-            {!isFolder && (
-              <span className={`badge badge-auth-${auth}`}>
-                Auth: {auth}
-              </span>
-            )}
             {isFolder && (
               <span className="badge badge-neutral">Folder</span>
             )}

@@ -4,6 +4,19 @@ import path from 'node:path';
 import type { SessionRecord } from './store.js';
 import { validCodexThreadId } from './codexThread.js';
 import { CliError } from '../integrations/cli.js';
+import { DatabaseSync } from 'node:sqlite';
+
+export function agyConversationSaved(record: SessionRecord): boolean {
+  if (!validCodexThreadId(record.providerThreadId)) return false;
+  const root = process.env.GEMINI_APPDATA_DIR || process.env.ANTIGRAVITY_APPDATA_DIR || path.join(os.homedir(), '.gemini', 'antigravity-cli');
+  const file = path.join(root, 'conversations', record.providerThreadId + '.db');
+  let db;
+  try {
+    if (!fs.statSync(file).isFile()) return false;
+    db = new DatabaseSync(file, { readOnly: true });
+    return Boolean(db.prepare('SELECT 1 FROM trajectory_meta WHERE cascade_id = ? LIMIT 1').get(record.providerThreadId));
+  } catch { return false; } finally { db?.close(); }
+}
 
 // Observe identity only. No tool hooks, approvals, prompt text, or provider credentials are retained.
 export const AGY_IDENTITY_HOOK = String.raw`

@@ -1,7 +1,16 @@
 import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ConversationMessage, ConversationPage } from '../../../shared/contracts';
+import type { ConversationMessage, ConversationPage, ToolActivity } from '../../../shared/contracts';
 import { fetchNodeDetails } from '../../api/client';
 import { MessageMarkdown } from './MessageMarkdown';
+import { ConversationToolCall } from './ConversationToolCall';
+
+export function conversationTimeline(messages: ConversationMessage[], tools: ToolActivity[], limited: boolean) {
+  const first = messages.find(message => message.at)?.at;
+  const cutoff = limited && first ? Date.parse(first) : -Infinity;
+  const items = [...messages.map(message => ({ id: message.id, at: message.at, message, tool: null as ToolActivity | null })),
+    ...tools.filter(tool => !tool.at || Date.parse(tool.at) >= cutoff).map(tool => ({ id: tool.id, at: tool.at, message: null as ConversationMessage | null, tool }))];
+  return items.sort((a, b) => (a.at ? Date.parse(a.at) : Infinity) - (b.at ? Date.parse(b.at) : Infinity));
+}
 
 export function mergeConversationMessages(older: ConversationMessage[], current: ConversationMessage[]): ConversationMessage[] {
   const seen = new Set<string>();
@@ -18,9 +27,10 @@ export function mergeLiveConversation(current: ConversationMessage[], incoming: 
   return [...messages.values()];
 }
 
-export function ConversationHistory({ projectId, nodeId, runId, page, scrollContainerRef }: {
+export function ConversationHistory({ projectId, nodeId, runId, page, scrollContainerRef, tools = [] }: {
   projectId: string; nodeId: string; runId: string | null; page: ConversationPage;
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
+  tools?: ToolActivity[];
 }) {
   const [messages, setMessages] = useState(page.messages);
   const [cursor, setCursor] = useState(page.nextCursor);
@@ -52,7 +62,7 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
       element.scrollTop = anchor.current.top + element.scrollHeight - anchor.current.height;
       anchor.current = null;
     }
-  }, [messages]);
+  }, [messages, tools]);
 
   const loadOlder = useCallback(async () => {
     if (!cursor || request.current) return;
@@ -90,7 +100,11 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
       {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     </div>}
     <div className="conversation-thread" role="log" aria-label="Conversation turns" aria-live="off">
-      {messages.map(message => <div key={message.id} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
+      {conversationTimeline(messages, tools, Boolean(cursor)).map(item => {
+        if (item.tool) return <ConversationToolCall key={item.id} tool={item.tool} />;
+        const message = item.message;
+        if (!message) return null;
+        return <div key={message.id} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
         <div className={`chat-bubble ${message.role === 'agent' ? 'bubble-agent' : 'bubble-user'}`}>
           <div className="chat-bubble-header"><span className="bubble-role font-semibold text-xs">{message.role === 'agent' ? 'Agent' : 'User'}</span>
             <time className="bubble-time font-mono text-xs text-muted" dateTime={message.at ?? undefined}>{message.at ? new Date(message.at).toLocaleString() : ''}</time></div>
@@ -99,7 +113,8 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
             const next = new Set(current); if (next.has(message.id)) next.delete(message.id); else next.add(message.id); return next;
           })}>{expanded.has(message.id) ? 'Read Less' : 'Read More'}</button>}
         </div>
-      </div>)}
+      </div>;
+      })}
     </div>
   </div>;
 }

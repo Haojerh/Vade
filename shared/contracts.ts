@@ -68,6 +68,41 @@ export interface UsageData {
   providers: ProviderUsage[];
 }
 
+export interface LocalConnection {
+  id: 'github' | 'codex' | 'claude' | 'antigravity';
+  label: string;
+  installed: boolean;
+  connected: boolean | null;
+  message: string;
+  installUrl: string;
+  loginCommand: string;
+  accounts?: ProviderAccount[];
+}
+
+export type AccountProvider = 'codex' | 'claude';
+export interface ProviderAccount {
+  id: string;
+  label: string;
+  active: boolean;
+  detected: boolean | null;
+  signIn?: ProviderSignIn;
+  loginCommand: string;
+}
+export interface ProviderSignIn { state: 'pending' | 'complete' | 'failed'; url?: string }
+export interface AddProviderAccountRequest { label: string }
+export interface SelectProviderAccountRequest { accountId: string }
+
+export interface LocalConnectionsData {
+  host: 'Windows' | 'macOS' | 'Linux';
+  connections: LocalConnection[];
+}
+
+export interface AppResources {
+  memoryBytes: number;
+  scope: 'desktop-app' | 'backend';
+  observedAt: ISO;
+}
+
 export interface Run {
   id: Id;
   sourceRunId: string;
@@ -215,6 +250,7 @@ export interface ConversationPage {
 }
 
 export interface NodeDetails {
+  terminalPreview?: string | null;
   session?: { terminal: boolean; chat: boolean; history?: boolean; resumable: boolean; reason?: string };
   node: Node;
   tasks: Task[];
@@ -370,9 +406,13 @@ export interface RenameNodeTitleResponse {
   message?: string;
 }
 
+export type TerminalShell = 'powershell' | 'cmd' | 'bash';
+
 export interface CreateAgentRequest {
   command: string;
   title?: string;
+  /** Fixed shell choice; only applies when command is "terminal". */
+  shell?: TerminalShell;
 }
 
 export interface CreateWorktreeRequest {
@@ -446,8 +486,10 @@ export interface LocalFolders {
   folders: { name: string; path: string }[];
   limited: boolean;
 }
-export type AdeProvider = 'codex' | 'claude' | 'antigravity';
+export type AdeProvider = 'codex' | 'claude' | 'antigravity' | 'terminal';
 export interface TerminalPage {
+  restartable?: boolean;
+  recoverable?: boolean;
   resumable?: boolean;
   data: string;
   cursor: number;

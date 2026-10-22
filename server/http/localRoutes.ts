@@ -1,5 +1,5 @@
 import type http from 'node:http';
-import type { CreateWorktreeRequest, GitHubQuery, RegisterProjectRequest, SendMessageRequest } from '../../shared/contracts.js';
+import type { CreateWorktreeRequest, GitHubQuery, RegisterProjectRequest, SendMessageRequest, TerminalShell } from '../../shared/contracts.js';
 import { CliError } from '../integrations/cli.js';
 import { collectGitHubData } from '../integrations/github.js';
 import { LocalRuntime, section } from '../runtime/localRuntime.js';
@@ -32,6 +32,25 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     return value;
   };
   try {
+    const accountRoute = pathname.match(/^\/api\/provider-accounts\/(codex|claude)(?:\/(select|login|delete))?$/);
+    if (accountRoute) {
+      queryKeys();
+      const provider = accountRoute[1] as 'codex' | 'claude';
+      if (!accountRoute[2] && (method === 'GET' || method === 'HEAD')) { sendJson(200, await runtime.accounts.list(provider)); return; }
+      requireMethod('POST');
+      if (accountRoute[2]) {
+        const request = await body<{ accountId: string }>(['accountId']);
+        const id = text(request.accountId, 'account ID', 36);
+        if (accountRoute[2] === 'select') runtime.accounts.select(provider, id);
+        else if (accountRoute[2] === 'login') await runtime.accounts.startLogin(provider, id);
+        else await runtime.accounts.remove(provider, id);
+      } else {
+        const request = await body<{ label: string }>(['label']);
+        await runtime.accounts.add(provider, text(request.label, 'account name', 60));
+      }
+      runtime.connectionsService.invalidate();
+      sendJson(200, await runtime.accounts.list(provider)); return;
+    }
     if (pathname === '/api/health') { requireMethod('GET'); queryKeys(); sendJson(200, { status: 'ok', readOnly: false, runtime: 'ade' }); return; }
     if (pathname === '/api/prerequisites') {
       requireMethod('GET'); queryKeys();
@@ -41,7 +60,13 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
         orchestrationSkill: false, version: 'ADE v1', issues: git ? [] : ['Install Git and make it available on PATH, then retry.'] }); return;
     }
     if (pathname === '/api/agents/catalog') { requireMethod('GET'); queryKeys(); sendJson(200, agentCatalog()); return; }
-    if (pathname === '/api/usage') { requireMethod('GET'); queryKeys(); sendJson(200, section(null, 'unsupported', 'Provider quotas are not connected in standalone ADE yet.')); return; }
+    if (pathname === '/api/connections') { requireMethod('GET'); queryKeys(); sendJson(200, await runtime.connectionsService.connections()); return; }
+    if (pathname === '/api/usage') { requireMethod('GET'); queryKeys('refresh'); if (query.has('refresh') && query.get('refresh') !== '1') throw new CliError('INVALID_ARGUMENT', 'refresh must be 1'); sendJson(200, await runtime.connectionsService.usage(query.get('refresh') === '1')); return; }
+    if (pathname === '/api/resources') {
+      requireMethod('GET'); queryKeys();
+      const desktop = runtime.desktopMemory && Date.now() - runtime.desktopMemory.at < 15000 ? runtime.desktopMemory : null;
+      sendJson(200, { memoryBytes: desktop?.bytes ?? process.memoryUsage().rss, scope: desktop ? 'desktop-app' : 'backend', observedAt: new Date(desktop?.at ?? Date.now()).toISOString() }); return;
+    }
     if (pathname === '/api/inbox') { requireMethod('GET'); queryKeys(); sendJson(200, section({ items: [] }, 'unsupported', 'Standalone ADE does not yet collect structured task outcomes.')); return; }
     const deleteProject = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)$/);
     if (deleteProject && pathname !== '/api/projects/folders') {
@@ -173,8 +198,8 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     else if (action === 'terminal-resize') { const request = await body<{ cols: number; rows: number }>(['cols', 'rows']); await runtime.sessions.resize(projectId, nodeId, request.cols, request.rows); }
     else if (action === 'create-agent') {
       const tree = await runtime.git.requireWorktree(project, nodeId);
-      const request = await body<{ command: string; title?: string }>(['command', 'title']);
-      const session = await runtime.sessions.launch(projectId, tree.id, tree.path, text(request.command, 'agent', 32), request.title === undefined ? undefined : text(request.title, 'title'));
+      const request = await body<{ command: string; title?: string; shell?: TerminalShell }>(['command', 'title', 'shell']);
+      const session = await runtime.sessions.launch(projectId, tree.id, tree.path, text(request.command, 'agent', 32), request.title === undefined ? undefined : text(request.title, 'title'), request.shell === undefined ? undefined : text(request.shell, 'shell', 16) as TerminalShell);
       sendJson(200, { ok: true, handle: session.id, title: session.title }); return;
     } else if (action === 'close-tab') { runtime.sessions.closeSession(projectId, nodeId); }
     else if (action === 'rename' || action === 'rename-worktree') {
