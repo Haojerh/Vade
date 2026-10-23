@@ -152,7 +152,7 @@ const factory = async (context) => {
     else if (['permission.replied','permission.v2.replied','question.replied','question.rejected','question.v2.replied','question.v2.rejected','form.replied','form.cancelled'].includes(event.type) && active) publish('working', 'PostToolUse');
     else if (event.type === 'session.execution.failed' && active) { outcome=true; active=false; publish('failed','SessionError'); }
     else if (event.type === 'session.execution.interrupted' && active) { outcome=true; active=false; publish(p.reason === 'user' ? 'interrupted' : 'unknown','Stop'); }
-    else if (event.type === 'session.error' && active && p.error?.name !== 'MessageAbortedError') { outcome=true; active=false; publish('failed','SessionError'); }
+    else if (event.type === 'session.error' && active) { outcome=true; active=false; publish(p.error?.name === 'MessageAbortedError' ? 'unknown' : 'failed', p.error?.name === 'MessageAbortedError' ? 'SessionAborted' : 'SessionError'); }
     else if ((event.type === 'session.execution.succeeded' || event.type === 'session.idle' || event.type === 'session.status' && p.status?.type === 'idle') && active && !outcome) { active=false; outcome=true; publish('completed','Stop'); }
   } };
 };

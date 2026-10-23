@@ -42,6 +42,9 @@ export function programStatusReader(onStatus: (status: AgentStatus) => void, onQ
 
 // A completed turn means the provider returned to idle after reporting activity, not task success.
 // Only an observed idle after an Escape during working confirms an interruption; input alone does not.
+export function isInterruptionInput(data: string): boolean {
+  return /^(?:\x1b){1,2}$/.test(data) || data === '\x03' || /^\x1b\[27(?:;1(?::[12])?)?u$/.test(data);
+}
 export class TerminalTurnStatus {
   private active = false;
   private outcome: AgentStatus | undefined;
@@ -50,7 +53,8 @@ export class TerminalTurnStatus {
   private confirmation = '';
 
   input(data: string, now = Date.now(), working = this.working): void {
-    if (working && (data === '\x1b' || data === '\x03' || /^\x1b\[27(?:;1(?::[12])?)?u$/.test(data))) { this.interruptAt = now; this.confirmation = ''; }
+    if (/^(?:\x1b\[[IO]|\x1b\[<(?:\d+;){2}\d+[Mm]|\x1b\[M[\s\S]{3}|\x1b\[\d+(?:;\d+)*:3u)+$/.test(data)) return;
+    if (working && isInterruptionInput(data)) { this.interruptAt = now; this.confirmation = ''; }
     else if (data !== '\x1b') this.interruptAt = 0;
   }
 
@@ -72,20 +76,22 @@ export class TerminalTurnStatus {
       return status;
     }
     this.working = false;
+    if (this.outcome && !this.active && ['completed','failed','interrupted'].includes(status.state)) return this.outcome;
     if (status.state === 'idle') {
       if (this.outcome) return this.outcome;
       if (!this.active) return status;
-      status = { ...status, state: this.interruptAt && now - this.interruptAt <= 1500 ? 'interrupted' : 'completed' };
+      status = { ...status, state: this.interruptAt && now >= this.interruptAt && now - this.interruptAt <= 5000 ? 'interrupted' : 'completed' };
     }
+    if (status.state === 'completed' && this.interruptAt && now >= this.interruptAt && now - this.interruptAt <= 5000) status = { ...status, state: 'interrupted' };
     if (['completed', 'failed', 'interrupted'].includes(status.state)) {
       this.active = false; this.interruptAt = 0; this.outcome = status;
     }
     return status;
   }
 
-  nativeEnd(status: AgentStatus, now = Date.now(), interruptionWindow = 1500): AgentStatus {
+  nativeEnd(status: AgentStatus, now = Date.now(), interruptionWindow = 5000): AgentStatus {
     if (this.outcome && !this.active) return this.outcome;
-    return this.observe(status.state === 'completed' && this.interruptAt && now - this.interruptAt <= interruptionWindow
+    return this.observe((status.state === 'completed' || status.event === 'SessionAborted') && this.interruptAt && now >= this.interruptAt && now - this.interruptAt <= interruptionWindow
       ? { ...status, state: 'interrupted' } : status, now);
   }
 }

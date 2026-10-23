@@ -559,8 +559,7 @@
   color: var(--state-working-text);
   border: 1px solid var(--state-working-border);
 }
- .node-badge-state.state-waiting,
- .node-badge-state.state-interrupted {
+ .node-badge-state.state-waiting {
   background: var(--state-waiting-bg);
   color: var(--state-waiting-text);
   border: 1px solid var(--state-waiting-border);
@@ -575,7 +574,8 @@
   color: var(--state-completed-text);
   border: 1px solid var(--state-completed-border);
 }
-.node-badge-state.state-failed {
+.node-badge-state.state-failed,
+.node-badge-state.state-interrupted {
   background: var(--state-failed-bg);
   color: var(--state-failed-text);
   border: 1px solid var(--state-failed-border);
@@ -620,12 +620,12 @@
   background: var(--card-idle-bg);
   border-color: var(--card-idle-border);
 }
-[data-card-colors="true"] .graph-node-card.state-waiting,
-[data-card-colors="true"] .graph-node-card.state-interrupted {
+[data-card-colors="true"] .graph-node-card.state-waiting {
   background: var(--state-waiting-bg);
   border-color: var(--state-waiting-border);
 }
 [data-card-colors="true"] .graph-node-card.state-blocked,
+[data-card-colors="true"] .graph-node-card.state-interrupted,
 [data-card-colors="true"] .graph-node-card.state-failed {
   background: var(--state-failed-bg);
   border-color: var(--state-failed-border);

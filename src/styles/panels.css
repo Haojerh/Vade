@@ -20,6 +20,7 @@
   align-items: center;
   justify-content: space-between;
   margin-bottom: 12px;
+  gap: 8px;
 }
 .panel-title {
   font-size: 13px;

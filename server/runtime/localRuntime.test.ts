@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import type { AddressInfo } from 'node:net';
 import { createServer } from '../http/api.js';
 import { GIT_PATH, defaultCommandRunner, type CommandRunner } from '../integrations/cli.js';
-import { AdeStore } from './store.js';
+import { AdeStore, type SessionRecord } from './store.js';
 import { LocalRuntime } from './localRuntime.js';
 import { AdeSessions } from './sessions.js';
 import { addProject } from './projects.js';
@@ -151,7 +151,7 @@ test('all agents expose waiting questions, fence Chat answers and persist exact 
       await until(() => sessions.status(project.id, record.id).data?.state === 'completed');
       assert.equal(fs.readFileSync(statusFile(directory, record.id) + '.answer', 'utf8'), '2');
       const inbox = await (await fetch(base + '/api/inbox')).json();
-      const items = inbox.data.items.filter((item: any) => item.nodeId === record.id);
+      const items = inbox.data.items.filter((item: any) => item.nodeId === record.id && item.source === 'turn');
       assert.equal(items.length, 1); assert.equal(items[0].outcome, 'completed'); assert.equal(items[0].source, 'turn');
       assert.equal((await (await fetch(base + '/api/inbox')).json()).data.items.length, inbox.data.items.length);
       const publish = (state: string, event: string) => {
@@ -163,7 +163,7 @@ test('all agents expose waiting questions, fence Chat answers and persist exact 
       publish('interrupted', provider === 'codex' ? 'Interrupt' : 'Stop');
       publish('working', provider === 'antigravity' ? 'PreInvocation' : 'UserPromptSubmit');
       publish('failed', 'Stop');
-      const results = (await (await fetch(base + '/api/inbox')).json()).data.items.filter((item: any) => item.nodeId === record.id);
+      const results = (await (await fetch(base + '/api/inbox')).json()).data.items.filter((item: any) => item.nodeId === record.id && item.source === 'turn');
       assert.deepEqual(new Set(results.map((item: any) => item.outcome)), new Set(['completed', 'interrupted', 'failed']));
       if (provider === 'antigravity') {
         await sessions.input(project.id, record.id, 'SHOW_APPROVAL');
@@ -1126,6 +1126,36 @@ test('terminal launches pass the chosen fixed shell, persist it for reopen and r
   } finally { sessions.close(); f.close(); }
 });
 
+
+test('fresh native questions notify once and stay separate from completed turn results', async () => {
+  const f = fixture();
+  const sessions = f.runtime.sessions as any;
+  let recordId: string | undefined;
+  try {
+    const project = await f.runtime.git.register(f.repo), tree = (await f.runtime.git.worktrees(project))[0];
+    const record: SessionRecord = { id: crypto.randomUUID(), projectId: project.id, worktreeId: tree.id, cwd: tree.path, provider: 'claude', title: 'Question agent', closed: false, createdAt: new Date().toISOString(), statusToken: 'owned-launch' };
+    recordId = record.id; f.runtime.store.saveSession(record);
+    sessions.live.set(record.id, { live: true });
+    const notifications: string[] = [];
+    sessions.subscribeAttention((item: any) => { notifications.push(item.id); assert.equal(item.source, 'attention'); assert.equal(item.outcome, 'waiting'); });
+    const observe = (state: string, at: string, attention?: string) => sessions.observeResult(record, { data: { state, source: 'provider-hook', event: state, attention }, meta: { availability: 'ready', observedAt: at } });
+    observe('working', '2026-10-23T10:00:00Z');
+    observe('waiting', '2026-10-23T10:00:01Z', 'question');
+    observe('waiting', '2026-10-23T10:00:02Z', 'question');
+    assert.equal(notifications.length, 1);
+    assert.equal(f.runtime.store.db.prepare('SELECT count(*) AS n FROM inbox_attention').get()?.n, 1);
+    assert.equal(f.runtime.store.db.prepare('SELECT count(*) AS n FROM turn_results').get()?.n, 0);
+    observe('working', '2026-10-23T10:00:03Z');
+    observe('waiting', '2026-10-23T10:00:04Z', 'approval');
+    assert.equal(notifications.length, 1);
+    observe('working', '2026-10-23T10:00:05Z');
+    observe('waiting', '2026-10-23T10:00:06Z', 'question');
+    assert.equal(notifications.length, 2);
+    sessions.resultTurns.delete(record.id);
+    observe('waiting', '2026-10-23T10:00:07Z', 'question');
+    assert.equal(notifications.length, 2, 'Restored waiting evidence must not emit fresh notifications');
+  } finally { if (recordId) sessions.live.delete(recordId); f.close(); }
+});
 
 test('terminal checkpoints restore an idle alternate-screen TUI and preserve the live output cursor', async () => {
   let parsed = () => {}; const screen = new TerminalScreen(() => {}, () => parsed());

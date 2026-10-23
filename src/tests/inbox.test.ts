@@ -14,6 +14,13 @@ test('handled IDs survive serialization, malformed storage is ignored and bounde
   assert.equal(readHandled('broken').size, 0);
   assert.equal(readHandled(JSON.stringify(Array.from({ length: 2100 }, (_, i) => String(i)))).size, 2000);
 });
+
+test('waiting question entries render as attention and do not erase project failures', () => {
+  const question: InboxItem = { ...failure, id: 'question', source: 'attention', outcome: 'waiting', at: '2026-10-19T05:00:00Z' };
+  assert.ok(failedInboxProjects([failure, question], new Set(), now).has('project'));
+  const html = renderToStaticMarkup(React.createElement(InboxPanel, { isOpen: true, isClosing: false, onClose() {}, items: [question], handled: new Set<string>(), onHandle() {}, loading: false, issue: null, partial: false, onRefresh() {}, onOpenAgent() {} }));
+  assert.match(html, /Needs answer/); assert.match(html, /Agent question/);
+});
 test('project failure line clears on handling, newer success or age, independently per entity', () => {
   assert.ok(failedInboxProjects([failure], new Set(), now).has('project'));
   assert.equal(failedInboxProjects([failure], new Set(['failure']), now).size, 0);

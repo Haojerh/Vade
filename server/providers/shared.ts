@@ -51,3 +51,14 @@ export function transcriptSettings(record: any): { model?: string; effort?: stri
     ...(typeof effort === 'string' && effort.trim() ? { effort } : {}),
   };
 }
+
+/** Native /effort acknowledgements are metadata, never public chat turns. */
+export function claudeLocalCommandEffort(record: any): string | undefined {
+  const parts = record.type === 'user' && record.message?.role === 'user' && Array.isArray(record.message.content) ? record.message.content : [];
+  for (const part of parts.slice().reverse()) {
+    if (part?.type !== 'text' || typeof part.text !== 'string') continue;
+    const output = /^<local-command-stdout>([\s\S]*)<\/local-command-stdout>$/.exec(part.text)?.[1].trim();
+    const effort = output?.match(/^(?:Set effort level to|Effort level set to)\s+`?(low|medium|high|xhigh|max|auto)`?(?:\s|[.(]|$)/i)?.[1];
+    if (effort) return effort.toLowerCase();
+  }
+}

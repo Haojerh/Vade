@@ -119,6 +119,8 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .agent-terminal-screen { flex: 1; height: auto; min-height: 240px; padding: 0; box-sizing: border-box; border-radius: 6px; overflow: hidden; background: var(--canvas-bg); }
 .agent-terminal-screen .xterm-viewport { border-radius: 6px; }
 .agent-terminal > p { flex-shrink: 0; margin-bottom: 0; }
+.agent-terminal-footer { flex-shrink:0; display:flex; flex-direction:column; align-items:flex-start; gap:12px; margin-top:12px; }
+.agent-terminal-footer p { margin:0; }
 .conversation-tool-call { min-width: 0; margin: 2px 0 2px 6px; padding: 1px 0 1px 12px; border: 0; border-left: 2px solid var(--border-subtle); border-radius: 0; background: none; }
 .conversation-tool-call .disclosure-trigger { width: 100%; padding: 2px 0; font: 11.5px/1.5 Consolas, 'Cascadia Mono', monospace; color: var(--text-muted); }
 .conversation-tool-call .disclosure-trigger:hover { color: var(--text-secondary); }
@@ -221,3 +223,13 @@ dialog.node-modal-dialog.project-shortcut-editor { padding: 24px; box-sizing: bo
 @media (hover: none) { .project-shortcut-row > button:not(:first-child) { opacity: 1; pointer-events: auto; } }
 @media (prefers-reduced-motion: reduce) { .system-popover, .project-shortcuts-menu, .system-popover.is-closing, .project-shortcuts-menu.is-closing { animation: none; } .statusbar-control, .project-shortcut-row > button { transition: none; } }
 @media (max-width: 600px) { dialog.node-modal-dialog.project-shortcut-editor { padding: 18px; } .statusbar-system-controls { gap: 10px; } }
+/* Presence only: private reasoning text is never rendered. */
+.provider-activity { display: grid; gap: 8px; margin-top: 12px; }
+.provider-activity p { margin: 4px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; }
+.provider-reasoning { display: flex; align-items: center; gap: 8px; color: var(--text-muted); font-size: 12px; }
+.provider-reasoning-dots { display: inline-flex; gap: 3px; }
+.provider-reasoning-dots i { width: 3px; height: 3px; border-radius: 50%; background: currentColor; animation: providerReasoningDot 250ms var(--ease-in-out) infinite alternate; }
+.provider-reasoning-dots i:nth-child(2) { animation-delay: 100ms; }
+.provider-reasoning-dots i:nth-child(3) { animation-delay: 200ms; }
+@keyframes providerReasoningDot { from { opacity: .25; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .provider-reasoning-dots i { animation: none; opacity: .7; } }

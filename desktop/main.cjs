@@ -1,5 +1,6 @@
 const { app, BrowserWindow, dialog, utilityProcess, shell, ipcMain, Notification } = require('electron');
 const path = require('node:path');
+const { DesktopUpdater } = require('./updater.cjs');
 
 let backend;
 let quitting = false;
@@ -44,6 +45,7 @@ else {
       window.setMenuBarVisibility(false);
       window.removeMenu();
       const origin = 'http://127.0.0.1:4317';
+      const updater = new DesktopUpdater(app, window, ipcMain, origin);
       let notificationSettings = { enabled: true, sound: true };
       const notifications = new Map();
       ipcMain.handle('ade:notification-settings', (event, value) => {
@@ -53,11 +55,11 @@ else {
         if (!value.enabled) { for (const notification of notifications.values()) notification.close(); notifications.clear(); }
       });
       backend.on('message', message => {
-        if (message?.type !== 'agent-completed' || window.isDestroyed()) return;
+        if (!['agent-completed', 'agent-question'].includes(message?.type) || window.isDestroyed()) return;
         const item = message.item;
         window.webContents.send('ade:agent-notification', { item, open: false });
         if (!notificationSettings.enabled || window.isFocused() || !Notification.isSupported() || notifications.has(item.id)) return;
-        const notification = new Notification({ title: 'Agent finished', body: `${item.projectName} — ${item.title}`, icon: path.join(app.getAppPath(), 'dist', 'vade-notification.png'), silent: !notificationSettings.sound });
+        const notification = new Notification({ title: item.source === 'attention' ? 'Agent needs an answer' : 'Agent finished', body: `${item.projectName} — ${item.title}`, icon: path.join(app.getAppPath(), 'dist', 'vade-notification.png'), silent: !notificationSettings.sound });
         notifications.set(item.id, notification);
         while (notifications.size > 32) { const [id, oldest] = notifications.entries().next().value; oldest.close(); notifications.delete(id); }
         notification.on('click', () => {
@@ -83,7 +85,7 @@ else {
       });
       window.once('ready-to-show', () => window.show());
       backend.on('exit', () => { if (!quitting) { dialog.showErrorBox('ADE runtime stopped', 'The local backend stopped. Restart ADE to reconnect.'); app.quit(); } });
-      await window.loadURL(origin);
+      await window.loadURL(origin + updater.resumeRoute());
     } catch (error) { dialog.showErrorBox('ADE could not start', error.message); app.quit(); }
   });
   app.on('window-all-closed', () => app.quit());

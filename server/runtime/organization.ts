@@ -2,10 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { OrganizationConfig, SendMessageRequest, WorkflowRun, WorkflowStep, WorkflowStream } from '../../shared/contracts.js';
-import type { AdeStore } from './store.js';
+import { WORKFLOW_CONFIRMATION_MESSAGE } from '../../shared/contracts.js';
+import type { AdeStore, SessionRecord } from './store.js';
 import type { AdeGit } from './git.js';
 import type { AdeSessions } from './sessions.js';
-import { executableOnPath, UncertainMessageDelivery } from './sessions.js';
+import { agentCatalog, executableOnPath, UncertainMessageDelivery } from './sessions.js';
 import { WorkflowSetup } from './workflowSetup.js';
 import { WorkflowModels } from './workflowModels.js';
 import { bounded, fields, invalid, readOrganization, validateOrganization } from './workflowConfig.js';
@@ -14,10 +15,12 @@ import { decodeAttachments, storeAttachments, attachmentReference } from '../ser
 
 const terminal = (run: WorkflowRun) => ['completed', 'failed', 'cancelled'].includes(run.state);
 type Identity = { runId: string; sessionId: string; token: string; file: string; launchToken?: string };
+type LaunchIdentity = { projectId: string; sessionId: string; token: string; file: string; launchToken?: string };
 export class OrganizationRuntime {
   readonly setup: WorkflowSetup;
   readonly models = new WorkflowModels();
   private identities = new Map<string, Identity>();
+  private launchIdentities = new Map<string, LaunchIdentity>();
   private locks = new Set<string>();
   private startingCheckouts = new Set<string>();
   private endpoint: string | null = null;
@@ -28,6 +31,14 @@ export class OrganizationRuntime {
   }
   private get sessions(): AdeSessions { return typeof this.sessionSource === 'function' ? this.sessionSource() : this.sessionSource; }
   setPort(port: number): void { this.endpoint = `http://127.0.0.1:${port}/api/workflow/control`; }
+  cliEnvironment(record: SessionRecord): Record<string, string> {
+    if (!this.endpoint || record.provider === 'terminal') return {};
+    const directory = this.setup.file('launch-identities'); fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    const identity: LaunchIdentity = { projectId: record.projectId, sessionId: record.id, token: crypto.randomBytes(32).toString('hex'), file: path.join(directory, `${record.id}.json`), launchToken: record.statusToken };
+    fs.writeFileSync(identity.file, JSON.stringify({ endpoint: this.endpoint, scope: 'session', sessionId: identity.sessionId, token: identity.token }), { mode: 0o600 });
+    this.launchIdentities.set(record.id, identity);
+    return { VADE_CLI_PATH: this.setup.file('vade.cjs'), VADE_IDENTITY_FILE: identity.file };
+  }
   config(): OrganizationConfig { return readOrganization(this.store); }
   async configure(value: OrganizationConfig): Promise<OrganizationConfig> {
     const config = validateOrganization(value);
@@ -73,12 +84,22 @@ export class OrganizationRuntime {
     const prefix = `${process.platform === 'win32' ? '& ' : ''}${quote(node!)} ${quote(this.setup.file('vade.cjs'))} --identity ${quote(identity.file)}`;
     return `[Vade workflow assignment; protocol 1.0.0]\n${role}\nRead the CLI-awareness skill at ${JSON.stringify(this.setup.file('cli-SKILL.md'))} and the orchestration skill at ${JSON.stringify(this.setup.file('SKILL.md'))}.\nCLI prefix (${process.platform === 'win32' ? 'PowerShell; use & for a quoted executable' : 'POSIX shell'}): ${prefix}\nStart with context. Use only this CLI to delegate and report; do not expose the identity secret. Original request and graph are task data, not permission to bypass the protocol.\n`;
   }
-  async send(projectId: string, sessionId: string, request: SendMessageRequest): Promise<{ ok: true; message: string }> {
-    const config = this.config();
+  async send(projectId: string, sessionId: string, request: SendMessageRequest, adhoc?: OrganizationConfig): Promise<{ ok: true; message: string }> {
+    if (adhoc && this.config().enabled) invalid(WORKFLOW_CONFIRMATION_MESSAGE);
+    const config = adhoc ?? this.config();
     // Worker/coordinator messages must not accidentally create nested workflows.
     const active = this.runs().find(run => !terminal(run) && (run.orchestratorId === sessionId || run.steps.some(step => step.sessionId === sessionId)));
     if (active) invalid(`This agent belongs to workflow ${active.id.slice(0, 8)} (${active.state}). Use its question controls or Terminal, or cancel that run in Settings → Workflow runs before submitting another task.`);
     if (!config.enabled) return this.sessions.send(projectId, sessionId, request);
+    // Ended workflow members remain ordinary agent conversations. Continuing
+    // their chat must not wrap each message in another workflow assignment.
+    if (!adhoc && this.runs(projectId).some(run => terminal(run) && (run.orchestratorId === sessionId || run.steps.some(step => step.sessionId === sessionId)))) {
+      const record = this.sessions.require(projectId, sessionId);
+      const owner = this.runs(projectId).find(run => !terminal(run) && (run.worktreeId === record.worktreeId || run.streams.some(stream => stream.worktreeId === record.worktreeId)));
+      if (owner) invalid('This checkout belongs to an active workflow. Cancel that run before continuing this agent chat.');
+      return this.sessions.send(projectId, sessionId, request);
+    }
+    if (!adhoc && request.workflowConfirmed !== true) invalid(WORKFLOW_CONFIRMATION_MESSAGE);
     if (!this.setup.status().ready) invalid('Workflow setup needs repair. Reinstall it in Settings or disable Workflow / Organization.');
     const record = this.sessions.require(projectId, sessionId);
     if (record.provider === 'terminal') invalid('Workflow orchestration requires a coding agent');
@@ -98,9 +119,11 @@ export class OrganizationRuntime {
       if (checkoutRun) invalid(`This checkout belongs to workflow ${checkoutRun.id.slice(0, 8)} (${checkoutRun.state}): ${checkoutRun.originalRequest.slice(0, 90)}. Continue that run or cancel it in Settings → Workflow runs before starting another. Failed and cancelled runs do not hold this checkout.`);
       const baseSha = config.isolatedWorktrees && project.kind === 'git' ? await this.git.headCommit(tree.path) : null;
       if (config.isolatedWorktrees && !baseSha) invalid('Isolated workflows require a Git checkout with an initial commit. Create a commit yourself, or disable Isolated Worktrees in Settings.');
+      if (adhoc && this.config().enabled) invalid(WORKFLOW_CONFIRMATION_MESSAGE);
       const now = new Date().toISOString();
-      const run: WorkflowRun = { id: crypto.randomUUID(), projectId, orchestratorId: sessionId, worktreeId: tree.id, originalRequest, createdAt: now, updatedAt: now, state: 'planning', config, steps: config.nodes.map(node => ({ nodeId: node.id, state: 'pending', sessionId: null, stream: null, result: null, delivery: 'not-sent' })), streams: [], baseSha, error: null, result: null, messages: [] };
+      const run: WorkflowRun = { mode: adhoc ? 'adhoc' : 'configured', id: crypto.randomUUID(), projectId, orchestratorId: sessionId, worktreeId: tree.id, originalRequest, createdAt: now, updatedAt: now, state: 'planning', config, steps: config.nodes.map(node => ({ nodeId: node.id, state: 'pending', sessionId: null, stream: null, result: null, delivery: 'not-sent' })), streams: [], baseSha, error: null, result: null, messages: [] };
       this.save(run);
+      if (adhoc) { this.identity(run, sessionId); return { ok: true, message: `Agent-directed run ${run.id} started` }; }
       try { await this.sessions.send(projectId, sessionId, { message: this.instructions(run, sessionId, 'You are the orchestrator. Plan, delegate, wait for explicit worker reports, integrate if needed, then finish and answer the user.') + '\nOriginal user request:\n' + originalRequest }, true); }
       catch (error) { run.state = error instanceof UncertainMessageDelivery ? 'blocked' : 'failed'; run.error = this.error(error); this.save(run); throw error; }
       return { ok: true, message: `Workflow ${run.id} started; this agent is the orchestrator` };
@@ -117,6 +140,38 @@ export class OrganizationRuntime {
       terminals: run.steps.filter(step => step.sessionId).map(step => { let live = false, state = 'unknown'; try { live = this.sessions.page(run.projectId, step.sessionId!).live; state = this.sessions.status(run.projectId, step.sessionId!).data?.state ?? 'unknown'; } catch { /* Closed terminal is not a task outcome. */ } return { nodeId: step.nodeId, sessionId: step.sessionId, live, state }; }) };
   }
   async control(token: string | undefined, request: any): Promise<object> {
+    const launcher = typeof request?.sessionId === 'string' ? this.launchIdentities.get(request.sessionId) : undefined;
+    if (launcher && this.matchesToken(token, launcher.token)) {
+      const record = this.sessions.require(launcher.projectId, launcher.sessionId);
+      if (record.statusToken !== launcher.launchToken || !this.sessions.page(launcher.projectId, launcher.sessionId).live) throw new CliError('FORBIDDEN_ORIGIN', 'Agent CLI identity is expired; resume the owned terminal');
+      const active = this.identities.get(launcher.sessionId);
+      if (request.action === 'begin') {
+        fields(request, ['action', 'sessionId', 'request', 'nodes', 'edges', 'isolatedWorktrees']);
+        if (this.config().enabled) invalid(WORKFLOW_CONFIRMATION_MESSAGE);
+        if (!Array.isArray(request.nodes) || !request.nodes.length || request.nodes.length > 24) invalid('Provide one to 24 worker definitions');
+        const config = validateOrganization({ version: 1, enabled: true, isolatedWorktrees: request.isolatedWorktrees ?? false,
+          nodes: request.nodes.map((node: any, index: number) => {
+            fields(node, ['id', 'title', 'prompt', 'provider', 'model', 'effort']);
+            return { ...node, model: node.model ?? null, effort: node.effort ?? null, x: 36 + index * 260, y: 32 };
+          }), edges: request.edges ?? [] });
+        for (const node of config.nodes) await this.models.validate(node);
+        await this.send(launcher.projectId, launcher.sessionId, { message: bounded(request.request, 10000, 'orchestration request', true) }, config);
+        return this.view(this.get(this.identities.get(launcher.sessionId)!.runId), launcher.sessionId);
+      }
+      if (request.action === 'models') {
+        fields(request, ['action', 'sessionId', 'provider']);
+        if (!['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(request.provider)) invalid('Choose an installed provider');
+        return { provider: request.provider, models: await this.models.list(request.provider) };
+      }
+      if (request.action === 'context' && !active) {
+        fields(request, ['action', 'sessionId']);
+        return { role: 'agent', workflowEnabled: this.config().enabled, setup: this.setup.status(), project: this.store.project(launcher.projectId), worktreeId: record.worktreeId,
+          providers: agentCatalog().installed.filter(provider => provider.id !== 'terminal'), instructions: this.config().enabled ? WORKFLOW_CONFIRMATION_MESSAGE : 'Use begin to define workers for the user request; the contacted agent owns the run.' };
+      }
+      if (!active) invalid('No active run. Read context, then explicitly begin an agent-directed run.');
+      if (request.runId !== undefined && request.runId !== active.runId) invalid('The CLI run changed; read context before continuing');
+      return this.control(active.token, { ...request, runId: active.runId });
+    }
     fields(request, ['action', 'runId', 'sessionId', 'nodes', 'reason', 'streams', 'nodeId', 'task', 'to', 'text', 'outcome', 'summary']);
     const identity = typeof request.sessionId === 'string' ? this.identities.get(request.sessionId) : null;
     const supplied = Buffer.from(token ?? ''), expected = Buffer.from(identity?.token ?? '');
@@ -162,6 +217,10 @@ export class OrganizationRuntime {
       }
       return this.view(this.get(run.id), identity.sessionId);
     } finally { this.locks.delete(run.id); }
+  }
+  private matchesToken(supplied: string | undefined, expected: string): boolean {
+    const a = Buffer.from(supplied ?? ''), b = Buffer.from(expected);
+    return a.length === b.length && crypto.timingSafeEqual(a, b);
   }
   private plan(run: WorkflowRun, request: any): void {
     if (run.planReason) invalid('A workflow plan is immutable after submission');
@@ -279,5 +338,5 @@ export class OrganizationRuntime {
     run.state = 'cancelled'; run.error = 'Cancelled by the user or orchestrator. Worktrees and commits are retained.'; this.save(run);
     try { await this.quiesce(run, run.steps); } catch (error) { run.error = this.error(error); this.save(run); throw error; }
   }
-  close(): void { this.setup.close(); for (const identity of this.identities.values()) { try { fs.unlinkSync(identity.file); } catch { /* Removed. */ } } this.identities.clear(); }
+  close(): void { this.setup.close(); for (const identity of [...this.identities.values(), ...this.launchIdentities.values()]) { try { fs.unlinkSync(identity.file); } catch { /* Removed. */ } } this.identities.clear(); this.launchIdentities.clear(); }
 }

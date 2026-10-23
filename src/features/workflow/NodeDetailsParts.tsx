@@ -233,6 +233,7 @@ export interface NodeDetailsHeaderProps {
   actions: ReturnType<typeof useNodeDetailsActions>;
   onRefresh: () => void;
   onClose: () => void;
+  onHandoff?: () => void;
 }
 
 export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
@@ -243,6 +244,7 @@ export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
   actions,
   onRefresh,
   onClose,
+  onHandoff,
 }) => {
   return (
     <header className="modal-dialog-header">
@@ -322,6 +324,7 @@ export const NodeDetailsHeader: React.FC<NodeDetailsHeaderProps> = ({
       </div>
 
       <div className="modal-header-actions">
+        {node?.kind === 'agent' && onHandoff && <button type="button" className="btn btn-secondary btn-xs btn-handoff" title="Hand off to another agent" aria-label="Hand off to another agent" disabled={['working','waiting','blocked'].includes(node.state)} onClick={onHandoff}><Icon name="message-square" size={12} /><span>Hand Off</span></button>}
         {node &&
           (isWorktree ? (
             <div style={{ display: 'flex', gap: '6px' }}>

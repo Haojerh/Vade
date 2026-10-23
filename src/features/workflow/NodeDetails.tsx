@@ -7,12 +7,17 @@ import type { Node, NodeDetails as NodeDetailsType } from '../../../shared/contr
 import { Icon } from '../../components/ui/Icon';
 import { ConversationHistory } from './ConversationHistory';
 import { ConversationToolCall } from './ConversationToolCall';
+import { ProviderActivity } from './ProviderActivity';
+import { useAgentDraft } from '../../hooks/useAgentDraft';
+import { WORKFLOW_CONFIRMATION_MESSAGE } from '../../../shared/contracts';
+import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
 import { sendNodeMessage } from '../../api/client';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
 import { AgentChatControls } from './AgentChatControls';
 import { DictationButton } from './DictationButton';
 import { appendDictation } from './dictation';
+import { HandoffDialog, HandoffNotice } from './HandoffDialog';
 const AgentTerminal = lazy(() => import('./AgentTerminal').then(module => ({ default: module.AgentTerminal })));
 import {
   NodeDetailsHeader,
@@ -41,6 +46,8 @@ interface NodeDetailsProps {
   onClose: () => void;
   onRefresh: () => void;
   onSessionChange?: () => void;
+  onOpenSession?: (nodeId: string) => void;
+  handoffEnabled?: boolean;
   visibleSections?: NodeDetailsVisibleSections;
   commitGraphEnabled?: boolean;
   chatToolCallsEnabled?: boolean;
@@ -57,6 +64,8 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   onClose,
   onRefresh,
   onSessionChange,
+  onOpenSession,
+  handoffEnabled = false,
   visibleSections,
   commitGraphEnabled = false,
   chatToolCallsEnabled = true,
@@ -77,19 +86,22 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const detailsOverlay = useConfirmationState({ onClosed: onClose });
   const isClosing = detailsOverlay.closing;
 
-  const [chatMessage, setChatMessage] = useState<string>('');
+  const [chatMessage, setChatMessage] = useAgentDraft(projectId, selectedNodeId);
   const [chatFiles, setChatFiles] = useState<File[]>([]);
   useEffect(() => {
     setChatFiles([]);
-    setChatMessage('');
   }, [projectId, selectedNodeId]);
   const [chatSending, setChatSending] = useState<boolean>(false);
   const [dictating, setDictating] = useState(false);
   const [chatStatus, setChatStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const workflowConfirmation = useConfirmationState<{ message: string; files: File[] }>();
+  const handoff = useConfirmationState();
   const chatRequest = useRef<AbortController | null>(null);
   const chatTarget = useRef(''); chatTarget.current = `${projectId}:${selectedNodeId}`;
   useEffect(() => {
     setChatSending(false); setChatStatus(null);
+    workflowConfirmation.reset();
+    handoff.reset();
     return () => { chatRequest.current?.abort(); chatRequest.current = null; };
   }, [projectId, selectedNodeId]);
 
@@ -109,20 +121,23 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
 
   const activeVisibleSections = visibleSections ?? DEFAULT_VISIBLE_SECTIONS;
 
-  const handleSendMessage = async () => {
-    if (!projectId || !details?.node || (!chatMessage.trim() && !chatFiles.length) || chatSending || dictating) return;
+  const handleSendMessage = async (workflowConfirmed = false, pending?: { message: string; files: File[] }) => {
+    if (!projectId || !details?.node || (!(pending?.message ?? chatMessage).trim() && !(pending?.files ?? chatFiles).length) || chatSending || dictating) return;
     setChatSending(true);
     setChatStatus(null);
     const target = chatTarget.current, abort = new AbortController(); chatRequest.current = abort;
     const current = () => !abort.signal.aborted && chatTarget.current === target;
     try {
-      await sendNodeMessage(projectId, details.node.id, chatMessage.trim(), abort.signal, chatFiles);
+      await sendNodeMessage(projectId, details.node.id, (pending?.message ?? chatMessage).trim(), abort.signal, pending?.files ?? chatFiles, workflowConfirmed);
       if (!current()) return;
       setChatMessage('');
       setChatFiles([]);
       onRefresh();
     } catch (err: any) {
-      if (current()) setChatStatus({ type: 'error', text: err?.message || 'Failed to send message' });
+      if (current()) {
+        setChatStatus({ type: 'error', text: err?.message || 'Failed to send message' });
+        if (!workflowConfirmed && String(err?.message).includes(WORKFLOW_CONFIRMATION_MESSAGE)) workflowConfirmation.open({ message: chatMessage, files: [...chatFiles] });
+      }
     } finally {
       if (current()) setChatSending(false);
       if (chatRequest.current === abort) chatRequest.current = null;
@@ -167,6 +182,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
             actions={actions}
             onRefresh={onRefresh}
             onClose={handleClose}
+            onHandoff={handoffEnabled ? handoff.open : undefined}
           />
 
           {isMatchingDetails && !isWorktree && details?.session?.chat && projectId && <div className="session-view-toolbar">
@@ -232,6 +248,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 )}
 
                 {!isWorktree && details?.session && projectId && <>
+                  {details.session.handoff && <HandoffNotice key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} info={details.session.handoff} onRefresh={onRefresh} />}
                   {(sessionView === 'terminal' || !details.session.chat) && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} provider={node.agentType ?? undefined} onStatusChange={onSessionChange} /></Suspense>}
                 </>}
 
@@ -263,6 +280,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                     ) : (
                       convData ? <ConversationHistory key={`${projectId}:${selectedNodeId}:${selectedRunId}:${convData?.sourceIdentity}`} projectId={projectId!} nodeId={selectedNodeId} runId={selectedRunId ?? null} page={convData} tools={tools} scrollContainerRef={bodyRef} /> : <div className="conversation-thread">{tools.map(tool => <ConversationToolCall key={tool.id} tool={tool} />)}</div>
                     )}
+                    <ProviderActivity node={selectedNode?.id === node.id ? selectedNode : node} />
                   </section>
                 )}
 
@@ -361,6 +379,10 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
         isWorktree={Boolean(isWorktree)}
         actions={actions}
       />
+      {handoff.present && projectId && node?.kind === 'agent' && <HandoffDialog key={`${projectId}:${node.id}`} projectId={projectId} node={node} closing={handoff.closing} onClose={handoff.close} onStarted={id => { onSessionChange?.(); onOpenSession?.(id); }} />}
+      <ConfirmationDialog isOpen={workflowConfirmation.present} isClosing={workflowConfirmation.closing} title="Workflow enabled"
+        description={WORKFLOW_CONFIRMATION_MESSAGE} confirmLabel="Continue with workflow" confirmVariant="primary" isConfirming={chatSending}
+        onClose={workflowConfirmation.close} onConfirm={() => { const pending = workflowConfirmation.data; workflowConfirmation.close(); if (pending) void handleSendMessage(true, pending); }} />
     </>
   );
 };

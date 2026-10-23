@@ -34,6 +34,9 @@ export async function fetchAgentHistory(query: { scope: string; projectId?: stri
 export async function resumeHistorySession(projectId: string, request: ResumeHistoryRequest): Promise<{ projectId: string; nodeId: string }> {
   return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/resume-history`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }));
 }
+export async function handoffSession(projectId: string, nodeId: string, request?: import('../../shared/contracts').HandoffSessionRequest): Promise<import('../../shared/contracts').HandoffSessionResponse | import('../../shared/contracts').SessionHandoff> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/${request ? 'handoff' : 'handoff-message'}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request ?? {}) }));
+}
 import type { AgentPreferences, AgentInteraction, AnswerAgentRequest } from '../../shared/contracts';
 
 export async function fetchAgentPreferences(signal?: AbortSignal): Promise<AgentPreferences> {
@@ -362,6 +365,7 @@ export async function sendNodeMessage(
   message: string,
   signal?: AbortSignal,
   files: File[] = [],
+  workflowConfirmed = false,
 ): Promise<{ ok: boolean; message?: string }> {
   const attachments = await Promise.all(files.map(async (file) => ({
     name: file.name,
@@ -381,7 +385,7 @@ export async function sendNodeMessage(
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ message, ...(attachments.length ? { attachments } : {}) }),
+      body: JSON.stringify({ message, ...(attachments.length ? { attachments } : {}), ...(workflowConfirmed ? { workflowConfirmed: true } : {}) }),
       signal,
     },
   );
@@ -514,4 +518,11 @@ export async function providerAccountAction(provider: import('../../shared/contr
 }
 export async function fetchProviderAccounts(provider: import('../../shared/contracts').AccountProvider, signal?: AbortSignal): Promise<import('../../shared/contracts').ProviderAccount[]> {
   return handleResponse(await fetch('/api/provider-accounts/' + provider, { signal }));
+}
+export async function workspaceFilesRequest<T>(projectId: string, action: 'roots' | 'list' | 'read' | 'diff' | 'search' | 'save' | 'open', values: Record<string, string>, signal?: AbortSignal): Promise<T> {
+  const url = `/api/projects/${encodeURIComponent(projectId)}/files/${action}`;
+  const query = new URLSearchParams(Object.entries(values).filter(([, value]) => value !== ''));
+  return handleResponse(await fetch(action === 'save' || action === 'open' ? url : `${url}?${query}`, {
+    signal, ...(action === 'save' || action === 'open' ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) } : {}),
+  }));
 }

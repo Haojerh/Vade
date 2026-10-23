@@ -8,12 +8,55 @@ import { openCodeV2Models } from './openCodeSessions.js';
 const clean = (value: string) => value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 160);
 const normalized = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
 const controls = { model: true, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false };
+const outputPosition = (io: ChatControlIO): number | string => io.outputCursor?.() ?? io.output();
+// Wide Kilo pickers append a model-details column to the search and option rows.
+const variantLabel = (line: string) => line.split(/\s+\u2502/)[0].trim().replace(/^[\u25cf\u2022]\s*/, '');
+function pickerLines(screen: string, title: RegExp): string[] {
+  const lines = screen.split('\n'), index = lines.findIndex(line => title.test(line));
+  if (index < 0) return [];
+  const column = Math.max(0, lines[index].search(title) - 2);
+  const escape = /\besc\b/i.exec(lines[index]);
+  const end = escape ? escape.index + escape[0].length : undefined;
+  // The widget is overlaid on the composer. Text to its left belongs to the
+  // underlying screen, not to the picker search field or options.
+  return lines.slice(index).map(line => line.slice(column, end));
+}
+async function filteredPicker(io: ChatControlIO, predicate: (screen: string) => boolean): Promise<string> {
+  await io.waitFor(predicate);
+  // The input text can render one frame before the native fuzzy results and
+  // highlighted row settle. Enter during that frame can select the old row.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  return io.waitFor(predicate);
+}
+async function openPicker(command: '/models' | '/variants', title: RegExp, io: ChatControlIO): Promise<void> {
+  const start = outputPosition(io);
+  await io.write(`\x1b[200~${command}\x1b[201~`);
+  // PTY write acknowledgement is not a native render acknowledgement. Wait
+  // until the slash command reaches the composer before submitting it.
+  await io.waitFor(screen => outputPosition(io) !== start && screen.split('\n').some(line => line.trim().replace(/^[\u2503\u2502]\s*/, '') === command));
+  const submitted = outputPosition(io);
+  await io.write('\r');
+  await io.waitFor(screen => outputPosition(io) !== submitted && title.test(screen));
+  // Dialog title paint can precede the native input's focus effect.
+  await new Promise(resolve => setTimeout(resolve, 100));
+  await io.waitFor(screen => title.test(screen));
+}
 function footerModel(models: AgentChatModel[], screen: string): AgentChatModel | undefined {
   // The placeholder disappears after the first prompt and Kilo words it differently; use the bottom status rows then.
   const start = screen.lastIndexOf('Ask anything');
   const footer = normalized(start >= 0 ? screen.slice(start) : screen.split('\n').filter(line => line.trim()).slice(-6).join('\n'));
   const matches = models.filter(model => footer.includes(normalized(model.label))).sort((a, b) => normalized(b.label).length - normalized(a.label).length);
   return matches[0] && (!matches[1] || normalized(matches[0].label).length > normalized(matches[1].label).length) ? matches[0] : undefined;
+}
+
+function footerEffort(model: AgentChatModel, screen: string): string | undefined {
+  const footer = screen.split('\n').filter(line => line.trim()).slice(-6).reverse().find(line => line.includes(model.label));
+  if (!footer) return;
+  const suffix = footer.slice(footer.lastIndexOf(model.label) + model.label.length);
+  const value = suffix.match(/(?:\s|[\u00b7\u2022])([a-zA-Z0-9_-]+)\s*$/)?.[1];
+  if (model.efforts.some(effort => effort.value === value)) return value;
+  // An observed model footer with no variant uses the native Default selection.
+  if (model.efforts.some(effort => effort.value === 'default')) return 'default';
 }
 
 /** Native catalogs and the owned TUI's /models picker; no peer ACP session or
@@ -63,8 +106,10 @@ export class OpenCodeChatControls {
   }
   async read(provider: 'opencode' | 'opencode2' | 'kilo', cwd: string, observed: { model?: string | null; effort?: string | null }, screen: string): Promise<AgentChatOptions> {
     const models = await this.catalog(provider, cwd);
-    const effective = footerModel(models, screen) ?? models.find(model => model.id === observed.model) ?? models.find(model => observed.model && model.id.slice(model.id.indexOf('/') + 1) === observed.model);
-    return { provider, transport: 'terminal', models, current: { ...(effective ? { model: effective.id } : observed.model ? { model: observed.model } : {}), ...(observed.effort && (!effective || effective.id === observed.model || effective.id.slice(effective.id.indexOf('/') + 1) === observed.model) ? { effort: observed.effort } : {}) }, controls: { ...controls, effort: Boolean(effective?.efforts.length) } };
+    const visible = footerModel(models, screen);
+    const effective = visible ?? models.find(model => model.id === observed.model) ?? models.find(model => observed.model && model.id.slice(model.id.indexOf('/') + 1) === observed.model);
+    const effort = visible ? footerEffort(visible, screen) : observed.effort && (!effective || effective.id === observed.model || effective.id.slice(effective.id.indexOf('/') + 1) === observed.model) ? observed.effort : undefined;
+    return { provider, transport: 'terminal', models, current: { ...(effective ? { model: effective.id } : observed.model ? { model: observed.model } : {}), ...(effort ? { effort } : {}) }, controls: { ...controls, effort: Boolean(effective?.efforts.length) } };
   }
   async apply(options: AgentChatOptions, request: SetAgentChatOptionRequest, io: ChatControlIO): Promise<AgentChatOptions> {
     if (request.key === 'effort') return this.applyEffort(options, request.value, io);
@@ -73,15 +118,15 @@ export class OpenCodeChatControls {
     if (options.current.model === model.id) return options;
     // A duplicated display name cannot identify a provider safely in this TUI.
     if (options.models.filter(row => normalized(row.label) === normalized(model.label)).length !== 1) throw new CliError('RUNTIME_UNAVAILABLE', 'This model name exists under multiple providers. Choose its provider in the native Terminal picker.');
-    await io.write('\x1b[200~/models\x1b[201~'); await io.write('\r');
-    await io.waitFor(screen => /Select model/i.test(screen));
+    await openPicker('/models', /Select model/i, io);
+    const pickerStart = outputPosition(io);
     await io.write(`\x1b[200~${model.label}\x1b[201~`);
-    const filtered = await io.waitFor(screen => /Select model/i.test(screen) && screen.split('\n').some(line => line.trim() === model.label));
-    const body = filtered.slice(filtered.toLowerCase().indexOf('select model')).split('Ask anything')[0];
+    const filtered = await filteredPicker(io, screen => outputPosition(io) !== pickerStart && pickerLines(screen, /Select model/i).some(line => variantLabel(line) === model.label));
     const labels = [...options.models].sort((a, b) => b.label.length - a.label.length);
-    const rows = body.split('\n').flatMap(line => {
-      if (line.trim() === model.label) return [];
-      const match = labels.find(row => line.includes(row.label) && line.slice(line.indexOf(row.label) + row.label.length).trim());
+    const lines = pickerLines(filtered, /Select model/i), queryIndex = lines.findIndex(line => variantLabel(line) === model.label);
+    const rows = lines.slice(queryIndex + 1).flatMap(line => {
+      const value = variantLabel(line);
+      const match = labels.find(row => value.startsWith(row.label) && (!value.slice(row.label.length) || /^\s/.test(value.slice(row.label.length))));
       return match ? [match] : [];
     });
     const index = rows.findIndex(row => row.id === model.id);
@@ -100,12 +145,12 @@ export class OpenCodeChatControls {
     const choice = model?.efforts.find(row => row.value === value);
     if (!model || !choice) throw new CliError('INVALID_ARGUMENT', 'Select an effort from the current native model catalog');
     const title = value === 'default' ? 'Default' : value;
-    await io.write('\x1b[200~/variants\x1b[201~'); await io.write('\r');
-    await io.waitFor(screen => /Select variant/.test(screen));
+    await openPicker('/variants', /Select variant/i, io);
+    const filteredAt = outputPosition(io);
     await io.write(`\x1b[200~${title}\x1b[201~`);
-    const filtered = await io.waitFor(screen => /Select variant/.test(screen) && screen.split('\n').filter(line => line.trim().replace(/^●\s*/, '') === title).length >= 2);
-    const rows = filtered.slice(filtered.indexOf('Select variant')).split('\n').flatMap(line => {
-      const label = line.trim().replace(/^●\s*/, '');
+    const filtered = await filteredPicker(io, screen => outputPosition(io) !== filteredAt && pickerLines(screen, /Select variant/i).filter(line => variantLabel(line) === title).length >= 2);
+    const rows = pickerLines(filtered, /Select variant/i).flatMap(line => {
+      const label = variantLabel(line);
       return model.efforts.some(row => (row.value === 'default' ? 'Default' : row.value) === label) ? [label] : [];
     });
     // The first matching line is the filter. Native filtering resets selection
@@ -119,8 +164,8 @@ export class OpenCodeChatControls {
     await io.waitFor(screen => !/Select variant/.test(screen) && footerModel(options.models, screen)?.id === model.id);
     // Reopen read-only to verify the native current marker, including Default,
     // which may be omitted from the ordinary footer. Never infer success from Enter.
-    await io.write('\x1b[200~/variants\x1b[201~'); await io.write('\r');
-    await io.waitFor(screen => /Select variant/.test(screen) && screen.split('\n').some(line => /^\s*●/.test(line) && line.trim().replace(/^●\s*/, '') === title));
+    await openPicker('/variants', /Select variant/i, io);
+    await io.waitFor(screen => pickerLines(screen, /Select variant/i).some(line => /^\s*[\u25cf\u2022]/.test(line) && variantLabel(line) === title));
     await io.write('\x1b'); await io.waitFor(screen => !/Select variant/.test(screen));
     return { ...options, current: { ...options.current, effort: value }, unconfirmed: false };
   }

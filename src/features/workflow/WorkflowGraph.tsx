@@ -136,7 +136,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     const allAgents: Node[] = [];
 
     for (const n of validNodes) {
-      if (n.kind === 'orchestrator') {
+      if (n.kind === 'orchestrator' || n.workflow?.role === 'orchestrator') {
         if (orchestrationSeparated) {
           orchestrators.push(n);
         } else {

@@ -21,6 +21,7 @@ export interface SessionRecord {
   statusToken?: string;
   shell?: TerminalShell;
   workflowLaunch?: { model: string | null; effort: string | null };
+  handoff?: import('../../shared/contracts.js').SessionHandoff & { prompt: string; launchToken: string | undefined };
 }
 
 export function adeDataDirectory(): string {
@@ -36,6 +37,7 @@ export class AdeStore {
     this.db.exec(`PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS turn_results (id TEXT PRIMARY KEY, at TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS inbox_attention (id TEXT PRIMARY KEY, at TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS titles (id TEXT PRIMARY KEY, title TEXT NOT NULL);`);
@@ -81,6 +83,7 @@ export class AdeStore {
       this.db.prepare('DELETE FROM titles WHERE id IN (SELECT id FROM sessions WHERE project_id = ?)').run(projectId);
       this.db.prepare('DELETE FROM sessions WHERE project_id = ?').run(projectId);
       this.db.prepare("DELETE FROM turn_results WHERE json_extract(data, '$.projectId') = ?").run(projectId);
+      this.db.prepare("DELETE FROM inbox_attention WHERE json_extract(data, '$.projectId') = ?").run(projectId);
       this.db.prepare("DELETE FROM workflow_runs WHERE json_extract(data, '$.projectId') = ?").run(projectId);
       this.db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
       this.db.exec('COMMIT');

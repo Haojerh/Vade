@@ -1122,7 +1122,7 @@ kbd {
   line-height: 1.6;
 }
 
-.btn-close-tab {
+.btn-close-tab, .btn-handoff {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1300,3 +1300,13 @@ dialog.add-worktree-dialog {
 .prereq-local-card .prereq-gate-title { font-size: 20px; margin: 0; }
 .prereq-local-help { border: 1px solid var(--border-main); border-radius: 8px; padding: 16px; }
 .prereq-local-help p { color: var(--text-secondary); margin-top: 8px; }
+dialog.handoff-dialog { gap:20px; overflow-y:auto; }
+dialog.handoff-dialog>* { flex-shrink:0; }
+dialog.handoff-dialog .worktree-dialog-heading, dialog.handoff-dialog .worktree-field, dialog.handoff-dialog .confirmation-dialog-actions, .handoff-location { margin:0; }
+.handoff-dialog h2 { display:flex; align-items:center; gap:8px; }
+.handoff-source { display:flex; flex-direction:column; gap:5px; border:1px solid var(--border-main); border-radius:8px; padding:12px; background:var(--surface-2); margin:0; }
+.handoff-source span { color:var(--text-secondary); font-size:12px; }
+.handoff-description { line-height:1.6; margin:8px 0 0; }
+.handoff-path { color:var(--text-main); overflow-wrap:anywhere; }
+.handoff-notice { margin:0 0 12px; font-size:12px; }
+.handoff-notice p { margin:5px 0 10px; line-height:1.5; color:var(--text-secondary); }

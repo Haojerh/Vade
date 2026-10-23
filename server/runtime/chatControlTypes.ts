@@ -3,6 +3,8 @@ export interface ChatControlIO {
   screen(): string;
   /** Only bytes received after this operation acquired the input lock. */
   output(): string;
+  /** Monotonic owned PTY output position, independent of the retained tail size. */
+  outputCursor?(): number;
   write(data: string): Promise<void>;
   waitFor(predicate: (screen: string) => boolean): Promise<string>;
 }

@@ -9,7 +9,7 @@ import { AdeStore, type SessionRecord } from './store.js';
 import { codexThread } from './codexThread.js';
 import { installAgyHook, agyBindingFile, readAgyBinding, agyConversationSaved } from './agyBinding.js';
 import { installStatusHooks, readAgentStatus, statusFile } from './statusHooks.js';
-import { antigravityPromptReady, programStatusReader, PROGRAM_STATUS_REPLY, TerminalTurnStatus } from './programStatus.js';
+import { antigravityPromptReady, isInterruptionInput, programStatusReader, PROGRAM_STATUS_REPLY, TerminalTurnStatus } from './programStatus.js';
 import { attachmentPaste, attachmentReference, decodeAttachments, storeAttachments, usesNativeFileAttachment } from '../services/attachments.js';
 import { TerminalScreen } from './terminalScreen.js';
 import { isOpenCode, validProviderSessionId, createOpenCodeSession, verifyOpenCode, openCodePlugin, openCodeMajor } from './openCodeSessions.js';
@@ -141,6 +141,8 @@ interface LiveSession {
 }
 
 export class AdeSessions {
+  private cliEnvironment?: (record: SessionRecord) => Record<string, string>;
+  setCliEnvironment(factory: (record: SessionRecord) => Record<string, string>): void { this.cliEnvironment = factory; }
   private live = new Map<string, LiveSession>();
   private helpers = new Set<ChildProcess>();
   private starting = new Set<string>();
@@ -152,12 +154,17 @@ export class AdeSessions {
   private statusTimers = new Map<string, NodeJS.Timeout>();
   private listeners = new Map<string, Set<() => void>>();
   private statusListeners = new Map<string, Set<() => void>>();
-  private resultTurns = new Map<string, { state: string; turn: string; token?: string }>();
+  private resultTurns = new Map<string, { state: string; turn: string; token?: string; attention?: AgentStatus['attention'] }>();
   private chatControls = new ProviderChatControls();
   private openCodeControls = new OpenCodeChatControls();
   private codeBuddyControls = new CodeBuddyChatControls();
   private antigravityControls = new AntigravityChatControls();
   private resultListeners = new Set<(item: InboxItem) => void>();
+  private attentionListeners = new Set<(item: InboxItem) => void>();
+  private questionEvents = new Map<string, string>();
+  subscribeAttention(listener: (item: InboxItem) => void): () => void {
+    this.attentionListeners.add(listener); return () => { this.attentionListeners.delete(listener); };
+  }
   subscribeResults(listener: (item: InboxItem) => void): () => void {
     this.resultListeners.add(listener);
     return () => { this.resultListeners.delete(listener); };
@@ -194,7 +201,7 @@ export class AdeSessions {
     const record = this.require(projectId, id), live = this.live.get(id);
     const hook = readAgentStatus(this.store.directory, record, Boolean(live?.live));
     if (live && (isOpenCode(record.provider) || record.provider === 'codebuddy') && hook.data) {
-      hook.data = hook.data.event === 'Stop' ? live.turnStatus.nativeEnd(hook.data, Date.now(), record.provider === 'codebuddy' ? 5000 : 1500) : live.turnStatus.observe(hook.data);
+      hook.data = ['Stop','SessionAborted'].includes(hook.data.event) ? live.turnStatus.nativeEnd(hook.data, Date.parse(hook.meta.observedAt ?? '') || Date.now(), 5000) : live.turnStatus.observe(hook.data);
     }
     if (live) live.lastHook = hook;
     if (live?.resumeTurnObserved === false && hook.data?.state === 'working' && ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(hook.data.event)) {
@@ -277,9 +284,20 @@ export class AdeSessions {
       }
     }
     const state = status.data!.state, previous = this.resultTurns.get(record.id);
-    if (previous?.state === state && previous.token === record.statusToken) return status;
+    if (state === 'waiting' && status.data!.attention === 'question' && status.meta.observedAt && this.live.get(record.id)?.live && (previous?.state !== 'waiting' || previous.attention !== 'question' || previous.token !== record.statusToken)) {
+      const event = `${record.statusToken}:${status.meta.observedAt}`;
+      if (this.questionEvents.get(record.id) !== event) {
+        this.questionEvents.set(record.id, event);
+        const project = this.store.project(record.projectId);
+        const item: InboxItem = { id: `question-${crypto.createHash('sha256').update(`${record.id}:${event}`).digest('hex').slice(0, 32)}`, projectId: project.id, projectName: project.name, nodeId: record.id, runId: null, entityId: record.id, title: this.store.title(record.id, record.title), outcome: 'waiting', at: status.meta.observedAt, source: 'attention' };
+        this.store.db.prepare('INSERT OR REPLACE INTO inbox_attention VALUES (?, ?, ?)').run(item.id, item.at, JSON.stringify(item));
+        this.store.db.exec('DELETE FROM inbox_attention WHERE id NOT IN (SELECT id FROM inbox_attention ORDER BY at DESC LIMIT 200)');
+        if (previous && previous.token === record.statusToken) for (const listener of this.attentionListeners) listener(item);
+      }
+    }
+    if (previous?.state === state && previous.token === record.statusToken && previous.attention === status.data!.attention) return status;
     const turn = !previous || previous.token !== record.statusToken || (['working', 'waiting', 'blocked'].includes(state) && ['completed', 'failed', 'interrupted', 'idle'].includes(previous.state)) ? crypto.randomUUID() : previous.turn;
-    this.resultTurns.set(record.id, { state, turn, token: record.statusToken });
+    this.resultTurns.set(record.id, { state, turn, token: record.statusToken, attention: status.data!.attention });
     if (['completed', 'failed', 'interrupted'].includes(state) && status.meta.observedAt) {
       const project = this.store.project(record.projectId);
       const item = { id: turn, projectId: project.id, projectName: project.name, nodeId: record.id, runId: null,
@@ -418,6 +436,8 @@ export class AdeSessions {
     delete env.CLAUDECODE;
     delete env.CODEX_THREAD_ID;
     for (const key of Object.keys(env)) if (key.startsWith('ORCA_')) delete env[key];
+    delete env.VADE_IDENTITY_FILE; delete env.VADE_CLI_PATH;
+    if (record.provider !== 'terminal' && this.cliEnvironment) Object.assign(env, this.cliEnvironment(record));
     delete env.ADE_BINDING_FILE; delete env.ADE_BINDING_TOKEN; delete env.ADE_BINDING_CWD;
     env.ADE_STATUS_FILE = statusFile(this.store.directory, record.id);
     env.ADE_STATUS_TOKEN = record.statusToken!;
@@ -556,6 +576,15 @@ export class AdeSessions {
     const record = this.require(projectId, id);
     return !isOpenCode(record.provider) || this.live.get(id)?.screen?.openCodePromptReady() === true;
   }
+  handoffPromptReady(projectId: string, id: string): boolean {
+    const record = this.require(projectId, id), live = this.live.get(id);
+    if (!live?.live || this.sending.has(id) || record.provider === 'terminal') return false;
+    const state = this.status(projectId, id).data?.state;
+    if (['working','waiting','blocked'].includes(state ?? '')) return false;
+    const empty = isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
+    const native = record.provider === 'codebuddy' ? live.screen?.codeBuddyPromptReady() : record.provider === 'antigravity' && antigravityPromptReady(live.screen?.text() ?? '');
+    return Boolean(empty && (['idle','completed','failed','interrupted'].includes(state ?? '') || native));
+  }
 
   page(projectId: string, id: string, cursor = 0, checkpoint = false): TerminalPage {
     const session = this.live.get(id);
@@ -583,7 +612,7 @@ export class AdeSessions {
   async chatOptions(projectId: string, id: string, observed: { model?: string | null; effort?: string | null }): Promise<AgentChatOptions> {
     const record = this.require(projectId, id), live = this.live.get(id);
     if (record.provider === 'terminal') throw new CliError('INVALID_ARGUMENT', 'Shell terminals do not have model settings');
-    const current = { ...observed, ...live?.chatCurrent };
+    const current = record.provider === 'codebuddy' ? { ...live?.chatCurrent, ...observed } : { ...observed, ...live?.chatCurrent };
     const options = record.provider === 'codebuddy' ? await this.codeBuddyControls.read(current, record.cwd, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.read(record.provider, record.cwd, current, live?.screen?.text() ?? '') : record.provider === 'antigravity' ? await this.antigravityControls.read(current, () => live?.screen?.text() ?? '')
       : await this.chatControls.read(record.provider, current, () => live?.screen?.text() ?? '', record.cwd);
     if (this.require(projectId, id).statusToken !== record.statusToken || this.live.get(id) !== live) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent changed while reading its settings. Reopen the picker.');
@@ -622,13 +651,14 @@ export class AdeSessions {
     this.sending.add(id);
     const start = live.start + live.buffer.length;
     const io: ChatControlIO = {
-      screen: () => live.screen?.text() ?? '',
+      screen: () => live.screen?.viewportText() ?? '',
       output: () => live.buffer.slice(Math.max(0, start - live.start)).slice(-65536),
+      outputCursor: () => live.start + live.buffer.length,
       write: async data => { verify(); wrote = true; await this.command(live, { type: 'input', data }); },
       waitFor: async predicate => {
         const deadline = Date.now() + (record.provider === 'codebuddy' ? 20000 : 5000);
         while (Date.now() < deadline) {
-          verify(); const screen = live.screen?.text() ?? '';
+          verify(); const screen = live.screen?.viewportText() ?? '';
           if (predicate(screen)) return screen;
           await new Promise(resolve => setTimeout(resolve, 40));
         }
@@ -659,19 +689,21 @@ export class AdeSessions {
     session.draftInput = data === '\r' || data === '\n' || data === '\x03' || data === '\x15' ? false : pointerInput || /^(?:\x1b|\x1b\[[IO])$/.test(data) ? session.draftInput : true;
     const sent = this.command(session, { type: 'input', data });
     if (session.resumeTurnObserved === false && /[\r\n]/.test(data)) session.resumePromptSubmitted = true;
-    const interrupt = data === '\x1b' || data === '\x03' || /^\x1b\[27(?:;1(?::[12])?)?u$/.test(data);
-    session.turnStatus.input(data, Date.now(), interrupt ? this.status(projectId, id).data?.state === 'working' : undefined);
+    const interrupt = isInterruptionInput(data);
+    if (!pointerInput) session.turnStatus.input(data, Date.now(), interrupt ? this.status(projectId, id).data?.state === 'working' : undefined);
     return sent.catch(error => { session.turnStatus.input(''); throw error; });
   }
 
-  async send(projectId: string, id: string, request: SendMessageRequest, internalWorkflow = false, submit = true): Promise<{ ok: true; message: string }> {
+  async send(projectId: string, id: string, request: SendMessageRequest, internalWorkflow = false, submit = true, requireEmpty = false): Promise<{ ok: true; message: string }> {
     const record = this.require(projectId, id), session = this.live.get(id);
     const inputRevision = session?.inputRevision;
     await session?.screen?.settled();
     if (session?.inputRevision !== inputRevision) throw new CliError('RATE_LIMITED', 'Terminal input changed while reading its prompt. Review it before sending.');
+    if (requireEmpty && !this.handoffPromptReady(projectId, id)) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty, idle agent prompt before sending the handoff');
     // Antigravity hides shortcuts in a nonempty composer. Preserve initial readiness
     // only within this locked send, while every write still checks fresh status/liveness.
     const initialNativeReady = record.provider === 'antigravity' && antigravityPromptReady(session?.screen?.text() ?? session?.buffer ?? '');
+    const initialCodeBuddyReady = record.provider === 'codebuddy' && session?.screen?.codeBuddyPromptReady() === true;
     const openCodeReady = !isOpenCode(record.provider) || session?.screen?.openCodePromptReady() === true;
     if (typeof request.message !== 'string' || request.message.length > (internalWorkflow ? 48000 : 10000) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(request.message)) throw new CliError('INVALID_ARGUMENT', 'Message exceeds the allowed length or contains terminal control codes');
     const uploads = decodeAttachments(request.attachments);
@@ -682,7 +714,7 @@ export class AdeSessions {
       if (!openCodeReady) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal and finish native setup before sending.');
       const status = this.status(projectId, id);
       if (['waiting', 'blocked'].includes(status.data?.state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent needs input. Answer its question or approval controls in Chat, or use Terminal for native setup.');
-      const nativeReady = record.provider === 'antigravity' && (!status.data || status.data.state === 'unknown') && initialNativeReady;
+      const nativeReady = (!status.data || status.data.state === 'unknown') && (initialNativeReady || initialCodeBuddyReady);
       if (!nativeReady && (status.meta.availability !== 'ready' || !['idle', 'working', 'completed', 'failed', 'interrupted'].includes(status.data?.state ?? ''))) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent input prompt is not ready yet. Open Terminal to finish setup, then try again.');
     };
     writable(); this.sending.add(id);

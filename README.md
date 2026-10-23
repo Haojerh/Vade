@@ -22,9 +22,19 @@ Discovery is cached for 30 seconds and bounded to 20,000 directory entries, 2,00
 
 APIs: `GET /api/agent-history` accepts bounded scope/projectId/worktreeId/search/offset/refresh queries. `POST /api/projects/:projectId/resume-history` accepts only an opaque indexed sessionId and a discovered worktreeId. The backend revalidates source identity before using fixed provider resume arguments, uses the selected worktree as cwd and refuses duplicate live writers.
 
+### Workspace explorer and editor
+
+Open **Explorer** (folder icon) in the right sidebar and select a project worktree. **Names** filters the folder tree; **Contents** groups highlighted matches by file with case, whole-word, regex and include/exclude filters. The options menu controls dotfiles/ignored files and opens the discovered worktree in VS Code or the system file manager. Native ripgrep accelerates searches when installed; name indexes and directory data are bounded and cached.
+
+Files open in a locally bundled Monaco editor with find/replace, undo/redo, multi-cursor, syntax highlighting and **Ctrl/Cmd+S**. Project diagnostics are disabled because this surface does not load the project's language-server context. Git diff supports editable split/inline views and previous/next change navigation, preserving the source editor's undo history. Git baselines load only for changes view. Markdown opens in an editable Tiptap view with formatting controls, lists, task lists, tables, links and code blocks; Code mode preserves source syntax. Large Markdown files and documents with embedded HTML/frontmatter use source editing to avoid lossy conversion. Image references remain inert.
+
+**Settings → General → Editor autosave** controls idle/blur saves (on by default). There is no Save button or shortcut footer. Version-checked atomic saves reject stale edits; closing or reloading unsaved files asks before discarding them. File reads and cached reopen are independent of Git-baseline reads. Text files are limited to 2 MiB; symlinks, private runtime data, Git metadata and binary files are not editable. Loading uses the shared skeleton and reduced-motion fallback.
+
 ### Workflow / Organization
 
-Settings → Installation / Setup installs and verifies Vade's bundled CLI and orchestration skill. Then open Settings → Workflow / Organization, add roles, select provider/model/effort, connect dependencies, and enable. Workflow changes save automatically. The contacted agent becomes the orchestrator for every new task submitted through Chat, a card composer, or Kanban. Raw terminal typing and approval/question answers remain direct input. Mode is off by default.
+Settings → Installation / Setup installs and verifies Vade's bundled CLI and both orchestration skills. With Workflow disabled, ask an agent to spawn workers with a requested provider/model and task; that contacted agent defines and coordinates the team through the CLI without changing Settings. New or resumed agents receive the private CLI environment. Independent parallel work uses isolated Git worktrees; shared checkouts run workers sequentially.
+
+With Workflow enabled, new task submissions require explicit confirmation to use the saved provider/model/effort graph. Chat offers **Continue with workflow** or the user can disable Workflow in Settings. Agents cannot disable it through the CLI. Raw terminal typing and approval/question answers remain direct input. Mode is off by default.
 
 Workers explicitly report results; dependency stages cannot start from a terminal exit or a provider turn ending. Shared work is serialized. Optional Isolated Worktrees lets the orchestrator split two or more independent workstreams, then integrate committed changes through a separate integration checkout before updating the source. Conflicts pause execution and preserve work. The settings run list shows plans, results and cancellation. No Orca process/service is required. See [execution protocol, limits and architectural references](docs/workflow-runtime.md).
 
@@ -220,7 +230,7 @@ npm test
 ### Read-Only Orca CLI Integration
 - Executes only fixed, allowlisted read commands, including `orchestration worker-show` for effective launch metadata and `worker-read --source transcript` for supported conversation sources.
 - Spawns CLI commands directly with `shell: false`, bounded execution timeouts (8s for Orca, 12s for Git/gh), stdout caps (4 MiB), and global concurrency limits (maximum 3 concurrent processes).
-- Collection never creates runs or changes task status. With Workflow / Organization disabled, the explicit message composer sends directly to the selected agent. Enabling the saved workflow starts a standalone run on each new message submission.
+- Collection never creates runs or changes task status. With Workflow disabled, the composer sends directly to the selected agent, which may use its private CLI for explicitly requested delegation. With Workflow enabled, confirmed new task submissions start the saved graph.
 - **Provider usage**: The bottom of the left sidebar shows compact usage percentages; clicking opens quota windows, model pools, and reset times. `/api/usage` reads Orca's local `accounts.list` snapshot with `refreshUsage: false` over its authenticated local pipe/socket. Only normalized quotas reach the browser; account credentials and identities are omitted. Reads are capped at 1 MiB, time out after 5s, and are cached for 10s. The UI rereads every minute, independent of project switches; Orca owns provider polling. Missing or failed observations stay unavailable or stale.
 
 ### Polling Cadence & Freshness
@@ -326,3 +336,10 @@ Provider quota contracts were adapted from [Orca](https://github.com/stablyai/or
 ### Additional coding agents
 
 CodeBuddy, OpenCode, OpenCode 2 and Kilo Code are supported by the standalone launch, status, history, resume and message paths. See [provider capabilities and limits](docs/additional-providers.md) for attachment transport, native sign-in and configuration details, including the OpenCode 2 runtime verification limits.
+## Session handoff
+
+Use **Hand Off** in an agent overlay to continue in a fresh agent session in the same worktree. Choose Focused handoff or Full session transcript. The original session stays unchanged. If native setup is needed, finish it in Terminal and select **Send handoff context**. Uncertain sends are never repeated automatically. See [session handoff](docs/session-handoff.md).
+
+## Desktop updates
+
+Settings → **Installation / Setup** starts with the desktop version and update check. Packaged apps check `Haojerh/ADE` GitHub Releases at startup and show a persistent, dismissible update notice. **Update & restart** downloads, installs and relaunches Vade. `npm run package:release` creates update-ready artifacts; the release workflow publishes Windows installers and metadata on matching stable version tags. See [desktop updates](docs/desktop-updates.md) for release requirements.

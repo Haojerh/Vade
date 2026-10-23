@@ -1,0 +1,11 @@
+# Session handoff
+
+The agent overlay's **Hand Off** action starts a fresh detected, enabled coding agent in the source session's exact discovered worktree. The original provider session remains unchanged. Focused handoff supplies recent public updates and a read-only context file; Full session transcript asks the new agent to read the complete exported public conversation first. Internal reasoning and tool output are never exported.
+
+`server/runtime/sessionHandoff.ts` resolves history through `AdeConversations`, retaining exact-session identity and cursor fences. Exports are bounded to 1 MiB of message text, 1,000 messages, ten pages and a five-second scan window. Full mode refuses incomplete exports; focused mode explicitly labels bounded coverage. At most 200 export files are retained; reaching that limit refuses a new export. Files use generated names and backend-owned private paths.
+
+`POST /api/projects/:projectId/nodes/:nodeId/handoff` accepts only `HandoffSessionRequest` (`agentId`, `context`). The response identifies the newly created node and its `pending`, `submitted` or `uncertain` delivery state. The UI opens that node. A pending context can be explicitly submitted through `POST .../handoff-message` with an empty object after native setup is finished. Input is serialized and requires an observed empty, idle owned composer. Uncertain delivery is persisted before the first write and cannot be retried, including after a runtime restart. A changed target launch token refuses pending delivery.
+
+Active source agents, active peer writers and active workflows in the checkout prevent handoff. Handing off does not create an orchestration run, alter task outcomes, change provider settings or bypass native sign-in/trust. Handoff is standalone-only.
+
+Reference: Orca's [continuation dialog](https://github.com/stablyai/orca/blob/main/src/renderer/src/components/agent-session-continuation/AgentSessionContinuationDialog.tsx), [prompt construction](https://github.com/stablyai/orca/blob/main/src/renderer/src/lib/agent-session-continuation.ts), and [readiness-aware launch](https://github.com/stablyai/orca/blob/main/src/renderer/src/lib/launch-agent-session-continuation.ts). Vade uses its existing shared UI and owned session API with public transcript exports rather than terminal captures or an Orca runtime dependency.

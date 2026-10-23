@@ -12,6 +12,7 @@ export function readHandled(value: string | null): Set<string> {
 export function failedInboxProjects(items: InboxItem[], handled: ReadonlySet<string>, now = Date.now()): Set<string> {
   const latest = new Map<string, InboxItem>();
   for (const item of items) {
+    if (item.source === 'attention') continue;
     const key = `${item.projectId}:${item.entityId}`;
     if (!latest.has(key) || latest.get(key)!.at < item.at) latest.set(key, item);
   }

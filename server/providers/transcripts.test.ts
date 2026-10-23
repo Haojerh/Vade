@@ -454,3 +454,69 @@ test('Antigravity reads exact-session protobuf tool metadata without output or r
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+import { databaseProviderActivity, transcriptProviderActivity } from './providerActivity.js';
+import { claudeLocalCommandEffort } from './shared.js';
+
+test('Claude manual effort acknowledgements refresh metadata while ordinary prose does not', () => {
+  const record = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
+  assert.equal(claudeLocalCommandEffort(record('<local-command-stdout>Set effort level to low (this session only)</local-command-stdout>')), 'low');
+  assert.equal(claudeLocalCommandEffort(record('<local-command-stdout>Effort level set to auto</local-command-stdout>')), 'auto');
+  assert.equal(claudeLocalCommandEffort(record('Set effort level to low')), undefined);
+  assert.equal(claudeLocalCommandEffort({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '<local-command-stdout>Set effort level to low</local-command-stdout>' }] } }), undefined);
+});
+
+test('provider activity exposes errors and reasoning presence without private reasoning text', () => {
+  for (const provider of ['codex', 'claude', 'codebuddy']) {
+    const record = provider === 'codex' ? { type: 'response_item', payload: { type: 'reasoning', id: 'reason', summary: [{ text: 'PRIVATE THOUGHT' }] } }
+      : provider === 'claude' ? { type: 'assistant', uuid: 'reason', message: { role: 'assistant', content: [{ type: 'thinking', thinking: 'PRIVATE THOUGHT' }] } }
+        : { type: 'reasoning', id: 'reason', content: [{ text: 'PRIVATE THOUGHT' }] };
+    const result = transcriptProviderActivity(provider, 'exact', [JSON.stringify({ ...record, sessionId: 'foreign' }), JSON.stringify({ ...record, sessionId: 'exact' })]);
+    assert.equal(result.length, 1);
+    assert.equal(result[0].kind, 'reasoning');
+    assert.equal(result[0].state, 'recorded');
+    assert.ok(!JSON.stringify(result).includes('PRIVATE THOUGHT'));
+  }
+  const errors = transcriptProviderActivity('claude', 'exact', [JSON.stringify({ sessionId: 'exact', isApiErrorMessage: true, message: { content: [{ type: 'text', text: 'Bad Request: model unavailable' }] } })]);
+  assert.equal(errors[0].kind, 'error');
+  assert.match(errors[0].message!, /Bad Request/);
+  const cleared = transcriptProviderActivity('claude', 'exact', [JSON.stringify({ isApiErrorMessage: true, message: { content: [{ type: 'text', text: 'Bad Request' }] } }), JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'A successful reply' }] } })]);
+  assert.equal(cleared.length, 0);
+});
+
+test('OpenCode and Kilo errors survive empty assistant messages; reasoning requires an unfinished latest part', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-provider-events-'));
+  const file = path.join(dir, 'events.db');
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT); CREATE TABLE part (id TEXT, session_id TEXT, message_id TEXT, data TEXT)');
+    const message = db.prepare('INSERT INTO message VALUES (?,?,?,?)'), part = db.prepare('INSERT INTO part VALUES (?,?,?,?)');
+    message.run('foreign', 'other', 1, JSON.stringify({ error: { data: { message: 'FOREIGN ERROR' } } }));
+    message.run('failed', 'exact', 2, JSON.stringify({ role: 'assistant', error: { name: 'APIError', data: { message: 'Bad Request: model unavailable' } } }));
+    message.run('reason', 'exact', 3, JSON.stringify({ role: 'assistant' }));
+    part.run('p', 'exact', 'reason', JSON.stringify({ type: 'reasoning', text: 'PRIVATE THOUGHT', time: { start: 3 } }));
+    const result = databaseProviderActivity(file, 'exact');
+    assert.equal(result.length, 2); assert.match(result[0].message!, /Bad Request/); assert.equal(result[1].state, 'active');
+    assert.ok(!JSON.stringify(result).includes('PRIVATE THOUGHT')); assert.ok(!JSON.stringify(result).includes('FOREIGN'));
+    part.run('tool', 'exact', 'reason', JSON.stringify({ type: 'tool' }));
+    assert.equal(databaseProviderActivity(file, 'exact')[1].state, 'recorded');
+    message.run('success', 'exact', 4, JSON.stringify({ role: 'assistant', time: { completed: 5 } }));
+    part.run('reply', 'exact', 'success', JSON.stringify({ type: 'text', text: 'A successful reply' }));
+    assert.ok(databaseProviderActivity(file, 'exact').every(item => item.kind !== 'error'));
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('OpenCode v2 activity reads native errors and inline reasoning separately from conversation', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-v2-events-')), file = path.join(dir, 'events.db');
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('CREATE TABLE session_message (id TEXT, session_id TEXT, seq INTEGER, type TEXT, time_created INTEGER, data TEXT)');
+    const insert = db.prepare('INSERT INTO session_message VALUES (?,?,?,?,?,?)');
+    insert.run('err', 'exact', 1, 'assistant', 1, JSON.stringify({ error: { data: { message: 'Bad Request v2' } } }));
+    insert.run('reason', 'exact', 2, 'assistant', 2, JSON.stringify({ content: [{ type: 'reasoning', text: 'PRIVATE THOUGHT', time: { start: 2, end: 3 } }] }));
+    const result = databaseProviderActivity(file, 'exact', true);
+    assert.match(result[0].message!, /Bad Request v2/); assert.equal(result[1].state, 'recorded');
+    assert.ok(!JSON.stringify(result).includes('PRIVATE THOUGHT'));
+    insert.run('success', 'exact', 3, 'assistant', 3, JSON.stringify({ content: [{ type: 'text', text: 'A successful reply' }] }));
+    assert.ok(databaseProviderActivity(file, 'exact', true).every(item => item.kind !== 'error'));
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});

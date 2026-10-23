@@ -6,6 +6,7 @@ import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { WorkflowGraph } from '../features/workflow/WorkflowGraph';
 import { NodeDetails } from '../features/workflow/NodeDetails';
 import { AgentHistoryPanel } from '../features/agents/AgentHistoryPanel';
+import { ExplorerPanel } from '../features/explorer/ExplorerPanel';
 import type { HistoryDrag } from '../features/agents/historyDrag';
 import '../features/agents/agents.css';
 import { resumeHistorySession } from '../api/client';
@@ -76,7 +77,7 @@ export const App: React.FC = () => {
     refreshAll,
   } = useDashboard();
 
-  const [rightSection, setRightSection] = useState<'source' | 'agents'>(() => { try { return localStorage.getItem('vade:right-section') === 'agents' ? 'agents' : 'source'; } catch { return 'source'; } });
+  const [rightSection, setRightSection] = useState<'source' | 'agents' | 'explorer'>(() => { try { const value = localStorage.getItem('vade:right-section'); return value === 'agents' || value === 'explorer' ? value : 'source'; } catch { return 'source'; } });
   const [historyRevision, setHistoryRevision] = useState(0);
   const [historyDrag, setHistoryDrag] = useState<HistoryDrag | null>(null);
   const historyProject = useRef(selectedProjectId); historyProject.current = selectedProjectId;
@@ -396,7 +397,7 @@ export const App: React.FC = () => {
               selectedNodeId={selectedNodeId}
               onSelectNode={setSelectedNodeId}
               isLocallyStale={isLocallyStale || Boolean(graphMeta?.stale) || (graphMeta ? graphMeta.availability !== 'ready' : false)}
-              orchestrationSeparated={prerequisites?.runtime === 'ade' ? false : orchestrationSeparated}
+              orchestrationSeparated={orchestrationSeparated}
               toolActivityEnabled={toolActivityEnabled}
             />
 
@@ -439,7 +440,7 @@ export const App: React.FC = () => {
       >
         <div className="right-tools">
           <nav className="right-tool-tabs github-tabs-nav" data-section={rightSection} role="tablist" aria-label="Right sidebar sections">
-            {(['source', 'agents'] as const).map(section => <button key={section} className={`tab-btn ${rightSection === section ? 'active' : ''}`} role="tab" aria-label={section === 'source' ? 'Source Control' : 'Agents'} title={section === 'source' ? 'Source Control' : 'Agents'} aria-selected={rightSection === section} onClick={() => { setRightSection(section); try { localStorage.setItem('vade:right-section', section); } catch {} }}><Icon name={section === 'source' ? 'git-branch' : 'message-square'} size={15} /></button>)}
+            {(['explorer', 'source', 'agents'] as const).map(section => <button key={section} className={`tab-btn ${rightSection === section ? 'active' : ''}`} role="tab" aria-label={section === 'source' ? 'Source Control' : section === 'agents' ? 'Agents' : 'Explorer'} title={section === 'source' ? 'Source Control' : section === 'agents' ? 'Agents' : 'Explorer'} aria-selected={rightSection === section} onClick={() => { setRightSection(section); try { localStorage.setItem('vade:right-section', section); } catch {} }}><Icon name={section === 'source' ? 'git-branch' : section === 'agents' ? 'message-square' : 'folder'} size={15} /></button>)}
             <button type="button" className="btn-icon right-tool-collapse" aria-label="Collapse tools sidebar" title="Collapse tools sidebar" onClick={() => handleToggleRight(false)}><Icon name="chevrons-right" size={14} /></button>
           </nav>
           <div className="right-tool-content" hidden={rightSection !== 'source'}>
@@ -455,6 +456,7 @@ export const App: React.FC = () => {
         />
           </div>
           {rightSection === 'agents' && <div className="right-tool-content"><AgentHistoryPanel key={selectedProjectId ?? 'all'} projectId={selectedProjectId} worktrees={graph?.nodes.filter(node => node.kind === 'worktree') ?? []} onResume={resumeSavedSession} onDragSession={setHistoryDrag} onOpen={(projectId, nodeId) => openInboxNode(projectId, nodeId, null)} revision={historyRevision} /></div>}
+          <div className="right-tool-content" hidden={rightSection !== 'explorer'}><ExplorerPanel projectId={selectedProjectId} worktrees={graph?.nodes.filter(node => node.kind === 'worktree') ?? []} active={rightSection === 'explorer' && rightSidebarOpen} /></div>
         </div>
       </ResizableSidebar>
 
@@ -478,6 +480,8 @@ export const App: React.FC = () => {
         onClose={() => setSelectedNodeId(null)}
         onRefresh={refreshNodeDetails}
         onSessionChange={refreshAll}
+        handoffEnabled={prerequisites?.runtime === 'ade'}
+        onOpenSession={nodeId => setSelectedNodeId(nodeId)}
         visibleSections={visibleSections}
         commitGraphEnabled={commitGraphEnabled}
         chatToolCallsEnabled={chatToolCallsEnabled}

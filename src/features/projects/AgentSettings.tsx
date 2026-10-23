@@ -48,10 +48,7 @@ export function AgentSettings() {
           return <div className="settings-page-row agent-settings-row" key={provider}>
             <div className="agent-setting-name"><ProviderIcon provider={provider} size={24} /><div><strong>{agent.name}</strong><code>{agent.permissionCommands?.[preference.mode] ?? agent.command}</code></div></div>
             <div className="agent-setting-controls">
-              <div className="agent-enabled-control" data-disabled={!preference.enabled} role="group" aria-label={`${agent.name} availability`}>
-                <span className="agent-enabled-indicator" aria-hidden="true" />
-                {[true, false].map(enabled => <button type="button" key={String(enabled)} aria-pressed={preference.enabled === enabled} disabled={saving || loading || (!enabled && isDefault && enabledProviders === 1)} onClick={() => toggleEnabled(enabled)}>{enabled ? 'Enabled' : 'Disabled'}</button>)}
-              </div>
+              <BinaryControl label={`${agent.name} availability`} choices={[{value:'enabled',label:'Enabled'},{value:'disabled',label:'Disabled'}]} value={preference.enabled ? 'enabled' : 'disabled'} disabledChoices={[saving || loading, saving || loading || isDefault && enabledProviders === 1]} onChange={value => toggleEnabled(value === 'enabled')} />
               <Select aria-label={`${agent.name} permission mode`} value={preference.mode} disabled={saving || loading} onChange={e => { void change({ ...value, providers: { ...value.providers, [provider]: { ...preference, mode: e.target.value as AgentPermissionMode } } }); }}>
                 <option value="manual">Manual</option><option value="auto" disabled={['antigravity', 'opencode', 'opencode2', 'kilo'].includes(provider)}>Auto</option><option value="yolo" disabled={provider === 'opencode2'}>Yolo</option>
               </Select>
@@ -65,3 +62,4 @@ export function AgentSettings() {
     {error && <p className="text-danger" role="alert">{error}</p>}
   </section>;
 }
+import { BinaryControl } from '../../components/ui/BinaryControl';

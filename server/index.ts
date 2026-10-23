@@ -5,6 +5,9 @@ const PORT = 4317;
 const HOST = '127.0.0.1';
 
 const runtime = new LocalRuntime();
+runtime.sessions.subscribeAttention(item => {
+  (process as NodeJS.Process & { parentPort?: { postMessage: (value: unknown) => void } }).parentPort?.postMessage({ type: 'agent-question', item });
+});
 runtime.sessions.subscribeResults(item => {
   (process as NodeJS.Process & { parentPort?: { postMessage: (value: unknown) => void } }).parentPort?.postMessage({ type: 'agent-completed', item });
 });

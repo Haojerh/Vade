@@ -14,6 +14,8 @@ import { Ports } from './ports.js';
 import { AgentHistory } from './agentHistory.js';
 import { OrganizationRuntime } from './organization.js';
 import { LocalSpeech } from './speech.js';
+import { WorkspaceFiles } from './workspaceFiles.js';
+import { SessionHandoffs } from './sessionHandoff.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
   const now = new Date().toISOString();
@@ -33,6 +35,8 @@ export class LocalRuntime {
   readonly history: AgentHistory;
   readonly organization: OrganizationRuntime;
   readonly speech: LocalSpeech;
+  readonly files: WorkspaceFiles;
+  readonly handoffs: SessionHandoffs;
   desktopMemory: { bytes: number; at: number; pids?: number[] } | null = null;
   readonly id = crypto.randomUUID();
   connections = 0;
@@ -41,6 +45,7 @@ export class LocalRuntime {
 
   constructor(readonly store = new AdeStore(), runner: CommandRunner = defaultCommandRunner, connectionsService?: LocalConnections) {
     this.git = new AdeGit(store, runner);
+    this.files = new WorkspaceFiles(store, this.git);
     this.speech = new LocalSpeech(store.directory);
     this.history = new AgentHistory(store);
     this.accounts = new ProviderAccounts(store, runner);
@@ -49,6 +54,8 @@ export class LocalRuntime {
     this.ports = new Ports(store, this.sessions, this.resources);
     this.awake = new ComputerAwake(store, () => this.sessions.processGroups().some(group => this.sessions.status(group.projectId, group.id).data?.state === 'working'));
     this.organization = new OrganizationRuntime(store, this.git, () => this.sessions);
+    this.handoffs = new SessionHandoffs(store, this.git, this.sessions, this.conversations, this.organization);
+    this.sessions.setCliEnvironment(record => this.organization.cliEnvironment(record));
   }
 
   async snapshot(projectId: string): Promise<DashboardSnapshot> {
@@ -108,6 +115,7 @@ export class LocalRuntime {
     return { node, tasks: [], activity: [], currentTool: null,
       terminalPreview: node.kind === 'terminal' ? this.sessions.preview(projectId, nodeId).output : undefined,
       session: node.kind === 'agent' || node.kind === 'terminal' ? { terminal: true, chat: node.kind === 'agent', history: node.kind === 'agent', resumable: Boolean(this.sessions.page(projectId, nodeId).resumable),
+        ...(() => { const handoff = this.sessions.require(projectId, nodeId).handoff; return handoff ? { handoff: { sourceId: handoff.sourceId, context: handoff.context, delivery: handoff.delivery } } : {}; })(),
         ...(node.agentType === 'antigravity' && !this.sessions.require(projectId, nodeId).providerThreadId ? { reason: 'Antigravity has not reported a saved conversation yet. Complete a first turn in Terminal to bind chat and enable recovery.' } : {}) } : undefined,
       conversation: node.kind === 'agent' ? await this.conversations.read(this.sessions.require(projectId, nodeId), query) : section<ConversationPage>(null, 'unsupported', 'Workspaces do not have conversation history.') };
   }

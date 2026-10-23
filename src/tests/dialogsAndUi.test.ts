@@ -6,6 +6,50 @@ import { normalizeProvider, ProviderIcon } from '../components/providers/Provide
 import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { TopBar } from '../app/TopBar';
+import { ProviderActivity } from '../features/workflow/ProviderActivity';
+import type { Node } from '../../shared/contracts';
+import { readAgentDraft, writeAgentDraft } from '../hooks/useAgentDraft';
+
+test('unsent drafts survive overlay remounts, isolate agents and clear only the submitted draft', () => {
+  const first = JSON.stringify(['draft-project', 'first']), second = JSON.stringify(['draft-project', 'second']);
+  writeAgentDraft(first, 'unfinished question'); writeAgentDraft(second, 'another task');
+  assert.equal(readAgentDraft(first), 'unfinished question');
+  assert.equal(readAgentDraft(second), 'another task');
+  writeAgentDraft(first, 'latest edit');
+  assert.equal(readAgentDraft(first), 'latest edit');
+  writeAgentDraft(first, '');
+  assert.equal(readAgentDraft(first), ''); assert.equal(readAgentDraft(second), 'another task');
+  writeAgentDraft(second, '');
+});
+
+test('provider errors render in Chat and reasoning dots require live working nonstale evidence', () => {
+  const node = { state: 'working', liveness: 'live', stale: false, providerActivity: { data: [
+    { id: 'error', kind: 'error', state: 'recorded', at: null, message: 'Bad Request <script>' },
+    { id: 'reason', kind: 'reasoning', state: 'active', at: null },
+  ], meta: { stale: false } } } as Node;
+  const html = renderToStaticMarkup(createElement(ProviderActivity, { node }));
+  assert.match(html, /Bad Request &lt;script&gt;/); assert.match(html, /provider-reasoning-dots/);
+  assert.ok(!html.includes('Reasoning recorded'));
+  const recorded = { ...node, providerActivity: { ...node.providerActivity!, data: [{ id: 'past', kind: 'reasoning' as const, state: 'recorded' as const, at: null }] } };
+  assert.match(renderToStaticMarkup(createElement(ProviderActivity, { node: recorded })), /aria-label="Agent working"/);
+  assert.equal(renderToStaticMarkup(createElement(ProviderActivity, { node: { ...recorded, state: 'completed' } })), '');
+  for (const patch of [{ state: 'failed' }, { liveness: 'exited' }, { stale: true }]) {
+    assert.ok(!renderToStaticMarkup(createElement(ProviderActivity, { node: { ...node, ...patch } as Node })).includes('provider-reasoning-dots'));
+  }
+});
+
+test('all providers show one live working indicator before reasoning or assistant records are flushed', () => {
+  for (const agentType of ['codebuddy', 'antigravity', 'opencode', 'opencode2', 'kilo', 'codex', 'claude']) {
+    const node = { agentType, state: 'working', liveness: 'live', stale: false } as Node;
+    const html = renderToStaticMarkup(createElement(ProviderActivity, { node }));
+    assert.match(html, /aria-label="Agent working"/);
+    assert.equal(html.match(/class="provider-reasoning-dots"/g)?.length, 1);
+    assert.ok(!html.includes('Reasoning recorded'));
+    for (const state of ['completed', 'failed', 'waiting', 'idle', 'unknown', 'interrupted'] as const) {
+      assert.equal(renderToStaticMarkup(createElement(ProviderActivity, { node: { ...node, state } })), '');
+    }
+  }
+});
 
 test('top bar keeps Vade branding in the updated application layout', () => {
   const html = renderToStaticMarkup(createElement(TopBar, {

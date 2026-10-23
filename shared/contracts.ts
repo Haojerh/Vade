@@ -143,6 +143,16 @@ export interface Node {
   model?: string | null;
   effort?: string | null;
   toolActivity?: Section<ToolActivity[]>;
+  providerActivity?: Section<ProviderActivity[]>;
+}
+
+/** Native errors and reasoning presence only; never reasoning text or tool results. */
+export interface ProviderActivity {
+  id: Id;
+  at: ISO | null;
+  kind: 'error' | 'reasoning';
+  state: 'recorded' | 'active';
+  message?: string; // bounded native error message only
 }
 
 export interface AgentStatus { state: State; source: 'provider-hook' | 'provider-terminal'; event: string; attention?: 'question' | 'approval' | 'auth'; toolCall?: { name: string; summary: string } }
@@ -274,7 +284,7 @@ export interface ConversationPage {
 
 export interface NodeDetails {
   terminalPreview?: string | null;
-  session?: { terminal: boolean; chat: boolean; history?: boolean; resumable: boolean; reason?: string };
+  session?: { terminal: boolean; chat: boolean; history?: boolean; resumable: boolean; reason?: string; handoff?: SessionHandoff };
   node: Node;
   tasks: Task[];
   activity: Activity[];
@@ -359,6 +369,14 @@ export interface HealthResponse {
 export interface SendMessageRequest {
   message: string;
   attachments?: MessageAttachment[];
+  workflowConfirmed?: boolean;
+}
+export const WORKFLOW_CONFIRMATION_MESSAGE = 'Workflow enabled, confirm to continue implementation with workflow or disable settings yourself';
+export interface AdhocOrchestrationRequest {
+  request: string;
+  isolatedWorktrees?: boolean;
+  nodes: Omit<OrganizationNode, 'x' | 'y'>[];
+  edges?: OrganizationConfig['edges'];
 }
 
 export interface AgentChatModel {
@@ -490,9 +508,9 @@ export interface InboxItem {
   projectName: string;
   entityId: string;
   title: string;
-  outcome: 'succeeded' | 'failed' | 'completed' | 'interrupted';
+  outcome: 'succeeded' | 'failed' | 'completed' | 'interrupted' | 'waiting';
   at: ISO;
-  source: 'agent' | 'task' | 'turn';
+  source: 'agent' | 'task' | 'turn' | 'attention';
 }
 
 export interface InboxData { items: InboxItem[] }
@@ -578,6 +596,7 @@ export interface WorkflowStep {
 }
 export interface WorkflowStream { id: string; title: string; nodes: string[]; worktreeId: string | null; integrated: boolean }
 export interface WorkflowRun {
+  mode?: 'configured' | 'adhoc';
   id: string; projectId: string; orchestratorId: string; worktreeId: string; originalRequest: string;
   createdAt: string; updatedAt: string; state: 'planning' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled';
   config: OrganizationConfig; steps: WorkflowStep[]; streams: WorkflowStream[];
@@ -602,3 +621,22 @@ export interface SpeechAudioRequest { pcm: string; sequence: number }
 export interface SpeechTranscript { text: string; interim: string }
 export interface StartSpeechRequest { modelId: string }
 export interface StartSpeechResponse { sessionId: string }
+// Standalone workspace explorer. Paths are relative to a discovered worktree.
+export interface WorkspaceEntry { path: string; name: string; directory: boolean; symlink: boolean; status: string | null }
+export interface WorkspaceRoot { id: string; label: string; path: string; branch: string | null }
+export interface SessionHandoff { sourceId: string; context: 'focused' | 'full'; delivery: 'pending' | 'submitted' | 'uncertain' }
+export interface HandoffSessionRequest { agentId: string; context: 'focused' | 'full' }
+export interface HandoffSessionResponse { nodeId: string; handoff: SessionHandoff }
+export interface DesktopUpdateStatus {
+  state: 'unsupported' | 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'installing' | 'error';
+  currentVersion: string;
+  latestVersion: string | null;
+  percent: number | null;
+  checkedAt: string | null;
+  message: string | null;
+}
+export interface WorkspaceListing { entries: WorkspaceEntry[]; truncated: boolean; gitError: string | null }
+export interface WorkspaceSearchOptions { matchCase?: boolean; wholeWord?: boolean; regex?: boolean; include?: string; exclude?: string; showDotfiles?: boolean; showIgnored?: boolean }
+export interface WorkspaceSearch { matches: { path: string; line?: number; preview?: string; status?: string | null; ranges?: [number, number][] }[]; truncated: boolean }
+export interface WorkspaceFile { path: string; text: string; version: string; original: string | null; gitError: string | null; git?: boolean }
+export interface SaveWorkspaceFileRequest { worktreeId: string; path: string; text: string; version: string }

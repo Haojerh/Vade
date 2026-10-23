@@ -1,0 +1,10 @@
+.desktop-update-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:16px; }
+.desktop-update-settings progress, .desktop-update-notice progress { display:block; width:100%; height:5px; margin-top:12px; accent-color:var(--text-main); }
+.desktop-update-settings .desktop-update-checked { margin-top:12px; color:var(--text-muted); }
+.desktop-update-notice { position:fixed; bottom:46px; right:18px; z-index:10001; display:flex; align-items:flex-start; gap:10px; width:min(390px,calc(100vw - 36px)); padding:16px; box-sizing:border-box; border:1px solid var(--border-main); border-radius:10px; background:var(--surface-1); color:var(--text-main); box-shadow:var(--shadow-lg); }
+body .agent-notifications { bottom:calc(46px + var(--desktop-update-offset, 0px)); }
+.desktop-update-notice>svg { flex-shrink:0; margin-top:2px; }
+.desktop-update-notice>div { flex:1; min-width:0; }
+.desktop-update-notice strong { font-size:13px; }
+.desktop-update-notice p { margin:5px 0 0; color:var(--text-secondary); font-size:12px; line-height:1.5; overflow-wrap:anywhere; }
+.desktop-update-notice .desktop-update-actions { margin-top:12px; }

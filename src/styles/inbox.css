@@ -31,7 +31,9 @@
 .inbox-results li:last-child { border-bottom: 0; }
 .inbox-result { display: flex; align-items: flex-start; gap: 12px; text-align: left; flex: 1; min-width: 0; padding: 18px 12px 18px 20px; border: 0; color: var(--text-main); background: transparent; cursor: pointer; font: inherit; }
 .inbox-unread-dot { box-sizing: border-box; flex: 0 0 7px; width: 7px; height: 7px; margin-top: calc((14px * 1.45 - 7px) / 2); border-radius: 50%; background: var(--state-completed-text); }
-.result-failed .inbox-unread-dot { background: var(--state-failed-text); }
+.result-failed .inbox-unread-dot, .result-interrupted .inbox-unread-dot { background: var(--state-failed-text); }
+.result-waiting .inbox-unread-dot { background: var(--state-waiting-text); }
+.outcome-waiting { color: var(--state-waiting-text); background: var(--state-waiting-bg); }
 .is-handled .inbox-unread-dot { background: transparent; border: 1px solid var(--border-strong); }
 .inbox-result-content { display: flex; flex-direction: column; gap: 8px; min-width: 0; width: 100%; }
 .inbox-result-content strong { font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; font-weight: 600; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
@@ -42,8 +44,7 @@
 .inbox-result-footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
 .inbox-outcome { padding: 2px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; }
 .outcome-succeeded, .outcome-completed { color: var(--state-completed-text); background: var(--state-completed-bg); }
-.outcome-interrupted { color: var(--state-waiting-text); background: var(--state-waiting-bg); }
-.outcome-failed { color: var(--state-failed-text); background: var(--state-failed-bg); }
+.outcome-interrupted, .outcome-failed { color: var(--state-failed-text); background: var(--state-failed-bg); }
 .inbox-result time { color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .inbox-open-project { display: grid; place-items: center; align-self: center; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); flex: 0 0 36px; height: 36px; margin-right: 12px; cursor: pointer; }
 .inbox-open-project:hover { background: var(--surface-active); color: var(--text-main); }

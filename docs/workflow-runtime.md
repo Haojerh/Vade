@@ -2,6 +2,10 @@
 
 Workflow mode is disabled by default. Settings stores a versioned, acyclic graph in ADE's private SQLite registry. A run snapshots that graph, so changing settings cannot change an active assignment. There is no hardcoded orchestrator node: the exact owned agent receiving the user's message owns the run.
 
+With Workflow disabled, the installed `vade-cli` and `vade-orchestration` skills also support explicit user requests to spawn/delegate workers. New or resumed coding agents receive `VADE_CLI_PATH` and a private launch-bound `VADE_IDENTITY_FILE`. `context` discovers the current mode; `models` reads a provider catalog; `begin` accepts bounded worker definitions and dependencies chosen by the contacted agent. This creates an `adhoc` run without modifying the saved Settings graph or injecting another prompt into the active orchestrator. Planning, dispatch, mailboxes, isolation, integration, explicit results and cancellation use the same fenced runtime. The CLI cannot bypass the enabled Workflow setting.
+
+With Workflow enabled, a new message is rejected with "Workflow enabled, confirm to continue implementation with workflow or disable settings yourself" until the Chat confirmation explicitly resubmits it with `workflowConfirmed: true`. Confirmation runs the saved graph. The application never changes the setting on the agent's behalf. Continuing a member of an ended run remains ordinary chat, subject to checkout ownership.
+
 ## Execution and authority
 
 `OrganizationRuntime` intercepts the normal message endpoint when enabled. Chat, card composers, and Kanban all use this endpoint. Raw terminal typing and question/approval answers are not task submissions and remain untouched. A session cannot own two active workflows, and a source checkout cannot host overlapping runs. Internal worker assignments bypass the automatic trigger.

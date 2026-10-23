@@ -8,5 +8,8 @@ const require = createRequire(import.meta.url);
 const electron = require('electron');
 // A previous unpacked app may still have its ASAR open on Windows.
 const output = path.join('release', new Date().toISOString().replace(/[:.]/g, '-'));
-await build({ targets: Platform.current().createTarget('dir'), config: { electronDist: path.dirname(electron), directories: { output } } });
+const release = process.argv.includes('--release'), publish = process.argv.includes('--publish');
+if (publish && !release) throw new Error('Publishing requires a release build');
+const targets = release ? process.platform === 'win32' ? ['nsis'] : process.platform === 'darwin' ? ['dmg', 'zip'] : ['AppImage'] : ['dir'];
+await build({ targets: Platform.current().createTarget(...targets), publish: publish ? 'always' : 'never', config: { electronDist: path.dirname(electron), directories: { output } } });
 console.log(`Desktop output: ${path.resolve(output)}`);

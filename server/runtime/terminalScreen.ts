@@ -7,7 +7,7 @@ export class TerminalScreen {
   private parsedCursor = 0;
   private mouseEncoding = 0;
   private nativeCaret?: { row: number; column: number };
-  private terminal = new headless.Terminal({ cols: 100, rows: 28, scrollback: 100, allowProposedApi: true,
+  private terminal = new headless.Terminal({ cols: 100, rows: 28, scrollback: 3000, allowProposedApi: true,
     theme: { foreground: '#ededed', background: '#181818' } });
   constructor(reply: (data: string) => void, parsed: () => void) {
     this.terminal.loadAddon(this.serializer);
@@ -47,8 +47,11 @@ export class TerminalScreen {
   }
   checkpoint(): { data: string; cursor: number; cols: number; rows: number } | null {
     if (!this.parsedCursor) return null;
-    const data = this.serializer.serialize({ scrollback: 100 }) + (this.mouseEncoding ? `\x1b[?${this.mouseEncoding}h` : '');
-    return data.length <= 524288 ? { data, cursor: this.parsedCursor, cols: this.terminal.cols, rows: this.terminal.rows } : null;
+    for (const scrollback of [3000, 1000, 300, 100, 0]) {
+      const data = this.serializer.serialize({ scrollback }) + (this.mouseEncoding ? `\x1b[?${this.mouseEncoding}h` : '');
+      if (data.length <= 524288) return { data, cursor: this.parsedCursor, cols: this.terminal.cols, rows: this.terminal.rows };
+    }
+    return null;
   }
   resize(cols: number, rows: number): void { this.nativeCaret = undefined; this.terminal.resize(cols, rows); }
   openCodePromptReady(): boolean {
@@ -83,6 +86,12 @@ export class TerminalScreen {
     return false;
   }
   /** Native composer placeholders are dim; typed text must never be overwritten. */
+  codeBuddyPromptReady(): boolean {
+    const screen = this.text() ?? '';
+    return /\? for shortcuts/.test(screen) && !/(?:Esc to cancel|Select model|Select effort|Keyboard:.*(?:Select|Navigate))/i.test(screen)
+      && this.composerEmpty(false, true);
+  }
+
   composerEmpty(antigravity = false, codebuddy = false): boolean {
     const buffer = this.terminal.buffer.active;
     const row = codebuddy && this.nativeCaret ? this.nativeCaret.row : buffer.baseY + buffer.cursorY;
@@ -100,8 +109,9 @@ export class TerminalScreen {
     // CodeBuddy's empty focused input draws an undimmed first placeholder
     // character (inverse off Windows) followed by dim text. Actual drafts
     // retain undimmed text, so every remaining cell must still pass below.
-    const codeBuddyPlaceholder = codebuddy && /^Try "[^"\r\n]+"$/.test(text.slice(placeholderStart))
-      && line.getCell(placeholderStart + 1)?.isDim();
+    const codeBuddyPlaceholder = codebuddy && this.nativeCaret?.row === row
+      && this.nativeCaret.column <= placeholderStart + 1
+      && Boolean(line.getCell(placeholderStart + 1)?.isDim());
     for (let column = marker[0].length; column < line.length; column++) {
       const cell = line.getCell(column);
       if (codeBuddyPlaceholder && column === placeholderStart) continue;
@@ -113,7 +123,13 @@ export class TerminalScreen {
     const buffer = this.terminal.buffer.active;
     const lines: string[] = [];
     for (let i = Math.max(0, buffer.length - 28); i < buffer.length; i++) lines.push(buffer.getLine(i)?.translateToString(true) ?? '');
-    return lines.join('\n').trim().slice(-2000) || null;
+    return lines.join('\n').trim().slice(-16384) || null;
+  }
+  /** Full bounded current viewport for native widgets; excludes scrollback. */
+  viewportText(): string {
+    const buffer = this.terminal.buffer.active, lines: string[] = [];
+    for (let row = buffer.baseY; row < buffer.baseY + Math.min(this.terminal.rows, 200); row++) lines.push(buffer.getLine(row)?.translateToString(true) ?? '');
+    return lines.join('\n').slice(0, 80200);
   }
   dispose(): void { this.terminal.dispose(); }
 }

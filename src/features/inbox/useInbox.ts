@@ -41,6 +41,7 @@ export function useInbox(enabled: boolean) {
       request.current?.abort(); request.current = null;
     };
   }, [refresh]);
+  useEffect(() => window.adeDesktop?.onAgentNotification(() => { void refresh(); }), [refresh]);
   const markHandled = useCallback((ids: string[]) => {
     setHandled(current => {
       const next = new Set([...current, ...ids].slice(-2000));

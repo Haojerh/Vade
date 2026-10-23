@@ -15,3 +15,4 @@
 @import './usage.css';
 @import '@xterm/xterm/css/xterm.css';
 @import './voice.css';
+@import '../features/updates/updates.css';

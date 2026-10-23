@@ -13,6 +13,7 @@ import { VoiceDictationSettings } from '../features/workflow/VoiceDictationSetti
 import { Select } from '../components/ui/Select';
 import type { TerminalShell } from '../../shared/contracts';
 import { TERMINAL_SHELL_OPTIONS, readTerminalShell, writeTerminalShell } from './terminalShellPreference';
+import { setEditorAutosave, useEditorAutosave } from '../features/explorer/editorPreferences';
 
 type SettingsPageProps = Pick<ProjectSelectorProps, 'theme' | 'onToggleTheme' | 'cardStateColors' | 'onToggleCardStateColors'
   | 'orchestrationSeparated' | 'onToggleOrchestrationSeparated' | 'commitGraphEnabled' | 'onToggleCommitGraph'
@@ -25,7 +26,7 @@ const sections = [
   { id: 'agents', label: 'Agents', description: 'Choose your default agent and permission modes.' },
   { id: 'workflow', label: 'Workspace', description: 'Control what appears in your project workspace.' },
   { id: 'organization', label: 'Workflow / Organization', description: 'Define how your coding agents delegate, collaborate, and return results.' },
-  { id: 'setup', label: 'Installation / Setup', description: 'Install and verify the local orchestration components.' },
+  { id: 'setup', label: 'Installation / Setup', description: 'Check desktop updates and install the local orchestration components.' },
   { id: 'integrations', label: 'Integrations', description: 'Connect source-hosting services on this machine.' },
   { id: 'accounts', label: 'AI Provider Accounts', description: 'Connect your existing provider sign-ins to display subscription usage.' },
 ];
@@ -33,8 +34,10 @@ const sections = [
 export const SettingsPage: React.FC<SettingsPageProps> = props => {
   const [search, setSearch] = useState('');
   const [terminalShell, setTerminalShell] = useState<TerminalShell>(readTerminalShell);
+  const autosave = useEditorAutosave();
   const current = sections.find(section => section.id === props.section) ?? sections[0];
   const options = [
+    { section: 'general', label: 'Editor autosave', description: 'Save workspace files after a short pause and when leaving the editor. When off, save with Ctrl/Cmd+S.', checked: autosave, change: setEditorAutosave },
     { section: 'workflow', label: 'Live tool nodes', description: 'Show observed tool calls near their agent.', checked: props.toolActivityEnabled ?? true, change: props.onToggleToolActivity },
     { section: 'workflow', label: 'Tool calls in chat', description: 'Show observed tool calls, such as edits and commands, in the agent chat history.', checked: props.chatToolCallsEnabled ?? true, change: props.onToggleChatToolCalls },
     { section: 'workflow', label: 'Commit graph history', description: 'Show local branches and merges in the Commits tab.', checked: props.commitGraphEnabled ?? false, change: props.onToggleCommitGraph },

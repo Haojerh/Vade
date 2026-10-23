@@ -4,6 +4,7 @@ import { fetchWorkflowSetup, workflowRequest } from '../../api/client';
 import { Icon } from '../../components/ui/Icon';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
 import { useAgentCatalog } from '../../hooks/useAgentCatalog';
+import { DesktopUpdateSettings } from '../updates/DesktopUpdates';
 
 const AgentTerminal = lazy(() => import('../workflow/AgentTerminal').then(module => ({ default: module.AgentTerminal })));
 type SetupTerminal = { projectId: string; nodeId: string; command: string };
@@ -27,6 +28,7 @@ export function WorkflowSetup() {
   }
   const agents = catalog?.installed.filter(agent => ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(agent.id)) ?? [];
   return <section className="organization-setup">
+    <DesktopUpdateSettings />
     {error && <p role="alert" className="organization-error">{error}</p>}
     {(['cli', 'cliSkill', 'skill'] as const).map(kind => {
       const ready = status?.[kind];

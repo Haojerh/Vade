@@ -5,6 +5,126 @@ import type { AgentChatOptions } from '../../shared/contracts.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import { AntigravityChatControls } from './antigravityChatControls.js';
 import { WorkflowModels } from './workflowModels.js';
+import { OpenCodeChatControls } from './openCodeChatControls.js';
+import { TerminalScreen } from './terminalScreen.js';
+import { codeBuddyRecordedSettings } from './conversation.js';
+import type { SessionRecord } from './store.js';
+import { AdeSessions } from './sessions.js';
+
+test('CodeBuddy sends from an empty native prompt with unknown lifecycle status and refuses waiting or drafts', async () => {
+  const terminal = new TerminalScreen(() => {}, () => {});
+  const sessions = Object.create(AdeSessions.prototype) as any;
+  const record = { provider: 'codebuddy' };
+  const live = { live: true, screen: terminal, inputRevision: 0 };
+  let state = 'unknown'; const writes: string[] = [];
+  Object.assign(sessions, { live: new Map([['node', live]]), sending: new Set(), store: { directory: process.cwd() }, require: () => record,
+    status: () => ({ meta: { availability: state === 'unknown' ? 'unavailable' : 'ready' }, data: { state } }), command: async (_: unknown, message: { data: string }) => { writes.push(message.data); } });
+  try {
+    terminal.write('\x1b[2J\x1b[H> \x1b[999m\r\n? for shortcuts'); await terminal.settled();
+    await sessions.send('project', 'node', { message: 'hello' });
+    assert.deepEqual(writes, ['\x1b[200~hello\x1b[201~', '\r']);
+    writes.length = 0; state = 'waiting';
+    await assert.rejects(sessions.send('project', 'node', { message: 'hello' }), /needs input/);
+    assert.deepEqual(writes, []);
+    state = 'unknown'; terminal.write('\x1b[1;1H\x1b[2K> \x1b[999mtyped draft\r\n? for shortcuts'); await terminal.settled();
+    await assert.rejects(sessions.send('project', 'node', { message: 'hello' }), /not ready/);
+    assert.deepEqual(writes, []);
+  } finally { terminal.dispose(); }
+});
+
+test('CodeBuddy command evidence restores model and effort across view and runtime remounts', () => {
+  const record = { providerThreadId: 'exact-session', cwd: process.cwd() } as SessionRecord;
+  const row = (output: string, sessionId = record.providerThreadId) => JSON.stringify({ type: 'message', role: 'user', sessionId, cwd: record.cwd, providerData: { skipRun: true, model: 'hy3' }, content: [{ type: 'input_text', text: `<local-command-stdout>${output}</local-command-stdout>` }] });
+  const lines = [row('Available models:\n - Hy3 (hy3) ← current\n - Deepseek-V4.1-Flash (deepseek-v4.1-flash)\nTo switch model: /model'), row('Switched model to Deepseek-V4.1-Flash.'), row('Model reasoning effort set to high.'), row('Switched model to Hy3.', 'foreign-session')];
+  assert.deepEqual(codeBuddyRecordedSettings(lines, record), { model: 'deepseek-v4.1-flash', effort: 'high' });
+  assert.equal(codeBuddyRecordedSettings([...lines, row('Model reasoning effort set to medium.')], record).effort, 'medium');
+});
+
+test('terminal checkpoints preserve more than 100 lines of command history', async () => {
+  const terminal = new TerminalScreen(() => {}, () => {});
+  const restored = new TerminalScreen(() => {}, () => {});
+  try {
+    terminal.write(Array.from({ length: 250 }, (_, index) => `history-${index}`).join('\r\n'));
+    await terminal.settled();
+    const checkpoint = terminal.checkpoint()!;
+    assert.ok(checkpoint.data.includes('history-0'));
+    restored.write(checkpoint.data); await restored.settled();
+    assert.equal(restored.checkpoint()!.data, checkpoint.data);
+  } finally { terminal.dispose(); restored.dispose(); }
+});
+
+test('OpenCode family selects models in tall viewports after output tails reach their fixed limit', async () => {
+  for (const provider of ['opencode', 'opencode2', 'kilo'] as const) {
+    const terminal = new TerminalScreen(() => {}, () => {});
+    terminal.resize(120, 60);
+    let output = 'x'.repeat(65536), stage = 0, cursor = 65536;
+    const render = async (data: string) => { cursor += data.length; output = (output + data).slice(-65536); terminal.write(data); await terminal.settled(); };
+    try {
+      const io: ChatControlIO = {
+        screen: () => terminal.viewportText(), output: () => output, outputCursor: () => cursor,
+        write: async data => {
+          if (data.includes('/models') && stage === 0) await render('\x1b[58;1H\u2503 /models');
+          else if (data === '\r' && stage === 0) { stage++; await render('\x1b[2J\x1b[10;1Hunderlying left\x1b[10;34HSelect model\x1b[10;83Hesc\x1b[10;90H\u2502 details\x1b[11;1Hunderlying left\x1b[11;34HSearch\x1b[11;94Hbackground right\x1b[12;34HOther provider'); assert.ok(!terminal.text()?.includes('Select model')); }
+          else if (data.includes('Beam Free')) { stage++; await render('\x1b[11;34H\x1b[36mBeam Free\x1b[0m\x1b[12;1H\x1b[2K\x1b[12;34H' + (provider === 'kilo' ? 'Recent\x1b[13;34HBeam Free provider\x1b[14;34HRecommended\x1b[15;34HBeam Free provider' : 'Beam Free')); }
+          else if (data === '\r' && stage === 2) { stage++; await render('\x1b[2J\x1b[HCode Beam Free provider'); }
+        },
+        waitFor: async predicate => { assert.equal(output.length, 65536); const screen = terminal.viewportText(); assert.ok(predicate(screen), screen); return screen; },
+      };
+      const result = await new OpenCodeChatControls().apply({ provider, transport: 'terminal', models: [{ id: 'provider/beam', label: 'Beam Free', efforts: [] }], current: {}, controls: { model: true, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false } }, { key: 'model', value: 'provider/beam' }, io);
+      assert.equal(result.current.model, 'provider/beam');
+      assert.equal(stage, 3);
+    } finally { terminal.dispose(); }
+  }
+});
+
+test('CodeBuddy uses its logical caret and accepts dim recommendations but rejects typed drafts', async () => {
+  const terminal = new TerminalScreen(() => {}, () => {});
+  try {
+    terminal.write('\x1b[2J\x1b[H> \x1b[999mE\x1b[2mxplore the ADE project structure together\x1b[0m\r\n? for shortcuts');
+    await terminal.settled();
+    assert.equal(terminal.composerEmpty(false, true), true);
+    terminal.write('\x1b[1;1H\x1b[2K> \x1b[999mExplore typed draft\r\n? for shortcuts');
+    await terminal.settled();
+    assert.equal(terminal.composerEmpty(false, true), false);
+  } finally { terminal.dispose(); }
+});
+
+test('OpenCode family confirms low and Default effort in full viewports with saturated output tails', async () => {
+  for (const provider of ['opencode', 'opencode2', 'kilo'] as const) for (const target of ['low', 'default']) {
+    const terminal = new TerminalScreen(() => {}, () => {}); terminal.resize(120, 60);
+    let stage = 0, cursor = 65536;
+    const title = target === 'default' ? 'Default' : target;
+    const render = async (text: string) => { cursor += text.length; terminal.write('\x1b[2J' + text); await terminal.settled(); };
+    const footer = `\x1b[58;1HBuild Beam Free provider${target === 'default' ? '' : ' ' + target}`;
+    const io: ChatControlIO = {
+      screen: () => terminal.viewportText(), output: () => 'x'.repeat(65536), outputCursor: () => cursor,
+      write: async data => {
+        if (data.includes('/variants') && (stage === 0 || stage === 3)) await render('\x1b[58;1H\u2503 /variants');
+        else if (data === '\r' && stage === 0) { stage = 1; await render('\x1b[8;1HSelect variant\r\nSearch\r\nDefault\r\nlow\r\n\u25cf high'); }
+        else if (data.startsWith('\x1b[200~') && stage === 1) { stage = 2; await render(`\x1b[8;1HSelect variant\r\n${title}\r\n${title}`); }
+        else if (data === '\r' && stage === 2) { stage = 3; await render(footer); }
+        else if (data === '\r' && stage === 3) { stage = 4; await render(`\x1b[8;1HSelect variant\r\nSearch\r\n\u25cf ${title}\r\nhigh`); }
+        else if (data === '\x1b' && stage === 4) { stage = 5; await render(footer); }
+      },
+      waitFor: async predicate => { assert.ok(predicate(terminal.viewportText()), terminal.viewportText()); return terminal.viewportText(); },
+    };
+    try {
+      const result = await new OpenCodeChatControls().apply({ ...options, provider, models: [{ id: 'provider/beam', label: 'Beam Free', efforts: ['default', 'low', 'high'].map(value => ({ value, label: value })) }], current: { model: 'provider/beam', effort: 'high' } }, { key: 'effort', value: target }, io);
+      assert.equal(stage, 5); assert.equal(result.current.effort, target);
+    } finally { terminal.dispose(); }
+  }
+});
+
+test('OpenCode family reads manually changed effort and native Default from the current footer', async t => {
+  for (const provider of ['opencode', 'opencode2', 'kilo'] as const) {
+    const controls = new OpenCodeChatControls();
+    t.mock.method(controls as any, 'catalog', async () => [{ id: 'provider/beam', label: 'Beam Free', efforts: ['default', 'low', 'high'].map(value => ({ value, label: value })) }]);
+    const changed = await controls.read(provider, process.cwd(), { model: 'provider/beam', effort: 'high' }, 'Build Beam Free provider \u00b7 low');
+    assert.equal(changed.current.effort, 'low');
+    const reset = await controls.read(provider, process.cwd(), { model: 'provider/beam', effort: 'high' }, 'Build Beam Free provider');
+    assert.equal(reset.current.effort, 'default');
+  }
+});
 
 const options: AgentChatOptions = { provider: 'codex', transport: 'terminal', models: [{ id: 'model-a', label: 'Model A', efforts: [{value:'low',label:'Low'},{value:'max',label:'Max'}], supportsFastMode: true, serviceTiers: [{value:'priority',label:'Fast'}] }], current: { model: 'model-a', effort: 'low', fastMode: false, serviceTier: 'default' }, controls: {model:true,effort:true,fastMode:true,fastToggle:false,providerPicker:false,serviceTier:false} };
 
@@ -107,6 +227,12 @@ test('Codex reads the current screen after asynchronous catalog discovery', asyn
   const result = await control.read('codex', {}, () => screen, process.cwd());
   assert.equal(result.current.fastMode, true);
   assert.equal(result.current.model, 'model-a');
+});
+
+test('Codex manually changed effort overrides the prior recorded turn effort', async () => {
+  const control = new ProviderChatControls(); control.catalog = async () => options.models;
+  const result = await control.read('codex', { model: 'model-a', effort: 'max' }, 'Model A low \u00b7 workspace', process.cwd());
+  assert.equal(result.current.effort, 'low');
 });
 
 test('manual Antigravity model changes override older transcript settings after catalog loading', async () => {

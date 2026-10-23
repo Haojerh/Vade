@@ -15,11 +15,13 @@
     "build:desktop": "npm run build && node scripts/build-desktop.mjs",
     "desktop": "npm run build:desktop && electron .",
     "package:desktop": "npm run build:desktop && node scripts/package-desktop.mjs",
+    "package:release": "npm run build:desktop && node scripts/package-desktop.mjs --release",
     "test": "node --import tsx --test src/tests/conversationEvents.test.ts server/http/conversationEvents.test.ts src/tests/dictation.test.ts server/integrations/orca/chat/options.test.ts src/tests/kanban.test.ts src/tests/inbox.test.ts server/services/inbox.test.ts src/tests/github.test.ts src/tests/notifications.test.ts src/tests/workflow.test.ts src/tests/dialogsAndUi.test.ts server/http/api.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/githubAccounts.test.ts server/integrations/orca/utils.test.ts server/integrations/orca/inventory.test.ts server/integrations/orca/graph.test.ts server/integrations/orca/graphWorkers.test.ts server/integrations/orca/nodeDetails.test.ts server/integrations/orca/coordinatorDetails.test.ts server/integrations/orca/actions.test.ts server/integrations/orca/prerequisites.test.ts server/providers/transcripts.test.ts server/services/snapshot.test.ts server/services/progress.test.ts server/services/attachments.test.ts server/integrations/usage.test.ts server/integrations/worktrees.test.ts src/tests/commitGraph.test.ts server/integrations/agents.test.ts server/runtime/localRuntime.test.ts server/runtime/connections.test.ts server/runtime/providerAccounts.test.ts server/runtime/agentHistory.test.ts server/runtime/organization.test.ts server/runtime/providerChatControls.test.ts server/runtime/speech.test.ts"
   },
   "build": {
     "appId": "dev.ade.desktop",
     "productName": "Vade",
+    "publish": { "provider": "github", "owner": "Haojerh", "repo": "ADE", "releaseType": "release" },
     "directories": {
       "output": "release"
     },
@@ -38,21 +40,32 @@
     ],
     "npmRebuild": false,
     "win": {
-      "target": "dir"
+      "target": "nsis"
     },
+    "nsis": { "oneClick": true, "perMachine": false, "deleteAppDataOnUninstall": false },
     "mac": {
-      "target": "dir"
+      "target": ["dmg", "zip"]
     },
     "linux": {
-      "target": "dir"
+      "target": "AppImage"
     }
   },
   "dependencies": {
+    "@tiptap/extension-image": "^3.32.0",
+    "@tiptap/extension-table": "^3.32.0",
+    "@tiptap/extension-task-item": "^3.32.0",
+    "@tiptap/extension-task-list": "^3.32.0",
+    "@tiptap/markdown": "^3.32.0",
+    "@tiptap/react": "^3.32.0",
+    "@tiptap/starter-kit": "^3.32.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/addon-webgl": "^0.19.0",
     "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
+    "electron-updater": "^6.8.9",
+    "lucide-react": "^1.61.0",
+    "monaco-editor": "^0.57.0",
     "node-pty": "^1.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import type { ConversationPage, NodeDetailsQuery, Section, ToolActivity } from '../../shared/contracts.js';
+import type { ConversationPage, NodeDetailsQuery, Section, ToolActivity, ProviderActivity } from '../../shared/contracts.js';
+import { databaseProviderActivity, transcriptProviderActivity } from '../providers/providerActivity.js';
 import type { SessionRecord } from './store.js';
 import { validCodexThreadId } from './codexThread.js';
 import { CliError } from '../integrations/cli.js';
@@ -10,11 +11,42 @@ import { hashId, isPathInsideRoots, readBoundedTranscriptLines, readOlderTranscr
 import { issueStoredCursor, validateStoredCursor } from '../integrations/orca/state.js';
 import { parseCoordinatorTranscriptLine } from '../integrations/orca/nodeDetails.js';
 import { parseAntigravityTranscriptLine, readAntigravityModel, readAntigravityToolActivity } from '../providers/antigravity.js';
-import { transcriptSettings } from '../providers/shared.js';
+import { transcriptSettings, claudeLocalCommandEffort } from '../providers/shared.js';
 import { isOpenCode, verifyOpenCode, withOpenCode } from './openCodeSessions.js';
 import { readOpenCodePage, readOpenCodeModel } from '../providers/opencode.js';
 import { readOpenCodeV2Page, readOpenCodeV2Model, openCodeV2Tools } from '../providers/openCodeV2.js';
 import { databaseToolActivity, mergeToolActivity, transcriptToolActivity } from '../providers/toolActivity.js';
+
+/** Exact-session local command records supply settings without entering public chat. */
+export function codeBuddyRecordedSettings(lines: string[], record: SessionRecord): { model?: string; effort?: string | null } {
+  const aliases = new Map<string, string>();
+  const evidence: Array<{ model?: string; effort?: string; output: string }> = [];
+  for (const line of lines) {
+    try {
+      const row = JSON.parse(line);
+      if (row.sessionId !== record.providerThreadId || typeof row.cwd !== 'string' || ![record.cwd, record.sourceCwd].some(cwd => cwd && path.relative(path.resolve(cwd), path.resolve(row.cwd)) === '')) continue;
+      const output = row.type === 'message' && row.role === 'user' && row.providerData?.skipRun === true && Array.isArray(row.content)
+        ? row.content.flatMap((part: any) => part?.type === 'input_text' && typeof part.text === 'string' && part.text.startsWith('<local-command-stdout>') && part.text.endsWith('</local-command-stdout>') ? [part.text.slice(22, -23)] : []).join('\n') : '';
+      for (const match of output.matchAll(/^\s*-\s+(.+?)\s+\(([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})\)(?:\s+← current)?\s*$/gm)) aliases.set(match[1], match[2]);
+      evidence.push({ model: row.providerData?.skipRun === true ? undefined : row.providerData?.model, effort: row.providerData?.skipRun === true ? undefined : row.providerData?.effort, output });
+    } catch { /* Ignore incomplete or foreign records. */ }
+  }
+  const result: { model?: string; effort?: string | null } = {};
+  for (const row of evidence) {
+    if (typeof row.model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}$/.test(row.model)) {
+      if (row.model !== result.model) result.effort = null;
+      result.model = row.model;
+      if (typeof row.effort === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(row.effort)) result.effort = row.effort;
+    }
+    const current = row.output.match(/^\s*-\s+.+?\s+\(([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})\)\s+← current\s*$/m)?.[1];
+    const switched = row.output.match(/^Switched (?:model|this session) to (.+?)(?:\.|, but the global default could not be saved\.)\s*$/m)?.[1];
+    const model = current ?? (switched ? aliases.get(switched) : undefined);
+    if (model) { if (model !== result.model) result.effort = null; result.model = model; }
+    const effort = row.output.match(/Model reasoning effort set to `?([a-zA-Z0-9_-]{1,80})`?\./)?.[1];
+    if (effort) result.effort = effort;
+  }
+  return result;
+}
 
 function unavailable(message: string): Section<ConversationPage> {
   return { data: null, meta: { availability: 'unavailable', observedAt: null, attemptedAt: new Date().toISOString(), partial: false, stale: false,
@@ -174,9 +206,11 @@ export class AdeConversations {
     } catch { return this.readMetadata(record); }
   }
 
-  private async readMetadata(record: SessionRecord): Promise<{ preview: string | null; model: string | null; effort: string | null; toolActivity: Section<ToolActivity[]> }> {
+  private async readMetadata(record: SessionRecord): Promise<{ preview: string | null; model: string | null; effort: string | null; toolActivity: Section<ToolActivity[]>; providerActivity: Section<ProviderActivity[]> }> {
     const now = new Date().toISOString();
-    const result = { preview: null as string | null, model: null as string | null, effort: null as string | null, toolActivity: {
+    const result = { preview: null as string | null, model: null as string | null, effort: null as string | null, providerActivity: {
+      data: null, meta: { availability: 'unavailable', attemptedAt: now, observedAt: null, partial: true, stale: false, issue: null },
+    } as Section<ProviderActivity[]>, toolActivity: {
       data: null, meta: { availability: 'unavailable', attemptedAt: now, observedAt: null, partial: true, stale: false,
         issue: { code: 'RUNTIME_UNAVAILABLE', message: 'Metadata is not available for this exact provider session yet.', retryable: true } },
     } as Section<ToolActivity[]> };
@@ -190,11 +224,14 @@ export class AdeConversations {
       if (isOpenCode(record.provider)) {
         Object.assign(result, (record.provider === 'opencode2' ? readOpenCodeV2Model : readOpenCodeModel)(file, id) ?? {});
         tools = (record.provider === 'opencode2' ? openCodeV2Tools : databaseToolActivity)(file, id);
+        const data = databaseProviderActivity(file, id, record.provider === 'opencode2');
+        result.providerActivity = { data, meta: { availability: data.length ? 'ready' : 'empty', attemptedAt: now, observedAt: now, partial: true, stale: false, issue: null } };
       } else if (record.provider === 'antigravity') {
         const allowed = (file: string) => isPathInsideRoots(file, [root]);
         const model = readAntigravityModel(id, allowed);
         if (model) Object.assign(result, model);
         tools = readAntigravityToolActivity(id, allowed);
+        result.providerActivity.meta.availability = 'unsupported';
       } else {
         const settings = (line: string) => {
           try {
@@ -203,22 +240,31 @@ export class AdeConversations {
             if (record.provider === 'codex') return row.type === 'turn_context'
               ? { model: row.payload?.model, effort: row.payload?.effort } : {};
             if (record.provider === 'codebuddy') return { model: row.providerData?.model, effort: row.providerData?.effort };
-            return transcriptSettings(row);
+            const effort = record.provider === 'claude' ? claudeLocalCommandEffort(row) : undefined;
+            return { ...transcriptSettings(row), ...(effort ? { effort } : {}) };
           } catch { return {}; }
         };
         // Scan settings separately so long tool records cannot hide an earlier turn context.
-        const recent = await readOlderTranscriptLines(file, fs.statSync(file).size, 1, 4 * 1024 * 1024, false,
-          line => Boolean(settings(line).model));
+        const recent = await readOlderTranscriptLines(file, fs.statSync(file).size, 200, 4 * 1024 * 1024, false,
+          line => Boolean(settings(line).model || settings(line).effort));
         for (const line of recent.lines) {
           const observed = settings(line);
           if (typeof observed.model === 'string' && observed.model.length <= 200 && observed.model !== '<synthetic>') {
+            if (result.model !== observed.model) result.effort = null;
             result.model = observed.model;
-            result.effort = typeof observed.effort === 'string' && observed.effort.length <= 80 ? observed.effort : null;
           }
+          if (typeof observed.effort === 'string' && observed.effort.length <= 80) result.effort = observed.effort;
         }
         const activity = await readBoundedTranscriptLines(file, null, 200, 512 * 1024, false,
           line => transcriptToolActivity(record.provider, id, line).length > 0);
         tools = activity.lines.flatMap(line => transcriptToolActivity(record.provider, id, line));
+        const events = await readOlderTranscriptLines(file, fs.statSync(file).size, 200, 512 * 1024, false, () => true);
+        const data = transcriptProviderActivity(record.provider, id, events.lines);
+        result.providerActivity = { data, meta: { availability: data.length ? 'ready' : 'empty', attemptedAt: now, observedAt: now, partial: true, stale: false, issue: null } };
+        if (record.provider === 'codebuddy') {
+          const records = await readOlderTranscriptLines(file, fs.statSync(file).size, 200, 512 * 1024, false, () => true);
+          Object.assign(result, codeBuddyRecordedSettings(records.lines, record));
+        }
       }
       result.toolActivity = { data: mergeToolActivity(tools),
         meta: { availability: tools.length ? 'ready' : 'empty', attemptedAt: now, observedAt: now, partial: true, stale: false, issue: null } };

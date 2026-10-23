@@ -39,8 +39,8 @@ export function AgentNotificationSettings() {
     catch { setPermission(typeof Notification === 'undefined' ? 'unsupported' : Notification.permission); }
   }
   return <>
-    <label className="settings-page-row"><div><span className="settings-page-label">Agent finished notifications</span><p>Show a popup when an agent finishes a turn. System notifications appear while Vade is in the background.</p></div><input type="checkbox" role="switch" checked={settings.enabled} onChange={event => change({ enabled: event.target.checked })} /></label>
-    <label className="settings-page-row"><div><span className="settings-page-label">Notification sound</span><p>Play a sound with agent completion notifications.</p></div><input type="checkbox" role="switch" checked={settings.sound} disabled={!settings.enabled} onChange={event => change({ sound: event.target.checked })} /></label>
+    <label className="settings-page-row"><div><span className="settings-page-label">Agent notifications</span><p>Show a popup when an agent finishes a turn or needs an answer. System notifications appear while Vade is in the background.</p></div><input type="checkbox" role="switch" checked={settings.enabled} onChange={event => change({ enabled: event.target.checked })} /></label>
+    <label className="settings-page-row"><div><span className="settings-page-label">Notification sound</span><p>Play a sound with agent completion and question notifications.</p></div><input type="checkbox" role="switch" checked={settings.sound} disabled={!settings.enabled} onChange={event => change({ sound: event.target.checked })} /></label>
     <label className="settings-page-row"><div><span className="settings-page-label">System notifications</span><p>{desktop ? 'Show system alerts while Vade is in the background.' : permission === 'denied' ? 'Notifications are blocked. Allow them in your browser site settings.' : permission === 'granted' ? settings.system ? 'Browser notifications are enabled.' : 'Browser notifications are disabled for Vade.' : permission === 'unsupported' ? 'System notifications are unavailable in this browser.' : 'Allow browser notifications to receive alerts while Vade is in the background.'}</p></div><input type="checkbox" role="switch" aria-label="System notifications" checked={settings.system && (desktop || permission === 'granted')} disabled={!settings.enabled || (!desktop && (permission === 'denied' || permission === 'unsupported'))} onChange={event => { void toggleSystem(event.target.checked); }} /></label>
   </>;
 }
@@ -68,11 +68,11 @@ export function useAgentNotifications(section: Section<InboxData> | null, onOpen
     if (seen.current.has(item.id)) return;
     seen.current.add(item.id);
     if (seen.current.size > 2000) seen.current.delete(seen.current.values().next().value!);
-    if (!current.current.settings.enabled || item.outcome !== 'completed') return;
+    if (!current.current.settings.enabled || !['completed', 'waiting'].includes(item.outcome)) return;
     if (document.hidden || !document.hasFocus()) {
       if (current.current.settings.system && !window.adeDesktop && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         try {
-          const notification = new Notification('Agent finished', { body: `${item.projectName} — ${item.title}`, tag: item.id, icon: new URL('/vade-notification.png', window.location.origin).href, silent: !current.current.settings.sound });
+          const notification = new Notification(item.source === 'attention' ? 'Agent needs an answer' : 'Agent finished', { body: `${item.projectName} — ${item.title}`, tag: item.id, icon: new URL('/vade-notification.png', window.location.origin).href, silent: !current.current.settings.sound });
           browserNotifications.current.add(notification);
           notification.onclick = () => { window.focus(); current.current.onOpen(item); notification.close(); };
           notification.onclose = () => browserNotifications.current.delete(notification);
@@ -95,7 +95,7 @@ export function useAgentNotifications(section: Section<InboxData> | null, onOpen
     if (window.adeDesktop || !section?.data || section.meta.stale || !['ready', 'empty'].includes(section.meta.availability)) return;
     for (const item of section.data.items) {
       if (Date.parse(item.at) <= mountedAt.current) { seen.current.add(item.id); continue; }
-      if (item.nodeId && item.source === 'turn') deliver.current(item);
+      if (item.nodeId && ['turn', 'attention'].includes(item.source)) deliver.current(item);
     }
   }, [section]);
   useEffect(() => () => { for (const notification of browserNotifications.current) notification.close(); }, []);
@@ -114,6 +114,6 @@ function AgentNotificationPopup({ item, exiting, onOpen, onRemove }: { item: Inb
     return () => clearTimeout(timer);
   }, [leaving]);
   return <div className={`agent-notification${leaving ? ' is-closing' : ''}`} inert={leaving}>
-    <Icon name="bell" size={18} /><button className="agent-notification-open" onClick={() => { onOpen(); setClosing(true); }}><strong>Agent finished</strong><span>{item.projectName} · {item.title}</span></button><button className="btn-icon" aria-label={`Dismiss notification for ${item.title}`} onClick={() => setClosing(true)}><Icon name="close" size={14} /></button>
+    <Icon name="bell" size={18} /><button className="agent-notification-open" onClick={() => { onOpen(); setClosing(true); }}><strong>{item.source === 'attention' ? 'Agent needs an answer' : 'Agent finished'}</strong><span>{item.projectName} · {item.title}</span></button><button className="btn-icon" aria-label={`Dismiss notification for ${item.title}`} onClick={() => setClosing(true)}><Icon name="close" size={14} /></button>
   </div>;
 }

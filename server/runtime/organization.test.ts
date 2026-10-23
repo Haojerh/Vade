@@ -31,6 +31,7 @@ function fixture(gitProject = false) {
     send: async (_projectId: string, id: string, request: { message: string }) => { if (sendError) throw sendError; sent.push({ id, message: request.message }); return { ok: true as const, message: 'sent' }; },
     page: (_projectId: string, id: string) => ({ live: live.has(id) }),
     status: () => ({ data: { state: 'idle' } }),
+    messagePromptReady: () => true,
     launch: async (projectId: string, worktreeId: string, cwd: string, provider: SessionRecord['provider'], title: string, _shell: unknown, workflowLaunch: SessionRecord['workflowLaunch']) => { const record: SessionRecord = { id: crypto.randomUUID(), projectId, worktreeId, cwd, provider, title, closed: false, createdAt: new Date().toISOString(), statusToken: crypto.randomUUID(), workflowLaunch }; store.saveSession(record); live.add(record.id); return record; },
     stopWorkflowWorker: async (_projectId: string, id: string) => { stopped.push(id); live.delete(id); },
   } as unknown as AdeSessions;
@@ -43,7 +44,7 @@ function fixture(gitProject = false) {
   async function start(value = config()) {
     const tree = (await adeGit.worktrees(project))[0];
     const record: SessionRecord = { id: crypto.randomUUID(), projectId: project.id, worktreeId: tree.id, cwd: repo, provider: 'codex', title: 'Contacted agent', closed: false, createdAt: new Date().toISOString(), statusToken: crypto.randomUUID() }; store.saveSession(record); live.add(record.id);
-    await runtime.configure(value); await runtime.send(project.id, record.id, { message: 'Implement two suitable features' });
+    await runtime.configure(value); await runtime.send(project.id, record.id, { message: 'Implement two suitable features', workflowConfirmed: true });
     return { record, run: runtime.runs()[0] };
   }
   function call(sessionId: string, action: string, data: object = {}) {
@@ -70,6 +71,77 @@ test('disabled workflow preserves ordinary delivery and setup gates activation',
     await f.runtime.send(f.project.id, 'unchanged-session', { message: 'ordinary' });
     assert.deepEqual(f.sent, [{ id: 'unchanged-session', message: 'ordinary' }]); assert.equal(f.runtime.runs().length, 0);
   } finally { f.close(); }
+});
+
+test('enabled workflow requires explicit confirmation before starting or sending', async () => {
+  const f = fixture(); try {
+    await f.runtime.configure(config());
+    await assert.rejects(f.runtime.send(f.project.id, 'not-yet-resolved', { message: 'Spawn workers' }), /Workflow enabled, confirm/);
+    assert.equal(f.runtime.runs().length, 0); assert.equal(f.sent.length, 0);
+    const { run } = await f.start(); assert.equal(run.mode, 'configured'); assert.equal(f.sent.length, 1);
+  } finally { f.close(); }
+});
+
+test('session CLI defines an ad hoc team without enabling or using the saved graph', async () => {
+  const f = fixture(); try {
+    const tree = (await f.adeGit.worktrees(f.project))[0];
+    const record: SessionRecord = { id: crypto.randomUUID(), projectId: f.project.id, worktreeId: tree.id, cwd: f.repo, provider: 'codex', title: 'Contacted agent', closed: false, createdAt: new Date().toISOString(), statusToken: crypto.randomUUID() };
+    f.store.saveSession(record); f.live.add(record.id);
+    const env = f.runtime.cliEnvironment(record), identity = JSON.parse(fs.readFileSync(env.VADE_IDENTITY_FILE, 'utf8'));
+    const call = (action: string, data: object = {}) => f.runtime.control(identity.token, { action, sessionId: record.id, ...data }) as Promise<any>;
+    const original = f.runtime.config();
+    assert.equal((await call('context')).workflowEnabled, false);
+    f.runtime.models.list = async () => [{ id: 'catalog/model', label: 'Observed model', efforts: ['high'] }];
+    assert.equal((await call('models', { provider: 'kilo' })).models[0].id, 'catalog/model');
+    const nodes = ['frontend', 'backend'].map(id => ({ id, title: id, prompt: `Implement ${id}`, provider: 'kilo', model: 'catalog/model', effort: 'high' }));
+    await assert.rejects(call('begin', { request: 'Build app', nodes: [{ ...nodes[0], model: 'invented' }] }), /available model/);
+    const started = await call('begin', { request: 'Build app', nodes, edges: [] });
+    assert.equal(started.role, 'orchestrator'); assert.equal(started.run.mode, 'adhoc'); assert.equal(started.run.orchestratorId, record.id);
+    assert.deepEqual(started.run.config.nodes.map((node: any) => node.id), ['frontend', 'backend']);
+    assert.deepEqual(f.runtime.config(), original); assert.equal(f.sent.length, 0);
+    await assert.rejects(call('begin', { request: 'Nested', nodes }), /belongs to workflow/);
+    await call('plan', { nodes: ['frontend', 'backend'], reason: 'Two app components in shared checkout', streams: [] });
+    await call('dispatch', { nodeId: 'frontend', task: 'Implement frontend' });
+    const worker = f.store.sessions(f.project.id).find(row => row.id !== record.id)!;
+    assert.equal(worker.provider, 'kilo'); assert.equal(worker.workflowLaunch?.model, 'catalog/model');
+    await assert.rejects(call('dispatch', { nodeId: 'backend', task: 'Implement backend' }), /one worker/);
+    await f.runtime.cancel(started.run.id);
+    assert.equal((await call('context')).role, 'agent');
+    await f.runtime.configure(config());
+    await assert.rejects(call('begin', { request: 'Build app', nodes }), /Workflow enabled, confirm/);
+    assert.equal(f.runtime.config().enabled, true);
+    const renewed = f.runtime.cliEnvironment(record);
+    assert.equal(renewed.VADE_IDENTITY_FILE, env.VADE_IDENTITY_FILE);
+    await assert.rejects(call('context'), /identity/);
+    const current = JSON.parse(fs.readFileSync(renewed.VADE_IDENTITY_FILE, 'utf8'));
+    f.store.saveSession({ ...record, statusToken: 'resumed-launch' });
+    await assert.rejects(f.runtime.control(current.token, { action: 'context', sessionId: record.id }), /expired/);
+  } finally { f.close(); }
+});
+
+test('cancelled and failed workflow members continue ordinary chat without creating nested runs', async () => {
+  for (const outcome of ['cancelled', 'failed'] as const) {
+    const f = fixture();
+    try {
+      const { record, run } = await f.start();
+      await f.call(record.id, 'plan', { nodes: ['implement'], reason: 'Implement this task', streams: [] });
+      await f.call(record.id, 'dispatch', { nodeId: 'implement', task: 'Implement this task' });
+      const worker = f.runtime.runs().find(value => value.id === run.id)!.steps.find(step => step.nodeId === 'implement')!.sessionId!;
+      await assert.rejects(f.runtime.send(f.project.id, record.id, { message: 'ordinary' }), /belongs to workflow/);
+      if (outcome === 'cancelled') await f.runtime.cancel(run.id);
+      else {
+        await f.call(worker, 'result', { outcome: 'failed', summary: 'Explicit worker failure' });
+        await f.call(record.id, 'finish', { outcome: 'failed', summary: 'Workflow failed' });
+      }
+      assert.equal(f.runtime.runs().find(value => value.id === run.id)!.state, outcome);
+      fs.unlinkSync(f.runtime.setup.file('SKILL.md'));
+      const before = f.sent.length;
+      await f.runtime.send(f.project.id, record.id, { message: 'Continue with me' });
+      await f.runtime.send(f.project.id, worker, { message: 'Explain the failure' });
+      assert.deepEqual(f.sent.slice(before), [{ id: record.id, message: 'Continue with me' }, { id: worker, message: 'Explain the failure' }]);
+      assert.equal(f.runtime.runs().length, 1);
+    } finally { f.close(); }
+  }
 });
 
 test('workflow setup verifies both standard-directory skills and rejects stale CLI awareness', async () => {
@@ -218,6 +290,18 @@ test('installed CLI uses authenticated loopback control and never returns its ca
     assert.equal((await post({ action: 'context', runId: identity.runId, sessionId: record.id, task: 'unexpected' }, { Authorization: `Bearer ${identity.token}` })).status, 400);
     const version = await promisify(execFile)(process.execPath, [f.runtime.setup.file('vade.cjs'), '--version'], { windowsHide: true });
     assert.match(version.stdout, /1\.0\.0/);
+    await f.runtime.cancel(f.runtime.runs()[0].id);
+    await f.runtime.configure({ ...config(), enabled: false });
+    const env = { ...process.env, ...f.runtime.cliEnvironment(record) };
+    const cli = (action: string, payload?: object) => promisify(execFile)(process.execPath,
+      [f.runtime.setup.file('vade.cjs'), action, ...(payload ? [JSON.stringify(payload)] : [])], { env, windowsHide: true, timeout: 10000 });
+    const bootstrap = await cli('context');
+    assert.equal(JSON.parse(bootstrap.stdout).workflowEnabled, false);
+    const started = await cli('begin', { request: 'Explicit team request', nodes: [{ id: 'worker', title: 'Worker', prompt: 'Implement requested task', provider: 'codex', model: null, effort: null }] });
+    assert.equal(JSON.parse(started.stdout).run.mode, 'adhoc');
+    const launchIdentity = JSON.parse(fs.readFileSync(env.VADE_IDENTITY_FILE!, 'utf8'));
+    assert.ok(!started.stdout.includes(launchIdentity.token));
+    assert.equal(JSON.parse((await cli('context')).stdout).role, 'orchestrator');
   } finally { await new Promise<void>(resolve => server.close(() => resolve())); f.close(); }
 });
 

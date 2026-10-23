@@ -683,6 +683,12 @@ test('WorkflowGraph renders orchestrator in separate lane when orchestrationSepa
   assert.ok(html.includes('orchestrator-lane'), 'Orchestrator lane must be rendered');
   assert.ok(!html.includes('node-count-badge'), 'Toolbar omits the redundant node count');
   assert.ok(html.includes('Lead Orchestrator'));
+  const standalone = renderToStaticMarkup(createElement(WorkflowGraph, {
+    projectId: 'proj-1', runId: null, loading: false,
+    nodes: [{ ...orchNode, kind: 'agent', workflow: { runId: 'workflow-1', role: 'orchestrator' } }, wtNode],
+    edges: [], selectedNodeId: null, onSelectNode: () => {}, isLocallyStale: false, orchestrationSeparated: true,
+  }));
+  assert.ok(standalone.includes('orchestrator-card state-idle'), 'Standalone workflow role must place the agent in the orchestrator lane');
 });
 
 test('WorkflowGraph moves orchestrator inside worktree and omits orchestrator lane when orchestrationSeparated is false', () => {

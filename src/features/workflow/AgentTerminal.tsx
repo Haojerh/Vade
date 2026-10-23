@@ -5,6 +5,7 @@ import { WebglAddon } from '@xterm/addon-webgl';
 import type { TerminalClientMessage, TerminalServerMessage } from '../../../shared/contracts';
 import { markTabClosed, resumeTerminal } from '../../api/client';
 import { isTerminalReply, isTerminalClipboardShortcut } from './terminalInput';
+import { Icon } from '../../components/ui/Icon';
 
 export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, streamPath }: { projectId: string; nodeId: string; provider?: string; onStatusChange?: () => void; streamPath?: string }) {
   const statusChange = useRef(onStatusChange); statusChange.current = onStatusChange;
@@ -160,7 +161,7 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
   return <section className="agent-terminal" aria-label="Agent terminal">
     {error && <div className="panel-alert alert-error" role="alert">{error} <button className="btn btn-secondary btn-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button><span> Inspect the terminal before repeating input.</span></div>}
     <div ref={host} className="agent-terminal-screen" />
-    <p className="text-xs text-muted" role="status">{streamPath ? live === false ? 'Installation terminal stopped. Use Install or Update to open a new one.' : 'Installation terminal · press Enter to run the staged command.' : resuming ? restartable ? 'Opening a fresh shell…' : 'Resuming the same conversation…' : live === false ? restartable ? 'Shell stopped. Reopen in the same folder. Previous commands will not be replayed.' : resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native terminal · authentication and permission prompts appear here.'}</p>
-    {live === false && (resumable || restartable) && !resuming && <button type="button" className="btn btn-secondary" onClick={() => void resume()}>{restartable ? 'Reopen terminal' : 'Resume session'}</button>}
+    <div className="agent-terminal-footer"><p className="text-xs text-muted" role="status">{streamPath ? live === false ? 'Installation terminal stopped. Use Install or Update to open a new one.' : 'Installation terminal · press Enter to run the staged command.' : resuming ? restartable ? 'Opening a fresh shell…' : 'Resuming the same conversation…' : live === false ? restartable ? 'Shell stopped. Reopen in the same folder. Previous commands will not be replayed.' : resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native terminal · authentication and permission prompts appear here.'}</p>
+    {live === false && (resumable || restartable) && !resuming && <button type="button" className="btn btn-secondary" onClick={() => void resume()}><Icon name={restartable ? 'terminal' : 'play'} size={14} />{restartable ? 'Reopen terminal' : 'Resume session'}</button>}</div>
   </section>;
 }

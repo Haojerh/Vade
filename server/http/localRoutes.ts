@@ -34,6 +34,27 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     return value;
   };
   try {
+    const workspaceFiles = pathname.match(/^\/api\/projects\/([^/]+)\/files\/(roots|list|read|diff|search|save|open)$/);
+    if (workspaceFiles) {
+      const projectId = workspaceFiles[1], action = workspaceFiles[2];
+      if (action === 'roots') {
+        requireMethod('GET'); queryKeys(); sendJson(200, await runtime.files.discoverRoots(projectId));
+      } else if (action === 'open') {
+        requireMethod('POST'); queryKeys(); const request = await body<{worktreeId: string; target: string}>(['worktreeId', 'target']);
+        sendJson(200, await runtime.files.open(projectId, request.worktreeId, request.target));
+      } else if (action === 'save') {
+        requireMethod('POST'); queryKeys();
+        const request = await body<import('../../shared/contracts.js').SaveWorkspaceFileRequest>(['worktreeId', 'path', 'text', 'version'], 13 * 1024 * 1024);
+        sendJson(200, await runtime.files.save(projectId, request.worktreeId, request.path, request.text, request.version));
+      } else {
+        requireMethod('GET'); queryKeys('worktreeId', 'path', 'q', 'mode', 'matchCase', 'wholeWord', 'regex', 'include', 'exclude', 'showDotfiles', 'showIgnored');
+        for (const key of ['matchCase', 'wholeWord', 'regex', 'showDotfiles', 'showIgnored']) if (query.has(key) && !['true','false'].includes(query.get(key)!)) throw new CliError('INVALID_ARGUMENT', 'Invalid search option');
+        const worktree = query.get('worktreeId') ?? '';
+        const options = Object.fromEntries([...query].filter(([key]) => ['matchCase', 'wholeWord', 'regex', 'include', 'exclude', 'showDotfiles', 'showIgnored'].includes(key)).map(([key,value]) => [key, ['include','exclude'].includes(key) ? value : value === 'true']));
+        sendJson(200, action === 'list' ? await runtime.files.list(projectId, worktree, query.get('path') ?? '') : action === 'read' || action === 'diff' ? await runtime.files.read(projectId, worktree, query.get('path') ?? '', action === 'diff') : await runtime.files.search(projectId, worktree, query.get('q') ?? '', query.get('mode') ?? 'names', options));
+      }
+      return;
+    }
     if (pathname === '/api/speech/models') { requireMethod('GET'); queryKeys(); sendJson(200, runtime.speech.catalog()); return; }
     const speechModel = pathname.match(/^\/api\/speech\/models\/([a-z0-9-]+)\/(download|cancel)$/);
     if (speechModel) {
@@ -81,7 +102,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     if (workflowCancel) { requireMethod('POST'); queryKeys(); await body<{}>([]); await runtime.organization.cancel(workflowCancel[1]); sendJson(200, { ok: true }); return; }
     if (pathname === '/api/workflow/control') {
       requireMethod('POST'); queryKeys();
-      const request = await body<any>(['action', 'runId', 'sessionId', 'nodes', 'reason', 'streams', 'nodeId', 'task', 'to', 'text', 'outcome', 'summary'], 24000);
+      const request = await body<any>(['action', 'runId', 'sessionId', 'nodes', 'reason', 'streams', 'nodeId', 'task', 'to', 'text', 'outcome', 'summary', 'request', 'edges', 'isolatedWorktrees', 'provider'], 160000);
       sendJson(200, await runtime.organization.control(req.headers.authorization?.match(/^Bearer ([a-f0-9]{64})$/)?.[1], request)); return;
     }
     const shortcutRoute = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/shortcuts(?:\/([a-zA-Z0-9_-]+)\/run)?$/);
@@ -185,7 +206,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     if (pathname === '/api/inbox') {
       requireMethod('GET'); queryKeys();
       const open = new Map<string, Set<string>>();
-      const items: InboxItem[] = runtime.store.db.prepare('SELECT data FROM turn_results ORDER BY at DESC LIMIT 200').all().map(row => {
+      const items: InboxItem[] = runtime.store.db.prepare('SELECT data FROM (SELECT at, data FROM turn_results UNION ALL SELECT at, data FROM inbox_attention) ORDER BY at DESC LIMIT 200').all().map(row => {
         const item: InboxItem = JSON.parse(String(row.data));
         if (!open.has(item.projectId)) open.set(item.projectId, new Set(runtime.store.sessions(item.projectId).filter(session => !session.closed).map(session => session.id)));
         return item.nodeId && !open.get(item.projectId)!.has(item.nodeId) ? { ...item, nodeId: null } : item;
@@ -210,7 +231,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       } else { requireMethod('GET'); sendJson(200, section({ projects: runtime.store.projects() })); }
       return;
     }
-    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(interaction|terminal|terminal-input|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|events))?)$/);
+    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|terminal|terminal-input|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|events))?)$/);
     if (!match) { sendError(404, 'INVALID_ARGUMENT', 'Unknown standalone ADE endpoint'); return; }
     const [, projectId, route, nodeId, action] = match;
     const project = runtime.store.project(projectId);
@@ -326,7 +347,12 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       sendJson(200, await runtime.chatOptions(projectId, nodeId, request)); return;
     }
     requireMethod(action === 'worktree' ? 'DELETE' : 'POST');
-    if (action === 'resume') {
+    if (action === 'handoff') {
+      queryKeys(); const request = await body<import('../../shared/contracts.js').HandoffSessionRequest>(['agentId','context']);
+      sendJson(200, await runtime.handoffs.start(projectId, nodeId, request)); return;
+    } else if (action === 'handoff-message') {
+      queryKeys(); await body<{}>([]); sendJson(200, await runtime.handoffs.deliver(projectId, nodeId)); return;
+    } else if (action === 'resume') {
       if (query.size) throw new CliError('INVALID_ARGUMENT', 'Resume does not accept query parameters');
       await body<Record<string, never>>([]);
       const record = runtime.sessions.require(projectId, nodeId);
@@ -351,7 +377,8 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       if (runtime.store.sessions(projectId).some(session => !session.closed && session.worktreeId === nodeId)) throw new CliError('INVALID_ARGUMENT', 'Close this worktree’s agent sessions before deleting it');
       await runtime.git.remove(project, nodeId);
     } else if (action === 'message') {
-      const request = await body<SendMessageRequest>(['message', 'attachments'], 29 * 1024 * 1024);
+      const request = await body<SendMessageRequest>(['message', 'attachments', 'workflowConfirmed'], 29 * 1024 * 1024);
+      if (request.workflowConfirmed !== undefined && typeof request.workflowConfirmed !== 'boolean') throw new CliError('INVALID_ARGUMENT', 'Invalid workflow confirmation');
       sendJson(200, await runtime.organization.send(projectId, nodeId, request)); return;
     }
     else throw new CliError('METHOD_NOT_ALLOWED', 'Action is not available in standalone ADE');
