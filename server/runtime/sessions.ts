@@ -6,15 +6,19 @@ import { fork, type ChildProcess } from 'node:child_process';
 import type { AdeProvider, AgentCatalogResponse, AgentStatus, Section, SendMessageRequest, TerminalPage, TerminalShell, AgentInteraction, AnswerAgentRequest, InboxItem, AgentChatOptions, SetAgentChatOptionRequest } from '../../shared/contracts.js';
 import { CliError } from '../integrations/cli.js';
 import { AdeStore, type SessionRecord } from './store.js';
-import { codexThread, validCodexThreadId } from './codexThread.js';
+import { codexThread } from './codexThread.js';
 import { installAgyHook, agyBindingFile, readAgyBinding, agyConversationSaved } from './agyBinding.js';
 import { installStatusHooks, readAgentStatus, statusFile } from './statusHooks.js';
 import { antigravityPromptReady, programStatusReader, PROGRAM_STATUS_REPLY, TerminalTurnStatus } from './programStatus.js';
-import { attachmentPaste, attachmentReference, decodeAttachments, storeAttachments, usesNativeImageAttachment } from '../services/attachments.js';
+import { attachmentPaste, attachmentReference, decodeAttachments, storeAttachments, usesNativeFileAttachment } from '../services/attachments.js';
 import { TerminalScreen } from './terminalScreen.js';
+import { isOpenCode, validProviderSessionId, createOpenCodeSession, verifyOpenCode, openCodePlugin, openCodeMajor } from './openCodeSessions.js';
 import { permissionArgs, readAgentPreferences } from './agentPreferences.js';
-import { terminalInteraction } from './interaction.js';
+import { answerCodeBuddyQuestion, terminalInteraction } from './interaction.js';
 import { ProviderChatControls } from './providerChatControls.js';
+import { OpenCodeChatControls } from './openCodeChatControls.js';
+import { CodeBuddyChatControls } from './codeBuddyChatControls.js';
+import { codeBuddyCommandOutput } from './conversation.js';
 import { AntigravityChatControls } from './antigravityChatControls.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 
@@ -22,10 +26,18 @@ const PROVIDERS: { id: AdeProvider; name: string; command: string; package?: str
   { id: 'codex', name: 'Codex', command: 'codex', package: '@openai/codex', entry: 'bin/codex.js' },
   { id: 'claude', name: 'Claude Code', command: 'claude', package: '@anthropic-ai/claude-code', entry: 'cli.js' },
   { id: 'antigravity', name: 'Antigravity', command: 'agy' },
+  { id: 'codebuddy', name: 'CodeBuddy', command: 'codebuddy', package: '@tencent-ai/codebuddy-code', entry: 'bin/codebuddy' },
+  { id: 'opencode', name: 'OpenCode', command: 'opencode', package: 'opencode-ai', entry: 'bin/opencode' },
+  { id: 'opencode2', name: 'OpenCode 2', command: 'opencode2', package: 'opencode-ai', entry: 'bin/opencode2' },
+  { id: 'kilo', name: 'Kilo Code', command: 'kilo', package: '@kilocode/cli', entry: 'bin/kilo' },
   { id: 'terminal', name: 'Terminal', command: 'terminal' },
 ];
 const MAX_BUFFER = 1024 * 1024;
 const MAX_LIVE_SESSIONS = 16;
+
+export class UncertainMessageDelivery extends CliError {
+  constructor() { super('CLI_FAILED', 'Delivery may be partial. Inspect Terminal before sending again; the message was not automatically retried.'); }
+}
 
 export function executableOnPath(name: string): string | null {
   const dirs = (process.env.PATH ?? '').split(path.delimiter).map(value => value.replace(/^"|"$/g, ''));
@@ -79,6 +91,14 @@ export function resolveAgent(provider: AdeProvider, shell?: TerminalShell): { ex
       if (provider === 'claude') {
         const nativeEntry = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', '@anthropic-ai', 'claude-code', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
         if (fs.existsSync(nativeEntry)) return { executable: nativeEntry, args: [] };
+      }
+      if (provider === 'kilo') {
+        const binary = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', '@kilocode', 'cli', 'node_modules', '@kilocode', `cli-${process.platform === 'win32' ? 'windows' : process.platform}-${process.arch}${process.arch === 'x64' ? '-baseline' : ''}`, 'bin', process.platform === 'win32' ? 'kilo.exe' : 'kilo');
+        if (fs.existsSync(binary)) return { executable: binary, args: [] };
+      }
+      if ((provider === 'opencode' || provider === 'opencode2') && process.platform === 'win32') {
+        const binary = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', 'opencode-ai', 'bin', provider === 'opencode2' ? 'opencode2.exe' : 'opencode.exe');
+        if (fs.existsSync(binary)) return { executable: binary, args: [] };
       }
       const entry = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', definition.package, definition.entry);
       if (node && fs.existsSync(entry)) return { executable: node, args: [entry] };
@@ -134,6 +154,8 @@ export class AdeSessions {
   private statusListeners = new Map<string, Set<() => void>>();
   private resultTurns = new Map<string, { state: string; turn: string; token?: string }>();
   private chatControls = new ProviderChatControls();
+  private openCodeControls = new OpenCodeChatControls();
+  private codeBuddyControls = new CodeBuddyChatControls();
   private antigravityControls = new AntigravityChatControls();
   private resultListeners = new Set<(item: InboxItem) => void>();
   subscribeResults(listener: (item: InboxItem) => void): () => void {
@@ -171,6 +193,9 @@ export class AdeSessions {
   status(projectId: string, id: string) {
     const record = this.require(projectId, id), live = this.live.get(id);
     const hook = readAgentStatus(this.store.directory, record, Boolean(live?.live));
+    if (live && (isOpenCode(record.provider) || record.provider === 'codebuddy') && hook.data) {
+      hook.data = hook.data.event === 'Stop' ? live.turnStatus.nativeEnd(hook.data, Date.now(), record.provider === 'codebuddy' ? 5000 : 1500) : live.turnStatus.observe(hook.data);
+    }
     if (live) live.lastHook = hook;
     if (live?.resumeTurnObserved === false && hook.data?.state === 'working' && ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(hook.data.event)) {
       live.resumeInitializing = false; live.resumeTurnObserved = true; live.turnStatus.observe(hook.data);
@@ -205,6 +230,21 @@ export class AdeSessions {
     if (request.optionId === prompt.textOptionId && !request.text?.trim()) throw new CliError('INVALID_ARGUMENT', 'Enter your answer for Other');
     this.sending.add(id); session.answeredPrompt = JSON.stringify([record.statusToken, prompt.question, prompt.detail, prompt.options]); session.answeredAt = Date.parse(this.status(projectId, id).meta.observedAt ?? '') || Date.now();
     try {
+      if (record.provider === 'codebuddy' && prompt.kind === 'question') {
+        const verify = () => {
+          if (!session.live || this.live.get(id) !== session || this.require(projectId, id).statusToken !== record.statusToken) throw new CliError('RUNTIME_UNAVAILABLE', 'Terminal changed while answering. Inspect Terminal before retrying.');
+        };
+        await answerCodeBuddyQuestion(prompt, request.optionId, request.text, {
+          screen: () => session.screen?.text() ?? '', output: () => '',
+          write: async data => { verify(); await this.command(session, { type: 'input', data }); },
+          waitFor: async predicate => {
+            const deadline = Date.now() + 5000;
+            while (Date.now() < deadline) { verify(); const screen = session.screen?.text() ?? ''; if (predicate(screen)) return screen; await new Promise(resolve => setTimeout(resolve, 40)); }
+            throw new CliError('CLI_TIMEOUT', 'The native question did not advance. Inspect Terminal before retrying; no answer was replayed.');
+          },
+        });
+        return;
+      }
       if (request.text && record.provider === 'codex') {
         // Codex notes: move without committing, open notes with Tab, then submit.
         const screen = session.screen?.text() ?? '';
@@ -255,7 +295,7 @@ export class AdeSessions {
 
   async launch(projectId: string, worktreeId: string, cwd: string, command: string, title?: string, shell?: TerminalShell, workflowLaunch?: SessionRecord['workflowLaunch']): Promise<SessionRecord> {
     const definition = PROVIDERS.find(provider => provider.command === command || provider.id === command);
-    if (!definition) throw new CliError('INVALID_ARGUMENT', 'Select Codex, Claude Code or Antigravity; custom commands and flags are not accepted');
+    if (!definition) throw new CliError('INVALID_ARGUMENT', 'Select a detected agent; custom commands and flags are not accepted');
     if (definition.id !== 'terminal' && !readAgentPreferences(this.store).providers[definition.id].enabled) throw new CliError('INVALID_ARGUMENT', 'This agent is disabled in Settings > Agents');
     if (shell !== undefined && (definition.id !== 'terminal' || !TERMINAL_SHELLS.includes(shell))) throw new CliError('INVALID_ARGUMENT', 'Shell selection applies only to Terminal and must be PowerShell, Command Prompt or Bash');
     const resolved = this.resolve(definition.id, shell);
@@ -269,7 +309,7 @@ export class AdeSessions {
 
   async resume(projectId: string, id: string): Promise<SessionRecord> {
     const record = this.require(projectId, id);
-    if (record.provider !== 'terminal' && !validCodexThreadId(record.providerThreadId)) throw new CliError('INVALID_ARGUMENT', 'This session has no exact provider recovery binding');
+    if (record.provider !== 'terminal' && !validProviderSessionId(record.provider, record.providerThreadId)) throw new CliError('INVALID_ARGUMENT', 'This session has no exact provider recovery binding');
     if (record.provider === 'antigravity' && !this.savedAgy(record)) throw new CliError('RUNTIME_UNAVAILABLE', 'Antigravity has not saved this conversation yet. Empty sessions cannot be resumed; start a new agent.');
     if (this.live.get(id)?.live) throw new CliError('INVALID_ARGUMENT', 'This terminal is already running');
     const resolved = this.resolve(record.provider, record.shell);
@@ -277,9 +317,9 @@ export class AdeSessions {
     return this.start(record, resolved);
   }
 
-  async resumeHistory(projectId: string, worktreeId: string, cwd: string, source: { provider: 'codex' | 'claude' | 'antigravity'; threadId: string; cwd: string | null; title: string }): Promise<SessionRecord> {
+  async resumeHistory(projectId: string, worktreeId: string, cwd: string, source: { provider: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo'; threadId: string; cwd: string | null; title: string }): Promise<SessionRecord> {
     const key = `${source.provider}:${source.threadId}`;
-    if (!validCodexThreadId(source.threadId) || this.historyStarting.has(key)) throw new CliError('INVALID_ARGUMENT', 'This session is already resuming or has no verified provider identity');
+    if (!validProviderSessionId(source.provider, source.threadId) || this.historyStarting.has(key)) throw new CliError('INVALID_ARGUMENT', 'This session is already resuming or has no verified provider identity');
     this.historyStarting.add(key);
     try {
       if (!readAgentPreferences(this.store).providers[source.provider].enabled) throw new CliError('INVALID_ARGUMENT', 'Enable this agent in Settings before resuming');
@@ -321,15 +361,24 @@ export class AdeSessions {
       if (record.provider === 'codex') {
         record = { ...record, providerThreadId: await this.bindCodex(resolved, record.cwd, record.title, record.providerThreadId, this.shutdown.signal, record.sourceCwd ?? record.cwd) };
         if (this.shutdown.signal.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
-        if (!validCodexThreadId(record.providerThreadId)) throw new CliError('CLI_FAILED', 'Codex returned an invalid session binding');
+        if (!validProviderSessionId(record.provider, record.providerThreadId)) throw new CliError('CLI_FAILED', 'Codex returned an invalid session binding');
         resolved = { executable: resolved.executable, args: [...resolved.args, 'resume', record.providerThreadId, ...(record.sourceCwd && record.sourceCwd !== record.cwd ? ['--cd', record.cwd] : [])] };
         // Save identity before PTY startup so a failed terminal can still recover this exact thread.
         this.store.project(record.projectId);
         this.store.saveSession(record);
-      } else if (record.provider === 'claude') {
+      } else if (record.provider === 'claude' || record.provider === 'codebuddy') {
         const existing = record.providerThreadId;
         record = { ...record, providerThreadId: existing ?? crypto.randomUUID() };
         resolved = { ...resolved, args: [...resolved.args, existing ? '--resume' : '--session-id', record.providerThreadId!] };
+      } else if (isOpenCode(record.provider)) {
+        if (record.provider !== 'kilo') {
+          const major = await openCodeMajor(resolved);
+          if (major !== (record.provider === 'opencode2' ? 2 : 1)) throw new CliError('RUNTIME_UNAVAILABLE', `This CLI is OpenCode ${major}. Select OpenCode${major === 2 ? ' 2' : ''} to start or resume it.`);
+        }
+        if (record.providerThreadId) verifyOpenCode(record);
+        else record = { ...record, providerThreadId: await createOpenCodeSession(resolved, record.cwd, record.title, this.shutdown.signal, record.provider === 'opencode2' ? 2 : 1) };
+        verifyOpenCode(record);
+        resolved = { ...resolved, args: [...resolved.args, ...(record.provider === 'opencode2' ? ['--standalone'] : []), '--session', record.providerThreadId!] };
       } else if (record.provider === 'antigravity') {
         const node = executableOnPath('node');
         if (!node) throw new CliError('CLI_MISSING', 'Node.js is required for Antigravity session recovery');
@@ -375,6 +424,13 @@ export class AdeSessions {
     env.ADE_STATUS_PROVIDER = record.provider;
     env.ADE_STATUS_CWD = record.cwd;
     env.ADE_STATUS_SESSION = record.providerThreadId ?? '';
+    if (isOpenCode(record.provider)) {
+      env.ADE_OPENCODE_PLUGIN_API = record.provider === 'opencode2' ? 'v2' : 'v1';
+      const key = record.provider === 'kilo' ? 'KILO_CONFIG_CONTENT' : 'OPENCODE_CONFIG_CONTENT';
+      let config: any = {}; try { config = JSON.parse(env[key] || '{}'); } catch { throw new CliError('INVALID_ARGUMENT', 'Provider inline configuration is invalid'); }
+      if (!config || typeof config !== 'object' || Array.isArray(config) || (config.plugin !== undefined && !Array.isArray(config.plugin))) throw new CliError('INVALID_ARGUMENT', 'Provider plugin configuration is invalid');
+      env[key] = JSON.stringify({ ...config, plugin: [...(config.plugin ?? []), openCodePlugin(this.store.directory)] });
+    }
     if (record.provider === 'terminal' && (record.shell === 'bash' || (!record.shell && process.platform !== 'win32'))) env.PROMPT_COMMAND = 'printf "\\033]7502;%s;%s\\007" "$ADE_STATUS_TOKEN" "$(history 1 | sed "s/^ *[0-9]* *//" | base64 | tr -d "\\n")"';
     if (record.provider === 'antigravity' && record.bindingToken) {
       env.ADE_BINDING_FILE = agyBindingFile(this.store.directory, record);
@@ -496,10 +552,15 @@ export class AdeSessions {
     return record;
   }
 
+  messagePromptReady(projectId: string, id: string): boolean {
+    const record = this.require(projectId, id);
+    return !isOpenCode(record.provider) || this.live.get(id)?.screen?.openCodePromptReady() === true;
+  }
+
   page(projectId: string, id: string, cursor = 0, checkpoint = false): TerminalPage {
     const session = this.live.get(id);
     const record = this.require(projectId, id);
-    const resumable = validCodexThreadId(record.providerThreadId) && !session?.live && !this.starting.has(id) && (record.provider !== 'antigravity' || this.savedAgy(record));
+    const resumable = validProviderSessionId(record.provider, record.providerThreadId) && !session?.live && !this.starting.has(id) && (record.provider !== 'antigravity' || this.savedAgy(record));
     const restartable = record.provider === 'terminal' && !session?.live && !this.starting.has(id);
     if (!session) return { data: '', cursor: 0, reset: cursor !== 0, live: false, exitCode: null, resumable, recoverable: resumable || restartable, restartable };
     const reset = cursor < session.start || cursor > session.start + session.buffer.length;
@@ -523,7 +584,7 @@ export class AdeSessions {
     const record = this.require(projectId, id), live = this.live.get(id);
     if (record.provider === 'terminal') throw new CliError('INVALID_ARGUMENT', 'Shell terminals do not have model settings');
     const current = { ...observed, ...live?.chatCurrent };
-    const options = record.provider === 'antigravity' ? await this.antigravityControls.read(current, () => live?.screen?.text() ?? '')
+    const options = record.provider === 'codebuddy' ? await this.codeBuddyControls.read(current, record.cwd, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.read(record.provider, record.cwd, current, live?.screen?.text() ?? '') : record.provider === 'antigravity' ? await this.antigravityControls.read(current, () => live?.screen?.text() ?? '')
       : await this.chatControls.read(record.provider, current, () => live?.screen?.text() ?? '', record.cwd);
     if (this.require(projectId, id).statusToken !== record.statusToken || this.live.get(id) !== live) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent changed while reading its settings. Reopen the picker.');
     if (!live?.live) options.controls = { model: false, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false };
@@ -534,31 +595,38 @@ export class AdeSessions {
     const record = this.require(projectId, id), live = this.live.get(id);
     if (!live?.live || record.provider === 'terminal') throw new CliError('RUNTIME_UNAVAILABLE', 'Open the running agent terminal before changing settings');
     if (this.sending.has(id)) throw new CliError('RATE_LIMITED', 'Input is already being sent to this agent');
+    let wrote = false;
     const verify = () => {
       if (this.shutdown.signal.aborted || this.live.get(id) !== live || !live.live || this.require(projectId, id).statusToken !== record.statusToken) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent changed. Inspect Terminal before retrying.');
       const state = this.status(projectId, id).data?.state;
-      if (['working', 'waiting', 'blocked'].includes(state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait until the agent is idle and finish any question or approval in Terminal before changing settings');
+      // CodeBuddy's prompt hook reports its own slash commands (/model list) as a working turn; this lock already owns the idle terminal.
+      if (!(wrote && record.provider === 'codebuddy') && ['working', 'waiting', 'blocked'].includes(state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait until the agent is idle and finish any question or approval in Terminal before changing settings');
     };
     verify();
+    const inputRevision = live.inputRevision;
+    await live.screen?.settled();
+    verify();
+    if (this.sending.has(id) || live.inputRevision !== inputRevision) throw new CliError('RATE_LIMITED', 'Terminal input changed while reading its prompt. Reopen settings.');
     const initial = live.screen?.text() ?? '';
     // A failed setting confirmation can leave this conservative flag set even
     // after the provider has returned to its visibly empty native prompt.
     // Reconcile observed screen state; never resend the earlier operation.
-    if (live.draftInput && live.screen?.composerEmpty(record.provider === 'antigravity') && !/(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) live.draftInput = false;
+    const composerEmpty = isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
+    if (live.draftInput && composerEmpty && !/(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) live.draftInput = false;
     if (live.draftInput) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the draft in Terminal before changing settings');
-    if (!live.screen?.composerEmpty(record.provider === 'antigravity')) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal before changing settings');
-    // Codex can omit the shortcuts hint when fast mode and quota warnings fill its footer.
-    if ((record.provider !== 'codex' && !/(?:\? for shortcuts|context left|context remaining)/i.test(initial)) || /(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Open Terminal and wait for the agent prompt before changing settings');
+    if (!composerEmpty) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal before changing settings');
+    // Codex and CodeBuddy can omit their optional shortcuts footer. Their
+    // owned idle process and empty native composer still fence these commands.
+    if ((!isOpenCode(record.provider) && record.provider !== 'codex' && record.provider !== 'codebuddy' && !/(?:\? for shortcuts|context left|context remaining)/i.test(initial)) || /(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Open Terminal and wait for the agent prompt before changing settings');
     if (record.provider === 'antigravity' && !antigravityPromptReady(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the Antigravity prompt before changing settings');
     this.sending.add(id);
-    let wrote = false;
     const start = live.start + live.buffer.length;
     const io: ChatControlIO = {
       screen: () => live.screen?.text() ?? '',
       output: () => live.buffer.slice(Math.max(0, start - live.start)).slice(-65536),
       write: async data => { verify(); wrote = true; await this.command(live, { type: 'input', data }); },
       waitFor: async predicate => {
-        const deadline = Date.now() + 5000;
+        const deadline = Date.now() + (record.provider === 'codebuddy' ? 20000 : 5000);
         while (Date.now() < deadline) {
           verify(); const screen = live.screen?.text() ?? '';
           if (predicate(screen)) return screen;
@@ -569,12 +637,12 @@ export class AdeSessions {
     };
     try {
       const options = await this.chatOptions(projectId, id, observed); verify();
-      const result = record.provider === 'antigravity' ? await this.antigravityControls.apply(options, request, io) : await this.chatControls.apply(options, request, io);
+      const result = record.provider === 'codebuddy' ? await this.codeBuddyControls.apply(options, request, { ...io, output: codeBuddyCommandOutput(record) }, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.apply(options, request, io) : record.provider === 'antigravity' ? await this.antigravityControls.apply(options, request, io) : await this.chatControls.apply(options, request, io);
       if (!result.unconfirmed) live.chatCurrent = result.current;
       this.changed(id); this.statusChanged(projectId, record);
       return result;
     } catch (error) {
-      if (wrote) { live.draftInput = true; throw new CliError('CLI_FAILED', 'The setting may be partially applied. Inspect Terminal before retrying; no input was replayed.'); }
+      if (wrote) { live.draftInput = true; throw new CliError('CLI_FAILED', `The setting may be partially applied (${error instanceof Error ? error.message.slice(0, 160) : 'unknown error'}). Inspect Terminal before retrying; no input was replayed.`); }
       throw error;
     } finally { this.sending.delete(id); }
   }
@@ -586,8 +654,9 @@ export class AdeSessions {
     const session = this.live.get(id);
     if (!session?.live) throw new CliError('RUNTIME_UNAVAILABLE', 'Agent terminal is no longer running; start a new agent');
     session.inputRevision = (session.inputRevision ?? 0) + 1;
-    session.chatCurrent = undefined;
-    session.draftInput = data === '\r' || data === '\n' || data === '\x03' || data === '\x15' ? false : /^(?:\x1b|\x1b\[[IO])$/.test(data) ? session.draftInput : true;
+    const pointerInput = /^(?:\x1b\[<(?:\d+;){2}\d+[Mm]|\x1b\[M[\s\S]{3}|\x1b\[[IO])+$/.test(data);
+    if (!pointerInput && !/^(?:\x1b\[[IO])$/.test(data)) session.chatCurrent = undefined;
+    session.draftInput = data === '\r' || data === '\n' || data === '\x03' || data === '\x15' ? false : pointerInput || /^(?:\x1b|\x1b\[[IO])$/.test(data) ? session.draftInput : true;
     const sent = this.command(session, { type: 'input', data });
     if (session.resumeTurnObserved === false && /[\r\n]/.test(data)) session.resumePromptSubmitted = true;
     const interrupt = data === '\x1b' || data === '\x03' || /^\x1b\[27(?:;1(?::[12])?)?u$/.test(data);
@@ -597,15 +666,20 @@ export class AdeSessions {
 
   async send(projectId: string, id: string, request: SendMessageRequest, internalWorkflow = false, submit = true): Promise<{ ok: true; message: string }> {
     const record = this.require(projectId, id), session = this.live.get(id);
+    const inputRevision = session?.inputRevision;
+    await session?.screen?.settled();
+    if (session?.inputRevision !== inputRevision) throw new CliError('RATE_LIMITED', 'Terminal input changed while reading its prompt. Review it before sending.');
     // Antigravity hides shortcuts in a nonempty composer. Preserve initial readiness
     // only within this locked send, while every write still checks fresh status/liveness.
     const initialNativeReady = record.provider === 'antigravity' && antigravityPromptReady(session?.screen?.text() ?? session?.buffer ?? '');
+    const openCodeReady = !isOpenCode(record.provider) || session?.screen?.openCodePromptReady() === true;
     if (typeof request.message !== 'string' || request.message.length > (internalWorkflow ? 48000 : 10000) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(request.message)) throw new CliError('INVALID_ARGUMENT', 'Message exceeds the allowed length or contains terminal control codes');
     const uploads = decodeAttachments(request.attachments);
     if (!request.message.trim() && !uploads.length) throw new CliError('INVALID_ARGUMENT', 'Enter a message or attach a file');
     if (this.sending.has(id)) throw new CliError('RATE_LIMITED', 'A message is already being sent to this agent');
     const writable = () => {
       if (!session?.live || this.live.get(id) !== session) throw new CliError('RUNTIME_UNAVAILABLE', 'This session is stopped. Open Terminal to resume it before sending.');
+      if (!openCodeReady) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal and finish native setup before sending.');
       const status = this.status(projectId, id);
       if (['waiting', 'blocked'].includes(status.data?.state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent needs input. Answer its question or approval controls in Chat, or use Terminal for native setup.');
       const nativeReady = record.provider === 'antigravity' && (!status.data || status.data.state === 'unknown') && initialNativeReady;
@@ -622,8 +696,8 @@ export class AdeSessions {
       };
       // Same provider-specific staging rules as Orca's agent-image-paste: native image chips
       // for Codex/Claude, file mentions for Antigravity and non-image attachments.
-      for (const file of files) if (usesNativeImageAttachment(record.provider, file)) await write(attachmentPaste(record.provider, file));
-      const references = files.filter(file => !usesNativeImageAttachment(record.provider, file)).map(attachmentReference);
+      for (const file of files) if (usesNativeFileAttachment(record.provider, file)) await write(attachmentPaste(record.provider, file));
+      const references = files.filter(file => !usesNativeFileAttachment(record.provider, file)).map(attachmentReference);
       const prompt = [...references, request.message.trim() || 'Please review the attached files.'].join('\n');
       await write(`\x1b[200~${prompt.replace(/\r\n?/g, '\n')}\x1b[201~`);
       await new Promise(resolve => setTimeout(resolve, 300));
@@ -635,7 +709,7 @@ export class AdeSessions {
       session!.draftInput = !submit;
       return { ok: true, message: submit ? 'Submitted to the agent terminal' : 'Staged in the agent terminal. Press Enter to submit.' };
     } catch (error) {
-      if (staged) throw new CliError('CLI_FAILED', 'Delivery may be partial. Inspect Terminal before sending again; the message was not automatically retried.');
+      if (staged) throw new UncertainMessageDelivery();
       throw error;
     } finally { this.sending.delete(id); }
   }

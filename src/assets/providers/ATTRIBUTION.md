@@ -36,3 +36,8 @@ The shared ProviderIcon component now mirrors Orca's glyph rendering and bundled
 - **Source**: Kilo Official Brand Assets (`https://kilo.ai/favicon/favicon.svg`, `https://github.com/Kilo-Org/kilocode`)
 - **Description**: Official Kilo Code geometric block mark.
 - **Usage**: Scoped observational identification of Kilo agent runners in Orca Live Dashboard.
+
+## 6. CodeBuddy
+- **File**: `codebuddy.svg`
+- **Source**: User-provided CodeBuddy SVG (Lobe Icons markup), supplied in this implementation request.
+- **Usage**: Provider identification throughout the shared ProviderIcon component. Original paths, colors and gradient are preserved; the gradient ID is scoped to the standalone SVG.

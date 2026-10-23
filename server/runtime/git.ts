@@ -22,6 +22,27 @@ export class AdeGit {
     return result.stdout;
   }
 
+  async headCommit(cwd: string): Promise<string | null> {
+    const options = { cwd, timeoutMs: 15000, maxStdout: 8192, maxStderr: 8192 };
+    const head = await this.runner(GIT_PATH, ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], options);
+    if (head.exitCode === 0) {
+      const sha = head.stdout.trim();
+      if (!/^[a-f0-9]{40,64}$/.test(sha)) throw new CliError('INVALID_UPSTREAM', 'Git returned an invalid commit');
+      return sha;
+    }
+    // Only a symbolic HEAD whose branch is absent is an unborn checkout.
+    // Repository, permission and object errors must remain failures.
+    if (head.exitCode === 1) {
+      const symbolic = await this.runner(GIT_PATH, ['symbolic-ref', '--quiet', 'HEAD'], options);
+      const ref = symbolic.stdout.trim();
+      if (symbolic.exitCode === 0 && /^refs\/heads\/[^\s]+$/.test(ref)) {
+        const branch = await this.runner(GIT_PATH, ['show-ref', '--verify', '--quiet', ref], options);
+        if (branch.exitCode === 1) return null;
+      }
+    }
+    throw new CliError('CLI_FAILED', head.stderr.trim().slice(0, 1000) || 'Unable to resolve the checkout HEAD commit', false);
+  }
+
   async register(directory: string, name?: string): Promise<Project> {
     const canonical = localDirectory(directory);
     // A plain folder is also a valid workspace. Only run Git if a checkout marker exists.

@@ -11,7 +11,10 @@ import { issueStoredCursor, validateStoredCursor } from '../integrations/orca/st
 import { parseCoordinatorTranscriptLine } from '../integrations/orca/nodeDetails.js';
 import { parseAntigravityTranscriptLine, readAntigravityModel, readAntigravityToolActivity } from '../providers/antigravity.js';
 import { transcriptSettings } from '../providers/shared.js';
-import { transcriptToolActivity } from '../providers/toolActivity.js';
+import { isOpenCode, verifyOpenCode, withOpenCode } from './openCodeSessions.js';
+import { readOpenCodePage, readOpenCodeModel } from '../providers/opencode.js';
+import { readOpenCodeV2Page, readOpenCodeV2Model, openCodeV2Tools } from '../providers/openCodeV2.js';
+import { databaseToolActivity, mergeToolActivity, transcriptToolActivity } from '../providers/toolActivity.js';
 
 function unavailable(message: string): Section<ConversationPage> {
   return { data: null, meta: { availability: 'unavailable', observedAt: null, attemptedAt: new Date().toISOString(), partial: false, stale: false,
@@ -45,13 +48,45 @@ function verifyJsonSession(file: string, record: SessionRecord): boolean {
     for (const line of buffer.subarray(0, size).toString('utf8').split('\n').slice(0, 100)) {
       try {
         const row = JSON.parse(line);
-        const metadata = record.provider === 'codex' && row.type === 'session_meta' ? row.payload : record.provider === 'claude' ? row : null;
+        const metadata = record.provider === 'codex' && row.type === 'session_meta' ? row.payload : ['claude','codebuddy'].includes(record.provider) ? row : null;
         const id = record.provider === 'codex' ? metadata?.id : metadata?.sessionId;
-        if (id === record.providerThreadId && typeof metadata.cwd === 'string' && [record.cwd, record.sourceCwd].some(cwd => cwd && path.resolve(metadata.cwd) === path.resolve(cwd))) return true;
+        if (id === record.providerThreadId && typeof metadata.cwd === 'string' && [record.cwd, record.sourceCwd].some(cwd => cwd && path.relative(path.resolve(cwd), path.resolve(metadata.cwd)) === '')) return true;
       } catch { /* A partial or non-message record cannot establish provenance. */ }
     }
     return false;
   } finally { fs.closeSync(fd); }
+}
+
+/** Private local-command evidence, never public conversation. Start at the exact
+ * owned transcript's current byte cursor so historical acknowledgements cannot confirm a new setting. */
+export function codeBuddyCommandOutput(record: SessionRecord): () => string {
+  const root = path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'projects');
+  const file = record.provider === 'codebuddy' && record.providerThreadId ? findFile(root, record.providerThreadId, 1) : null;
+  if (!file || !verifyJsonSession(file, record)) throw new CliError('RUNTIME_UNAVAILABLE', 'The exact CodeBuddy command history is not available yet. Use Terminal until its session is recorded.');
+  const original = fs.statSync(file), offset = original.size;
+  const initial = fs.openSync(file, 'r');
+  const last = Buffer.alloc(1);
+  let skipFirst = false;
+  try { if (offset) { fs.readSync(initial, last, 0, 1, offset - 1); skipFirst = last[0] !== 10; } } finally { fs.closeSync(initial); }
+  return () => {
+    const fd = fs.openSync(file, 'r');
+    try {
+      const current = fs.fstatSync(fd), size = current.size - offset;
+      if (current.dev !== original.dev || current.ino !== original.ino || size < 0 || size > 262144) throw new CliError('RUNTIME_UNAVAILABLE', 'CodeBuddy command history changed or exceeded its read limit. Inspect Terminal before retrying.');
+      const buffer = Buffer.alloc(size); fs.readSync(fd, buffer, 0, size, offset);
+      const lines = buffer.toString('utf8').split('\n');
+      if (skipFirst) lines.shift();
+      return lines.flatMap(line => {
+        try {
+          const row = JSON.parse(line);
+          if (row.type !== 'message' || row.role !== 'user' || row.sessionId !== record.providerThreadId || row.providerData?.skipRun !== true
+            || typeof row.cwd !== 'string' || ![record.cwd, record.sourceCwd].some(cwd => cwd && path.relative(path.resolve(cwd), path.resolve(row.cwd)) === '')) return [];
+          return Array.isArray(row.content) ? row.content.flatMap((part: any) => part?.type === 'input_text' && typeof part.text === 'string'
+            && part.text.startsWith('<local-command-stdout>') && part.text.endsWith('</local-command-stdout>') ? [part.text.slice(22, -23)] : []) : [];
+        } catch { return []; }
+      }).join('\n');
+    } finally { fs.closeSync(fd); }
+  };
 }
 
 export function publicMessage(record: SessionRecord, line: string, sourceIdentity: string) {
@@ -64,7 +99,7 @@ export function publicMessage(record: SessionRecord, line: string, sourceIdentit
   try {
     const row = JSON.parse(line);
     if (record.provider !== 'antigravity') {
-      if (record.provider === 'claude' && row.sessionId && row.sessionId !== record.providerThreadId) return null;
+      if (['claude','codebuddy'].includes(record.provider) && row.sessionId && row.sessionId !== record.providerThreadId) return null;
       return visible(parseCoordinatorTranscriptLine(line, record.provider, sourceIdentity).message);
     }
     if (['USER_EXPLICIT', 'USER'].includes(row.source) && ['USER_INPUT', 'REQUEST'].includes(row.type)) {
@@ -81,7 +116,7 @@ export class AdeConversations {
       const { file } = this.resolve(record);
       // Watch the parent so atomic transcript replacement is observed as well.
       watcher = fs.watch(path.dirname(file), (_event, name) => {
-        if (name && name.toString() !== path.basename(file)) return;
+        if (name && ![path.basename(file), ...(isOpenCode(record.provider) ? [path.basename(file) + '-wal'] : [])].includes(name.toString())) return;
         clearTimeout(timer); timer = setTimeout(changed, 75);
       });
       watcher.on('error', () => { watcher?.close(); });
@@ -91,11 +126,13 @@ export class AdeConversations {
   private paths = new Map<string, string>();
 
   private resolve(record: SessionRecord): { file: string; root: string } {
+    if (isOpenCode(record.provider)) { const file = verifyOpenCode(record); return { file, root: path.dirname(file) }; }
     if (!validCodexThreadId(record.providerThreadId)) throw new Error('No verified provider conversation binding');
     const id = record.providerThreadId;
     const agy = record.provider === 'antigravity';
     const root = agy ? process.env.GEMINI_APPDATA_DIR || process.env.ANTIGRAVITY_APPDATA_DIR || path.join(os.homedir(), '.gemini', 'antigravity-cli')
       : record.provider === 'codex' ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions')
+      : record.provider === 'codebuddy' ? path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'projects')
       : path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects');
     const key = `${root}:${record.provider}:${id}:${record.cwd}`;
     let file = this.paths.get(key);
@@ -119,7 +156,7 @@ export class AdeConversations {
   private metadataPending = new Map<string, Promise<Awaited<ReturnType<AdeConversations['readMetadata']>>>>();
   async metadata(record: SessionRecord): Promise<Awaited<ReturnType<AdeConversations['readMetadata']>>> {
     // Antigravity also reads a separate database, so transcript stamps alone cannot cache it.
-    if (record.provider === 'antigravity') return this.readMetadata(record);
+    if (record.provider === 'antigravity' || isOpenCode(record.provider)) return this.readMetadata(record);
     try {
       const { file } = this.resolve(record), stat = fs.statSync(file);
       const key = `${record.projectId}:${record.id}:${record.provider}:${record.providerThreadId}:${record.cwd}`;
@@ -145,11 +182,15 @@ export class AdeConversations {
     } as Section<ToolActivity[]> };
     try {
       const { file, root } = this.resolve(record), id = record.providerThreadId!;
-      const latest = await readOlderTranscriptLines(file, fs.statSync(file).size, 1, 1024 * 1024, false,
+      const nativePage = record.provider === 'opencode2' ? readOpenCodeV2Page : readOpenCodePage;
+      const latest = isOpenCode(record.provider) ? nativePage(file, id, null, 1) : await readOlderTranscriptLines(file, fs.statSync(file).size, 1, 1024 * 1024, false,
         line => Boolean(publicMessage(record, line, id)));
       result.preview = latest.lines.length ? publicMessage(record, latest.lines[0], id)?.text.replace(/\s+/g, ' ').trim().slice(0, 300) || null : null;
       let tools: ToolActivity[];
-      if (record.provider === 'antigravity') {
+      if (isOpenCode(record.provider)) {
+        Object.assign(result, (record.provider === 'opencode2' ? readOpenCodeV2Model : readOpenCodeModel)(file, id) ?? {});
+        tools = (record.provider === 'opencode2' ? openCodeV2Tools : databaseToolActivity)(file, id);
+      } else if (record.provider === 'antigravity') {
         const allowed = (file: string) => isPathInsideRoots(file, [root]);
         const model = readAntigravityModel(id, allowed);
         if (model) Object.assign(result, model);
@@ -161,6 +202,7 @@ export class AdeConversations {
             if (row.sessionId && row.sessionId !== id) return {};
             if (record.provider === 'codex') return row.type === 'turn_context'
               ? { model: row.payload?.model, effort: row.payload?.effort } : {};
+            if (record.provider === 'codebuddy') return { model: row.providerData?.model, effort: row.providerData?.effort };
             return transcriptSettings(row);
           } catch { return {}; }
         };
@@ -178,7 +220,7 @@ export class AdeConversations {
           line => transcriptToolActivity(record.provider, id, line).length > 0);
         tools = activity.lines.flatMap(line => transcriptToolActivity(record.provider, id, line));
       }
-      result.toolActivity = { data: [...new Map(tools.map(item => [item.id, item])).values()].slice(-200),
+      result.toolActivity = { data: mergeToolActivity(tools),
         meta: { availability: tools.length ? 'ready' : 'empty', attemptedAt: now, observedAt: now, partial: true, stale: false, issue: null } };
     } catch { /* Missing exact-session evidence remains explicitly unavailable. */ }
     return result;
@@ -191,14 +233,28 @@ export class AdeConversations {
       const older = query.direction === 'older';
       const expected = { projectId: record.projectId, nodeId: record.id, runId: null, sourceIdentity };
       const cursor = query.cursor ? validateStoredCursor(query.cursor, expected) : null;
-      if (cursor && (cursor.direction !== query.direction || Number(cursor.upstreamCursor) > stat.size)) throw new CliError('INVALID_ARGUMENT', 'Conversation cursor direction or source changed');
+      if (cursor && (cursor.direction !== query.direction || (!isOpenCode(record.provider) && Number(cursor.upstreamCursor) > stat.size))) throw new CliError('INVALID_ARGUMENT', 'Conversation cursor direction or source changed');
       const parse = (line: string) => publicMessage(record, line, sourceIdentity);
-      const result = await (older || !cursor ? readOlderTranscriptLines : readBoundedTranscriptLines)(file, cursor ? Number(cursor.upstreamCursor) : stat.size,
+      const database = isOpenCode(record.provider);
+      const revision = database ? withOpenCode(record.provider as 'opencode' | 'opencode2' | 'kilo', db => {
+        if (record.provider === 'opencode2') return String(db.prepare('SELECT max(time_updated) AS updated FROM (SELECT time_updated FROM session_message WHERE session_id = ? ORDER BY seq DESC LIMIT 200)').get(id)?.updated ?? 0);
+        const messages = db.prepare('SELECT max(time_updated) AS updated FROM (SELECT time_updated FROM message WHERE session_id = ? ORDER BY rowid DESC LIMIT 200)').get(id);
+        const parts = db.prepare('SELECT max(time_updated) AS updated FROM (SELECT time_updated FROM part WHERE session_id = ? ORDER BY rowid DESC LIMIT 200)').get(id);
+        return String(Math.max(Number(messages?.updated) || 0, Number(parts?.updated) || 0));
+      }) : '';
+      const databaseOffset = cursor ? Number(cursor.upstreamCursor.split(':')[0]) : null;
+      const nativePage = record.provider === 'opencode2' ? readOpenCodeV2Page : readOpenCodePage;
+      let result = database ? nativePage(file, id, databaseOffset, Math.min(200, Math.max(1, query.limit ?? 20)), query.direction) : await (older || !cursor ? readOlderTranscriptLines : readBoundedTranscriptLines)(file, cursor ? Number(cursor.upstreamCursor) : stat.size,
         Math.min(200, Math.max(1, query.limit ?? 20)), 1024 * 1024, cursor?.seekingNewline ?? false, line => Boolean(parse(line)));
+      if (database && cursor && !older && !result.lines.length && cursor.upstreamCursor.split(':')[1] !== revision) {
+        const tail = nativePage(file, id, null, Math.min(20, query.limit ?? 20));
+        result = { ...result, lines: tail.lines };
+      }
       // Reuse unchanged forward cursors so idle streams do not exhaust the bounded cursor store.
-      const offset = !older && !cursor ? stat.size : result.nextByteOffset;
-      const nextCursor = older && !result.hasMore ? null : cursor && offset === Number(cursor.upstreamCursor) && Boolean(result.seekingNewline) === Boolean(cursor.seekingNewline) ? query.cursor! : issueStoredCursor({
-        ...expected, upstreamCursor: String(offset), direction: query.direction, sourceMode: agy ? 'antigravity-transcript' : 'coordinator-transcript', seekingNewline: result.seekingNewline,
+      const offset = !older && !cursor && !isOpenCode(record.provider) ? stat.size : result.nextByteOffset;
+      const upstreamCursor = database ? `${offset}:${revision}` : String(offset);
+      const nextCursor = older && !result.hasMore ? null : cursor && upstreamCursor === cursor.upstreamCursor && Boolean(result.seekingNewline) === Boolean(cursor.seekingNewline) ? query.cursor! : issueStoredCursor({
+        ...expected, upstreamCursor, direction: query.direction, sourceMode: isOpenCode(record.provider) ? 'opencode-db' : agy ? 'antigravity-transcript' : 'coordinator-transcript', seekingNewline: result.seekingNewline,
       });
       const messages = result.lines.flatMap(line => { const message = parse(line); return message ? [message] : []; });
       const now = new Date().toISOString();

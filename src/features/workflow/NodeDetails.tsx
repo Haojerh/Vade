@@ -296,7 +296,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                               <div className="message-attachment-controls">
                                 {attachButton}
                               </div>
-                              {projectId && <AgentChatControls projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} model={node.model} effort={node.effort} disabled={chatSending || isClosing} />}
+                              {projectId && <AgentChatControls projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} model={node.model} effort={node.effort} disabled={chatSending || isClosing || ['working', 'waiting', 'blocked'].includes(node.state)} />}
                               <DictationButton key={`dictation:${projectId}:${node.id}:${selectedRunId ?? ''}`} disabled={chatSending || isClosing}
                                 onText={(text) => setChatMessage((draft) => appendDictation(draft, text))} onActiveChange={setDictating} />
                               <button
@@ -332,6 +332,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                             disabled={chatSending}
                           />
                         </MessageAttachments>
+                        {chatFiles.length > 0 && ['codebuddy','opencode','opencode2','kilo'].includes(node.agentType ?? '') && <p className="text-muted text-xs">{node.agentType === 'codebuddy' ? 'Files are sent as local file references for CodeBuddy to read.' : 'Images and PDFs use native attachments. Other files are sent as local file references.'}</p>}
                       </form>
                     </div>
                   </div>

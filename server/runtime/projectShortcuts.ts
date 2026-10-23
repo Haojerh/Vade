@@ -20,7 +20,7 @@ export function saveProjectShortcuts(store: AdeStore, projectId: string, value: 
       || typeof row.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(row.id) || ids.has(row.id)
       || typeof row.label !== 'string' || !row.label.trim() || row.label.length > 80 || /[\x00-\x1f\x7f]/.test(row.label)
       || typeof row.command !== 'string' || !row.command.trim() || row.command.length > 10000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(row.command)
-      || !['terminal', 'agent'].includes(row.action) || !['codex', 'claude', 'antigravity'].includes(row.agent) || typeof row.appendEnter !== 'boolean') invalid();
+      || !['terminal', 'agent'].includes(row.action) || !['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(row.agent) || typeof row.appendEnter !== 'boolean') invalid();
     ids.add(row.id);
   }
   store.db.prepare('INSERT OR REPLACE INTO preferences VALUES (?, ?)').run(`shortcuts:${projectId}`, JSON.stringify(rows));
@@ -39,7 +39,7 @@ export async function runProjectShortcut(runtime: LocalRuntime, projectId: strin
       ? /(?:PS [^\r\n]*>|[$#])\s*$/.test(page.data.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, ''))
       : ['idle', 'completed', 'failed', 'interrupted'].includes(runtime.sessions.status(projectId, record.id).data?.state ?? '')
         || (record.provider === 'antigravity' && antigravityPromptReady(page.data));
-    if (ready) {
+    if (ready && runtime.sessions.messagePromptReady(projectId, record.id)) {
       try {
         if (shortcut.action === 'agent') await runtime.sessions.send(projectId, record.id, { message: shortcut.command }, false, shortcut.appendEnter);
         else {

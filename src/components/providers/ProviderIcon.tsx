@@ -20,6 +20,7 @@ export function normalizeProvider(provider: string | null | undefined): { id: Kn
   let id: KnownProvider = 'unknown';
   if (lower === 'codex' || lower === 'openai' || lower.startsWith('codex-') || lower.startsWith('gpt-')) id = 'codex';
   else if (lower === 'antigravity' || lower === 'agy' || lower.startsWith('antigravity-')) id = 'antigravity';
+  else if (lower === 'codebuddy') id = 'codebuddy';
   else if (lower === 'gemini' || lower.startsWith('gemini-')) id = 'gemini';
   else if (lower === 'claude' || lower === 'anthropic' || lower.startsWith('claude-') || lower === 'openclaude' || lower === 'claude-agent-teams') id = 'claude';
   else if (lower === 'opencode-go' || lower === 'opencodego') id = 'opencode-go';

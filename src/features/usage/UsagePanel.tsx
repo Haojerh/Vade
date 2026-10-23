@@ -10,13 +10,18 @@ import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 import { detailedWindow, primaryWindow, remainingTime, resetDescription, shortWindow, updatedDescription, usageGroups, usageWindows } from './usagePresentation';
 
+function inlineWindowLabel(provider: ProviderUsage, window: UsageWindow): string {
+  const label = shortWindow(window.label);
+  return provider.provider === 'codebuddy' ? label.replace(/^Plan Base Credits$/i, 'Plan').replace(/^Platform Reward Credits$/i, 'Rewards').replace(/ Credits$/i, '') : label;
+}
+
 function InlineSummary({ provider, compact = false, remaining = false }: { provider: ProviderUsage; compact?: boolean; remaining?: boolean }) {
   return <span className={`usage-inline-summary ${compact ? 'usage-inline-compact' : ''}`}>{usageGroups(provider).map((group, i) => <span className="usage-inline-group" key={group.label ?? i}>
     {i > 0 && <span className="usage-pool-separator" aria-hidden="true">|</span>}
     {group.label && <span className="usage-pool-label">{group.label}</span>}
     <span className="usage-inline-values">{group.windows.map((w, j) => <span className="usage-inline-window" key={j}>
       {j > 0 && <span className="usage-window-separator" aria-hidden="true">·</span>}
-      <strong>{Math.round(remaining ? 100 - w.usedPercent : w.usedPercent)}%</strong><span className="usage-inline-meta">{provider.provider === 'antigravity' ? w.label.endsWith('weekly') ? 'wk' : w.label.endsWith('5h') ? '5h' : '' : compact ? shortWindow(w.label) : remainingTime(w.resetsAt) ?? shortWindow(w.label)}</span>
+      <strong>{Math.round(remaining ? 100 - w.usedPercent : w.usedPercent)}%</strong><span className="usage-inline-meta" title={w.label}>{provider.provider === 'antigravity' ? w.label.endsWith('weekly') ? 'wk' : w.label.endsWith('5h') ? '5h' : '' : compact ? inlineWindowLabel(provider, w) : remainingTime(w.resetsAt) ?? inlineWindowLabel(provider, w)}</span>
     </span>)}</span>
   </span>)}</span>;
 }

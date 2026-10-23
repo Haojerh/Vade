@@ -10,6 +10,11 @@ export function AgentInteraction({ projectId, nodeId, waiting, onTerminal }: { p
   const [sending, setSending] = useState(false);
   const [attempted, setAttempted] = useState('');
   const request = useRef<AbortController | null>(null);
+  const promptId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!prompt || prompt.id === promptId.current) return;
+    promptId.current = prompt.id; setError(''); setText(''); setAttempted('');
+  }, [prompt]);
   useEffect(() => {
     const abort = new AbortController(); let busy = false;
     const read = async () => {

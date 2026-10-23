@@ -1,5 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
+import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
 import type { LocalConnection, LocalConnectionsData, ProviderUsage, Section, UsageData, UsageWindow } from '../../shared/contracts.js';
 import { GH_PATH, type CommandRunner } from '../integrations/cli.js';
 import { executableOnPath, resolveAgent } from './sessions.js';
@@ -32,6 +34,16 @@ export function claudeQuota(data: any): UsageWindow[] {
   });
 }
 
+// OpenCode Go's native API-key usage endpoint; unrelated model-provider keys
+// cannot establish a Go subscription or supply its quota windows.
+export function openCodeQuota(data: any): UsageWindow[] {
+  if (!data?.usage?.rolling || !data.usage.weekly) return [];
+  return [['rolling', '5h'], ['weekly', 'Weekly'], ['monthly', 'Monthly']].flatMap(([key, label]) => {
+    const meter = data.usage[key], window = quotaWindow(label, meter?.percent, meter?.resetsAt);
+    return window ? [window] : [];
+  });
+}
+
 export function agyQuota(data: any): UsageWindow[] {
   if (data?.command?.name !== 'usage' || !Array.isArray(data.command.data?.groups)) return [];
   return data.command.data.groups.slice(0, 12).flatMap((group: any) => !Array.isArray(group?.buckets) ? [] : group.buckets.slice(0, 8).flatMap((bucket: any) => {
@@ -41,9 +53,39 @@ export function agyQuota(data: any): UsageWindow[] {
   }));
 }
 
+async function codeBuddyCredential(): Promise<any> {
+  const base = process.platform === 'win32' ? path.join(os.homedir(), 'AppData', 'Local') : process.platform === 'darwin' ? path.join(os.homedir(), 'Library', 'Application Support') : path.join(os.homedir(), '.local', 'share');
+  const file = path.join(base, 'CodeBuddyExtension', 'Data', 'Public', 'auth', 'Tencent-Cloud.coding-copilot.info');
+  try { await fs.access(`${file}.logged-out`); return null; } catch { /* Native logout marker is absent. */ }
+  const value = await readCredentialJson(file);
+  const token = value?.auth?.accessToken, uid = value?.account?.uid;
+  // Only the native international personal account verified against this endpoint.
+  // Protected credential objects, API keys and other deployments remain native-only.
+  return value?.auth?.domain === 'www.codebuddy.ai' && value.auth.tokenType === 'Bearer' && value.account?.type === 'personal'
+    && typeof value.auth.expiresAt === 'number' && value.auth.expiresAt > Date.now()
+    && typeof token === 'string' && token.length > 0 && token.length <= 16384 && !/[\r\n]/.test(token)
+    && typeof uid === 'string' && uid.length > 0 && uid.length <= 256 ? value : null;
+}
+
+function codeBuddyAccountKey(credential: any): string {
+  return credential ? crypto.createHash('sha256').update(JSON.stringify([credential.auth.domain, credential.account.uid])).digest('hex') : '';
+}
+
+export function codeBuddyQuota(data: any): UsageWindow[] {
+  if (data?.code !== 0 || !Array.isArray(data.data?.CreditGroups)) return [];
+  return data.data.CreditGroups.slice(0, 12).flatMap((group: any) => {
+    if (![group?.CycleTotalCapacity, group?.CycleUsedCapacity].every(value => typeof value === 'number' || typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value))) return [];
+    const total = Number(group?.CycleTotalCapacity), used = Number(group?.CycleUsedCapacity);
+    if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(used) || used < 0 || used > total) return [];
+    const label = typeof group.Name === 'string' && group.Name.trim() ? group.Name.trim().slice(0, 55) : 'Credits';
+    return [quotaWindow(`${label} (${used.toFixed(2)} / ${total.toFixed(2)} credits)`, used / total * 100, null)!];
+  });
+}
+
+class UsageRequestError extends Error { constructor(readonly status: number) { super('Usage unavailable'); } }
 async function requestUsage(url: string, headers: Record<string, string>): Promise<any> {
-  const response = await fetch(url, { headers, signal: AbortSignal.timeout(10000), redirect: 'error' });
-  if (!response.ok) { await response.body?.cancel(); throw new Error('Usage unavailable'); }
+  const response = await fetch(url, { headers, ...(url === 'https://www.codebuddy.ai/billing/meter/get-user-resource-summary' ? { method: 'POST', body: '{}' } : {}), signal: AbortSignal.timeout(10000), redirect: 'error' });
+  if (!response.ok) { await response.body?.cancel(); throw new UsageRequestError(response.status); }
   const reader = response.body?.getReader();
   if (!reader) throw new Error('Empty usage response');
   const chunks: Uint8Array[] = []; let bytes = 0;
@@ -61,6 +103,10 @@ const definitions: Omit<LocalConnection, 'installed' | 'connected' | 'message'>[
   { id: 'github', label: 'GitHub', installUrl: 'https://cli.github.com/', loginCommand: 'gh auth login --web --hostname github.com' },
   { id: 'codex', label: 'Codex', installUrl: 'https://developers.openai.com/codex/cli', loginCommand: 'codex login' },
   { id: 'claude', label: 'Claude Code', installUrl: 'https://code.claude.com/docs/en/setup', loginCommand: 'claude auth login' },
+  { id: 'codebuddy', label: 'CodeBuddy', installUrl: 'https://www.codebuddy.ai/docs/cli/installation', loginCommand: 'codebuddy' },
+  { id: 'opencode', label: 'OpenCode Go', installUrl: 'https://opencode.ai/docs/', loginCommand: 'opencode auth login --provider opencode-go' },
+  { id: 'opencode2', label: 'OpenCode 2', installUrl: 'https://opencode.ai/docs/', loginCommand: 'opencode2 auth login' },
+  { id: 'kilo', label: 'Kilo Code', installUrl: 'https://kilo.ai/docs/code-with-ai/platforms/cli', loginCommand: 'kilo auth login' },
   { id: 'antigravity', label: 'Antigravity', installUrl: 'https://antigravity.google/', loginCommand: 'agy' },
 ];
 
@@ -68,6 +114,8 @@ export class LocalConnections {
   private revision = 0;
   private selectionKey = '';
   private cached: Section<UsageData> | null = null;
+  private codeBuddyAccount = '';
+  private codeBuddyObservedAccount = '';
   private expires = 0;
   private pending?: Promise<Section<UsageData>>;
   private connectionCache = new Map<string, { section: Section<LocalConnectionsData>; expires: number }>();
@@ -90,7 +138,7 @@ export class LocalConnections {
   }
 
   private now() { return this.options.now?.() ?? Date.now(); }
-  private resolve(provider: 'codex' | 'claude' | 'antigravity') { return (this.options.resolve ?? resolveAgent)(provider); }
+  private resolve(provider: Exclude<import('../../shared/contracts.js').AdeProvider, 'terminal'>) { return (this.options.resolve ?? resolveAgent)(provider); }
 
   private credentials() {
     if (this.options.credentials) return this.options.credentials();
@@ -135,9 +183,12 @@ export class LocalConnections {
       const installed = def.id === 'github' ? githubInstalled : Boolean(this.resolve(def.id));
       const connected = def.id === 'github' ? githubConnected : def.id === 'codex' ? hasCredential('codex', codex, !this.options.accounts || this.options.accounts.selected('codex') === 'system')
         : def.id === 'claude' ? hasCredential('claude', claude)
+        : def.id === 'codebuddy' ? Boolean(await codeBuddyCredential())
+        : ['opencode2','kilo'].includes(def.id) ? null
+        : def.id === 'opencode' ? hasCredential('opencode', await (this.options.accounts?.openCodeCredentials() ?? readCredentialJson(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json'))))
         : this.cached?.data?.providers.find(p => p.provider === 'antigravity')?.meta.availability === 'ready' ? true : null;
-      const accounts = (def.id === 'codex' || def.id === 'claude') ? await this.options.accounts?.list(def.id) : undefined;
-      return { ...def, installed, connected, accounts, message: !installed ? 'CLI not detected on this host.' : connected ? def.id === 'github' ? 'Authenticated through GitHub CLI.' : 'Selected sign-in detected. Usage is checked separately.'
+      const accounts = (def.id === 'codex' || def.id === 'claude' || def.id === 'opencode') ? await this.options.accounts?.list(def.id) : undefined;
+      return { ...def, installed, connected, accounts, message: def.id === 'codebuddy' ? connected ? 'Native international personal account detected. Credits are checked separately.' : 'Credit usage requires a native international personal sign-in. View other accounts at https://www.codebuddy.ai/profile/plans-usage.' : def.id === 'opencode2' ? 'Uses the native CLI account. OpenCode Go usage profiles are managed under OpenCode Go.' : def.id === 'kilo' ? 'Uses the native CLI account. Saved account profiles and subscription usage are not exposed here.' : !installed ? 'CLI not detected on this host.' : connected ? def.id === 'github' ? 'Authenticated through GitHub CLI.' : 'Selected sign-in detected. Usage is checked separately.'
         : def.id === 'antigravity' ? 'Open agy and complete its native sign-in, then re-check usage.' : 'Sign in with the native CLI on this host, then re-check.' };
     }));
     const result: Section<LocalConnectionsData> = { data: { host: process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux', connections }, meta: this.meta('ready') };
@@ -145,8 +196,13 @@ export class LocalConnections {
     return result;
   }
 
-  usage(force = false): Promise<Section<UsageData>> {
+  async usage(force = false): Promise<Section<UsageData>> {
     this.syncSelection();
+    const account = codeBuddyAccountKey(await codeBuddyCredential());
+    if (account !== this.codeBuddyAccount) {
+      this.codeBuddyAccount = account;
+      this.invalidate();
+    }
     if (this.pending) return this.pending;
     if (!force && this.cached && this.now() < this.expires) return Promise.resolve(this.cached);
     const pending = this.collect(this.revision).finally(() => { if (this.pending === pending) this.pending = undefined; });
@@ -160,8 +216,9 @@ export class LocalConnections {
 
   private async collect(revision: number): Promise<Section<UsageData>> {
     const previousSnapshot = this.cached;
+    const codeBuddyAccount = this.codeBuddyAccount;
     const [codex, claude] = await this.credentials();
-    const providers = await Promise.all(definitions.filter(d => d.id !== 'github').map(async def => {
+    const providers = await Promise.all(definitions.filter(d => ['codex', 'claude', 'antigravity', 'opencode', 'codebuddy'].includes(d.id)).map(async def => {
       const previous = previousSnapshot?.data?.providers.find(p => p.provider === def.id);
       try {
         let windows: UsageWindow[] = [];
@@ -171,6 +228,19 @@ export class LocalConnections {
             Authorization: `Bearer ${codex.tokens.access_token}`, 'User-Agent': 'codex-cli', 'OpenAI-Beta': 'codex-1', originator: 'Codex Desktop',
             ...(typeof codex.tokens.account_id === 'string' ? { 'ChatGPT-Account-Id': codex.tokens.account_id } : {}),
           }));
+        } else if (def.id === 'codebuddy') {
+          const credential = await codeBuddyCredential();
+          if (!credential) throw new Error();
+          windows = codeBuddyQuota(await (this.options.request ?? requestUsage)('https://www.codebuddy.ai/billing/meter/get-user-resource-summary', {
+            Authorization: `Bearer ${credential.auth.accessToken}`, 'X-User-Id': encodeURIComponent(credential.account.uid), 'Content-Type': 'application/json',
+          }));
+          const current = await codeBuddyCredential();
+          if (current?.auth.accessToken !== credential.auth.accessToken || current?.account.uid !== credential.account.uid) throw new Error();
+          if (revision === this.revision && windows.length) this.codeBuddyObservedAccount = codeBuddyAccountKey(current);
+        } else if (def.id === 'opencode') {
+          const credentials = await (this.options.accounts?.openCodeCredentials() ?? readCredentialJson(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json')));
+          if (!hasCredential('opencode', credentials)) throw new Error('Missing native OpenCode Go key');
+          windows = openCodeQuota(await (this.options.request ?? requestUsage)('https://opencode.ai/zen/go/v1/usage', { Authorization: `Bearer ${credentials['opencode-go'].key}`, Accept: 'application/json' }));
         } else if (def.id === 'claude') {
           if (!hasCredential('claude', claude)) throw new Error();
           windows = claudeQuota(await (this.options.request ?? requestUsage)('https://api.anthropic.com/api/oauth/usage', {
@@ -190,10 +260,11 @@ export class LocalConnections {
         return { provider: def.id, label: def.label, windows, buckets: [], meta: {
           ...this.meta('ready'), stale: windows.some(w => w.resetsAt !== null && Date.parse(w.resetsAt) <= this.now()),
         } } satisfies ProviderUsage;
-      } catch {
-        return { provider: def.id, label: def.label, windows: previous?.windows ?? [], buckets: [], meta: {
-          ...this.meta('unavailable'), observedAt: previous?.meta.observedAt ?? null, stale: Boolean(previous?.windows.length),
-          issue: { code: 'RUNTIME_UNAVAILABLE' as const, message: 'Quota could not be read. Check the native CLI sign-in and retry. API-key accounts and OS-keychain-only credentials may not expose subscription quotas.', retryable: true },
+      } catch (error) {
+        const keepPrevious = def.id !== 'codebuddy' || Boolean(codeBuddyAccount && codeBuddyAccount === this.codeBuddyObservedAccount && codeBuddyAccount === codeBuddyAccountKey(await codeBuddyCredential()));
+        return { provider: def.id, label: def.label, windows: keepPrevious ? previous?.windows ?? [] : [], buckets: [], meta: {
+          ...this.meta('unavailable'), observedAt: keepPrevious ? previous?.meta.observedAt ?? null : null, stale: keepPrevious && Boolean(previous?.windows.length),
+          issue: { code: 'RUNTIME_UNAVAILABLE' as const, message: def.id === 'codebuddy' ? 'Credits require a readable native international personal sign-in. Enterprise, API-key and protected credentials are unsupported. View usage at https://www.codebuddy.ai/profile/plans-usage.' : def.id === 'opencode' ? error instanceof UsageRequestError && error.status === 403 ? 'This key has no OpenCode Go subscription.' : error instanceof UsageRequestError && error.status === 401 ? 'OpenCode rejected the selected API key. Reconnect OpenCode Go in the native CLI.' : 'Connect an OpenCode Go API key using the sign-in command in AI Providers, then re-check. Other provider keys do not expose Go subscription usage.' : 'Quota could not be read. Check the native CLI sign-in and retry. API-key accounts and OS-keychain-only credentials may not expose subscription quotas.', retryable: true },
         } } satisfies ProviderUsage;
       }
     }));

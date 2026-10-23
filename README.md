@@ -322,3 +322,7 @@ Provider quota contracts were adapted from [Orca](https://github.com/stablyai/or
 - **Unread markers disappear**: They are stored in browser local storage. Use the same browser profile and origin; `localhost` and `127.0.0.1` have separate storage. Clearing site data resets notifications.
 - **Port already in use**: Stop the process using port `4317` or `5173`, then restart. The development frontend requires port `5173` and will not silently select another port.
 - **Phone or another computer cannot connect**: Both servers bind to loopback and permit only local origins. Remote access requires additional networking and origin configuration; it is not enabled by this setup.
+
+### Additional coding agents
+
+CodeBuddy, OpenCode, OpenCode 2 and Kilo Code are supported by the standalone launch, status, history, resume and message paths. See [provider capabilities and limits](docs/additional-providers.md) for attachment transport, native sign-in and configuration details, including the OpenCode 2 runtime verification limits.

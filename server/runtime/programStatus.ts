@@ -55,11 +55,13 @@ export class TerminalTurnStatus {
   }
 
   confirm(chunk: string, provider: AdeProvider, now = Date.now()): AgentStatus | null {
-    if (!this.interruptAt || now - this.interruptAt > 5000 || !['antigravity', 'claude'].includes(provider)) return null;
+    if (!this.interruptAt || now - this.interruptAt > 5000 || !['antigravity', 'claude', 'codebuddy'].includes(provider)) return null;
     this.confirmation = (this.confirmation + chunk).slice(-4096);
     const text = this.confirmation.replace(/\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1b\\))/g, '');
     const names = provider === 'antigravity' ? ['Antigravity CLI'] : ['Claude', 'Claude Code'];
-    if (!names.some(name => text.includes(`Interrupted · What should ${name} do instead?`))) return null;
+    const confirmed = provider === 'codebuddy' ? /(?:^|\n)\s*(?:[●•]\s*)?Interrupted by user\s*(?:\n|$)/.test(text)
+      : names.some(name => text.includes(`Interrupted · What should ${name} do instead?`));
+    if (!confirmed) return null;
     this.confirmation = '';
     return this.observe({ state: 'interrupted', source: 'provider-terminal', event: 'native-interrupt-confirmation' }, now);
   }
@@ -79,6 +81,12 @@ export class TerminalTurnStatus {
       this.active = false; this.interruptAt = 0; this.outcome = status;
     }
     return status;
+  }
+
+  nativeEnd(status: AgentStatus, now = Date.now(), interruptionWindow = 1500): AgentStatus {
+    if (this.outcome && !this.active) return this.outcome;
+    return this.observe(status.state === 'completed' && this.interruptAt && now - this.interruptAt <= interruptionWindow
+      ? { ...status, state: 'interrupted' } : status, now);
   }
 }
 

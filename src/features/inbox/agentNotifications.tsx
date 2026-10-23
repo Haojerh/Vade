@@ -62,7 +62,6 @@ export function useAgentNotifications(section: Section<InboxData> | null, onOpen
   const [popups, setPopups] = useState<InboxItem[]>([]);
   const current = useRef({ settings, onOpen }); current.current = { settings, onOpen };
   const seen = useRef(new Set<string>()), mountedAt = useRef(Date.now());
-  const timers = useRef(new Set<ReturnType<typeof setTimeout>>());
   const browserNotifications = useRef(new Set<Notification>());
   const deliver = useRef((item: InboxItem) => {});
   deliver.current = item => {
@@ -73,7 +72,7 @@ export function useAgentNotifications(section: Section<InboxData> | null, onOpen
     if (document.hidden || !document.hasFocus()) {
       if (current.current.settings.system && !window.adeDesktop && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
         try {
-          const notification = new Notification('Agent finished', { body: `${item.projectName} — ${item.title}`, tag: item.id, silent: !current.current.settings.sound });
+          const notification = new Notification('Agent finished', { body: `${item.projectName} — ${item.title}`, tag: item.id, icon: new URL('/vade-notification.png', window.location.origin).href, silent: !current.current.settings.sound });
           browserNotifications.current.add(notification);
           notification.onclick = () => { window.focus(); current.current.onOpen(item); notification.close(); };
           notification.onclose = () => browserNotifications.current.delete(notification);
@@ -81,14 +80,11 @@ export function useAgentNotifications(section: Section<InboxData> | null, onOpen
       }
       return;
     }
-    setPopups(previous => [...previous, item].slice(-3));
+    setPopups(previous => [...previous, item]);
     if (current.current.settings.sound) chime();
-    const timer = setTimeout(() => { timers.current.delete(timer); setPopups(previous => previous.filter(value => value.id !== item.id)); }, 10000);
-    timers.current.add(timer);
   };
   useEffect(() => {
     void window.adeDesktop?.setNotifications({ enabled: settings.enabled && settings.system, sound: settings.sound }).catch(() => {});
-    if (!settings.enabled) setPopups([]);
     if (!settings.enabled || !settings.system) { for (const notification of browserNotifications.current) notification.close(); browserNotifications.current.clear(); }
   }, [settings]);
   useEffect(() => window.adeDesktop?.onAgentNotification(event => {
@@ -102,8 +98,22 @@ export function useAgentNotifications(section: Section<InboxData> | null, onOpen
       if (item.nodeId && item.source === 'turn') deliver.current(item);
     }
   }, [section]);
-  useEffect(() => () => { for (const timer of timers.current) clearTimeout(timer); for (const notification of browserNotifications.current) notification.close(); }, []);
-  return createPortal(<div className="agent-notifications" aria-live="polite" aria-label="Agent notifications">{popups.map(item => <div className="agent-notification" key={item.id}>
-    <Icon name="bell" size={18} /><button className="agent-notification-open" onClick={() => { current.current.onOpen(item); setPopups(previous => previous.filter(value => value.id !== item.id)); }}><strong>Agent finished</strong><span>{item.projectName} · {item.title}</span></button><button className="btn-icon" aria-label={`Dismiss notification for ${item.title}`} onClick={() => setPopups(previous => previous.filter(value => value.id !== item.id))}><Icon name="close" size={14} /></button>
-  </div>)}</div>, document.body);
+  useEffect(() => () => { for (const notification of browserNotifications.current) notification.close(); }, []);
+  return createPortal(<div className="agent-notifications" aria-live="polite" aria-label="Agent notifications">{popups.map((item, index) => <AgentNotificationPopup key={item.id} item={item} exiting={!settings.enabled || index < popups.length - 3}
+    onOpen={() => current.current.onOpen(item)} onRemove={() => setPopups(previous => previous.filter(value => value.id !== item.id))} />)}</div>, document.body);
+}
+
+function AgentNotificationPopup({ item, exiting, onOpen, onRemove }: { item: InboxItem; exiting: boolean; onOpen: () => void; onRemove: () => void }) {
+  const [closing, setClosing] = useState(false);
+  const remove = useRef(onRemove); remove.current = onRemove;
+  const leaving = closing || exiting;
+  useEffect(() => { const timer = setTimeout(() => setClosing(true), 10000); return () => clearTimeout(timer); }, []);
+  useEffect(() => {
+    if (!leaving) return;
+    const timer = setTimeout(() => remove.current(), window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 180);
+    return () => clearTimeout(timer);
+  }, [leaving]);
+  return <div className={`agent-notification${leaving ? ' is-closing' : ''}`} inert={leaving}>
+    <Icon name="bell" size={18} /><button className="agent-notification-open" onClick={() => { onOpen(); setClosing(true); }}><strong>Agent finished</strong><span>{item.projectName} · {item.title}</span></button><button className="btn-icon" aria-label={`Dismiss notification for ${item.title}`} onClick={() => setClosing(true)}><Icon name="close" size={14} /></button>
+  </div>;
 }

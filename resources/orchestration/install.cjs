@@ -12,7 +12,7 @@ try {
     fs.copyFileSync(path.join(__dirname, source), path.join(directory, 'SKILL.md'));
   }
   // The official installer owns canonical skill placement and provider links.
-  const command = ['--yes', 'skills@1.7.4', 'add', skills, '--skill', 'vade-cli', 'vade-orchestration', '--global', '--agent', 'codex', 'claude-code', 'antigravity', '--yes'];
+  const command = ['--yes', 'skills@1.7.4', 'add', skills, '--skill', 'vade-cli', 'vade-orchestration', '--global', '--agent', 'codex', 'claude-code', 'antigravity', 'codebuddy', 'opencode', 'kilo', '--yes'];
   console.log('Installing both skills with npx skills@1.7.4 into standard agent directories.');
   const result = process.platform === 'win32'
     ? spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', `& npx.cmd ${command.map(value => `'${value.replaceAll("'", "''")}'`).join(' ')}`], { stdio: 'inherit', windowsHide: true, timeout: 180000 })

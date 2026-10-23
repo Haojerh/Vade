@@ -170,6 +170,12 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .statusbar-control:hover, .statusbar-control[aria-expanded=true] { color: var(--text-main); }
 .agent-notifications { position: fixed; right: 18px; bottom: 46px; z-index: 10000; display: grid; gap: 10px; width: min(360px, calc(100vw - 36px)); pointer-events: none; }
 .agent-notification { display: flex; align-items: center; gap: 12px; padding: 14px; border: 1px solid var(--border-main); border-radius: 10px; background: var(--surface-1); color: var(--text-main); box-shadow: 0 8px 28px #0005; pointer-events: auto; }
+.agent-notification { animation: agent-notification-enter 220ms cubic-bezier(.2,.8,.2,1) both; }
+.agent-notification.is-closing { animation: agent-notification-exit 180ms ease-in both; pointer-events: none; }
+@keyframes agent-notification-enter { from { transform: translateX(calc(100% + 24px)); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes agent-notification-exit { to { transform: translateX(calc(100% + 24px)); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .agent-notification, .agent-notification.is-closing { animation-duration: 1ms; } }
+.conversation-tool-children { margin: 4px 0 10px 6px; padding-left: 12px; border-left: 1px solid var(--border-main); }
 .agent-notification-open { flex: 1; min-width: 0; display: grid; gap: 5px; border: 0; padding: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .agent-notification-open span { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .system-popover { padding: 10px; border: 1px solid var(--border-main); border-radius: 12px; background: var(--surface-1); color: var(--text-main); box-shadow: 0 8px 30px #0005; font-size: 12px; }

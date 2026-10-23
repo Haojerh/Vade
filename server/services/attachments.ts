@@ -77,16 +77,19 @@ async function writeAttachments(files: ReturnType<typeof decodeAttachments>, roo
 
 // Mirrors Orca's agent-image-paste: verified raw-path image attachment agents;
 // remaining providers receive @file references rather than a fabricated image claim.
-const nativeImageAgents = new Set(['codex', 'claude', 'openclaude', 'gemini', 'cursor', 'copilot', 'droid', 'grok']);
+const nativeImageAgents = new Set(['codex', 'claude', 'opencode', 'opencode2', 'kilo', 'openclaude', 'gemini', 'cursor', 'copilot', 'droid', 'grok']);
 export function usesNativeImageAttachment(provider: string | null, file: { image: boolean }): boolean {
   return file.image && nativeImageAgents.has(provider || '');
+}
+export function usesNativeFileAttachment(provider: string | null, file: { image: boolean; path: string }): boolean {
+  return usesNativeImageAttachment(provider, file) || (['opencode', 'opencode2', 'kilo'].includes(provider || '') && file.path.toLowerCase().endsWith('.pdf'));
 }
 export function attachmentReference(file: { path: string }): string {
   return /\s/.test(file.path) ? `@"${file.path}"` : `@${file.path}`;
 }
 export function attachmentPaste(provider: string | null, file: { path: string; image: boolean }): string {
   const filePath = /\s/.test(file.path) ? `"${file.path}"` : file.path;
-  const reference = usesNativeImageAttachment(provider, file) ? filePath : attachmentReference(file);
+  const reference = usesNativeFileAttachment(provider, file) ? filePath : attachmentReference(file);
   // Keep the image path paste intact for native attachment detection. Paste the
   // line break separately inside its own frame so it cannot submit the prompt.
   return `\x1b[200~${reference}\x1b[201~\x1b[200~\n\x1b[201~`;

@@ -7,3 +7,5 @@ revision `4d76e8e76c4e754251f59c676db192496cb6aaf6`. Used for the legacy Orca Li
 The upstream MIT license is included in `LICENSE`. Orca branding remains owned by its respective owners.
 
 `vade.svg` is an original vector mark created for Vade, used in the sidebar and browser favicon.
+
+`public/vade-notification.png` is a raster export of the same mark for browser and desktop system notifications.

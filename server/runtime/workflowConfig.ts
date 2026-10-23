@@ -23,7 +23,7 @@ export function validateOrganization(value: OrganizationConfig): OrganizationCon
     fields(node, ['id', 'title', 'prompt', 'provider', 'model', 'effort', 'x', 'y']);
     if (typeof node.id !== 'string' || !/^[a-zA-Z0-9_-]{1,64}$/.test(node.id) || ids.has(node.id)) invalid('Node IDs must be unique');
     ids.add(node.id); bounded(node.title, 100, 'node title'); bounded(node.prompt, 4000, 'node role', true);
-    if (!['codex', 'claude', 'antigravity'].includes(node.provider)) invalid('Unsupported workflow provider');
+    if (!['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(node.provider)) invalid('Unsupported workflow provider');
     if (node.model !== null) bounded(node.model, 200, 'model');
     if (node.effort !== null) bounded(node.effort, 40, 'effort');
     if (node.effort && !node.model) invalid('Select a model before its effort');

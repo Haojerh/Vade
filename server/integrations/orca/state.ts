@@ -40,6 +40,7 @@ export const globalSourceMaps: OrcaSourceMaps = {
 export const workerLaunchCache = new Map<string, { model: string | null; effort: string | null }>();
 
 export type CursorSourceMode =
+  | 'opencode-db'
   | 'worker-read-transcript'
   | 'antigravity-transcript'
   | 'coordinator-transcript'

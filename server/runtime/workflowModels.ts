@@ -46,6 +46,15 @@ export class WorkflowModels {
       }
       return models.slice(0, 200);
     });
+    if (provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') {
+      const raw = await listing(resolved, provider === 'opencode2' ? ['models', '--standalone'] : ['models']);
+      return [...new Set(raw.split(/\r?\n/).map(line => line.trim()).filter(id => /^[a-zA-Z0-9_.:-]+\/[a-zA-Z0-9_.:/-]+$/.test(id)))].slice(0,200).map(id => ({ id, label: id, efforts: [] }));
+    }
+    if (provider === 'codebuddy') {
+      const help = await listing(resolved, ['--help']);
+      const values = help.match(/Currently supported: \(([^)]+)\)/)?.[1] ?? '';
+      return values.split(',').map(id => id.trim()).filter(id => /^[a-zA-Z0-9_.:/-]{1,200}$/.test(id)).slice(0,200).map(id => ({ id, label: id, efforts: [] }));
+    }
     if (provider === 'antigravity') {
       const raw = await listing(resolved, ['models']);
       // The installed native CLI emits model ID and label separated by a tab.

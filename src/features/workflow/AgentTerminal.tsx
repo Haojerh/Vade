@@ -42,6 +42,25 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
       terminal.scrollLines(Math.sign(event.deltaY) * Math.max(1, Math.round(Math.abs(event.deltaY) / (event.deltaMode === 0 ? 24 : 1))));
       return false;
     });
+    if (provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') {
+      const replays = new WeakSet<WheelEvent>();
+      terminal.attachCustomWheelEventHandler(event => {
+        if (replays.has(event) || terminal.modes.mouseTrackingMode === 'none' || event.shiftKey || !event.deltaY) return true;
+        event.preventDefault();
+        const target = event.target instanceof Element ? event.target : terminal.element;
+        const rows = Math.min(8, Math.max(1, Math.round(Math.abs(event.deltaY) / (event.deltaMode === 0 ? 24 : 1))));
+        // Line-mode reports bypass xterm's pixel-wheel damping in fullscreen TUIs.
+        // Keep native mouse coordinates/encoding; never translate a wheel into Up/Down.
+        queueMicrotask(() => {
+          if (!terminal.element?.isConnected) return;
+          for (let row = 0; row < rows; row++) {
+            const replay = new WheelEvent('wheel', { bubbles: true, cancelable: true, clientX: event.clientX, clientY: event.clientY, deltaY: Math.sign(event.deltaY), deltaMode: 1 });
+            replays.add(replay); target?.dispatchEvent(replay);
+          }
+        });
+        return false;
+      });
+    }
     // Let Chromium deliver native clipboard events before xterm's Kitty encoder claims them.
     terminal.attachCustomKeyEventHandler(event => {
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v' && navigator.clipboard?.readText) {

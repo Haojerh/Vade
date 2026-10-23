@@ -33,7 +33,7 @@ export function useLiveGraphActivity(scope: string, nodes: Node[], edges: Edge[]
       const source = `node:${node.id}`;
       const initialized = initializedSources.current.has(source);
       if (node.toolActivity?.data) initializedSources.current.add(source);
-      for (const item of node.toolActivity?.data ?? []) {
+      for (const item of (node.toolActivity?.data ?? []).flatMap(tool => [tool, ...(tool.children ?? [])])) {
         const known = seen.current.has(item.id);
         seen.current.add(item.id);
         if (!first && initialized && !known && enabled && (!item.at || now - Date.parse(item.at) < 30000)) {

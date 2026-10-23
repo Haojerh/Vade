@@ -167,9 +167,9 @@ export function readOpenCodePage(
         if (!batch.length) break;
         totalScanned += batch.length;
         cursorRowId = batch[batch.length - 1].rowid;
-        maxScannedRowId = cursorRowId;
 
         for (const row of batch) {
+          maxScannedRowId = row.rowid;
           const line = decodeMessage(row);
           if (line !== null) {
             lines.push(line);

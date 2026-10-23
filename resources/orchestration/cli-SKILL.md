@@ -26,3 +26,5 @@ Append one command and, when needed, one JSON object argument. Start with `conte
 Read the accompanying `vade-orchestration` skill for role-specific payloads and dependency rules before mutations. The assignment supplies its exact path.
 
 The identity file is a secret capability: never print, copy or share its contents. Keep provider sign-in, trust and approvals in the owned terminal. A timeout does not establish whether a mutation succeeded: inspect `context` and the terminal instead of retrying uncertain delivery. Process exit and provider turn-end do not prove completion. Report only observed changes and checks.
+
+The standalone runtime supports Codex, Claude Code, Antigravity, CodeBuddy, OpenCode and Kilo Code. Use only the run-scoped CLI prefix supplied in your assignment, regardless of provider.

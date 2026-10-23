@@ -42,6 +42,7 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const effortRequests = useRef(new Set<string>());
   useEffect(() => () => { request.current?.abort(); mutation.current?.abort(); }, []);
   useEffect(() => {
     // The composer is remounted when returning from Terminal. Read its effective
@@ -66,6 +67,9 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
   async function change(key: SetAgentChatOptionRequest['key'], value: string) {
     if (saving || (loading && !options) || disabled || overlay.closing) return;
     request.current?.abort();
+    // An aborted refresh cannot clear its loading state in finally. Model
+    // changes must release it so effort discovery can run in this overlay.
+    setLoading(false);
     const controller = new AbortController();
     mutation.current = controller;
     setSaving(true);
@@ -77,6 +81,15 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Unable to change setting. Check Terminal before retrying.');
     } finally { if (!controller.signal.aborted) setSaving(false); }
   }
+
+  useEffect(() => {
+    if (options?.provider === 'codebuddy' && options.current.model && !options.controls.providerPicker) effortRequests.current.delete(options.current.model);
+    if (!overlay.present || overlay.closing || loading || saving || disabled || options?.provider !== 'codebuddy' || !options.controls.providerPicker || !options.current.model) return;
+    const key = options.current.model;
+    if (effortRequests.current.has(key)) return;
+    effortRequests.current.add(key);
+    void change('providerPicker', 'open');
+  }, [overlay.present, overlay.closing, loading, saving, disabled, options]);
 
   const current = options?.current;
   const selected = options?.models.find(item => item.id === current?.model);
@@ -106,9 +119,9 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
             <span><strong>{item.label}</strong>{item.description && <span className="text-muted">{item.description}</span>}</span>
             {current?.model === item.id && <Icon name="check" size={16} />}
           </button>)}
-          {!models.length && <p className="agent-settings-message">{options?.models.length ? 'No matching models.' : 'No model catalog available.'}</p>}
+          {!models.length && <p className="agent-settings-message">{options?.models.length ? 'No matching models.' : ['codebuddy','opencode','opencode2','kilo'].includes(options?.provider ?? '') ? 'Change model and effort in Terminal. Current settings appear after a recorded turn.' : 'No model catalog available.'}</p>}
         </div>
-        {options?.controls.providerPicker && <button type="button" className="agent-settings-native" disabled={locked} onClick={() => void change('providerPicker', 'open')}>Open model picker in Terminal</button>}
+        {options?.controls.providerPicker && options.provider !== 'codebuddy' && <button type="button" className="agent-settings-native" disabled={locked} onClick={() => void change('providerPicker', 'open')}>Open model picker in Terminal</button>}
         {options?.controls.effort && !!selected?.efforts.length && <div className="agent-chat-option-row"><span>Effort</span><SegmentedControl key={selected.id} label="Effort" choices={selected.efforts.map(item => ({ ...item, label: item.value === 'medium' ? 'Med' : item.label }))} value={current?.effort} disabled={locked} onChange={value => void change('effort', value)} /></div>}
         {options?.controls.serviceTier && !!selected?.serviceTiers?.length && <div className="agent-chat-option-row"><span>Speed</span><SegmentedControl label="Speed" choices={selected.serviceTiers} value={current?.serviceTier} disabled={locked} onChange={value => void change('serviceTier', value)} /></div>}
         {hasFast && <div className="agent-chat-option-row"><span>Speed</span>

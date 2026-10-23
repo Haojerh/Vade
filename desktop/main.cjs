@@ -38,7 +38,7 @@ else {
         title: 'Vade', show: false, backgroundColor: '#181818',
         ...(process.platform === 'win32' ? {
           titleBarStyle: 'hidden',
-          titleBarOverlay: { color: '#202020', symbolColor: '#d4d4d4', height: 35 },
+          titleBarOverlay: { color: '#00000000', symbolColor: '#d4d4d4', height: 35 },
         } : {}),
         webPreferences: { nodeIntegration: false, contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.cjs') } });
       window.setMenuBarVisibility(false);
@@ -57,7 +57,7 @@ else {
         const item = message.item;
         window.webContents.send('ade:agent-notification', { item, open: false });
         if (!notificationSettings.enabled || window.isFocused() || !Notification.isSupported() || notifications.has(item.id)) return;
-        const notification = new Notification({ title: 'Agent finished', body: `${item.projectName} — ${item.title}`, silent: !notificationSettings.sound });
+        const notification = new Notification({ title: 'Agent finished', body: `${item.projectName} — ${item.title}`, icon: path.join(app.getAppPath(), 'dist', 'vade-notification.png'), silent: !notificationSettings.sound });
         notifications.set(item.id, notification);
         while (notifications.size > 32) { const [id, oldest] = notifications.entries().next().value; oldest.close(); notifications.delete(id); }
         notification.on('click', () => {

@@ -1,5 +1,6 @@
 // Bundled asset mapping from stablyai/orca fe08eb9a23b8b9dab1d36afc2f4c94f3b1df5236.
 export const ORCA_PROVIDER_IMAGES = {
+  codebuddy: new URL('../../assets/providers/codebuddy.svg?no-inline', import.meta.url).href,
   'grok': new URL('../../assets/providers/orca/grok.png?no-inline', import.meta.url).href,
   'mimo-code': new URL('../../assets/providers/orca/mimo-code.png?no-inline', import.meta.url).href,
   'ante': new URL('../../assets/providers/orca/ante.png?no-inline', import.meta.url).href,

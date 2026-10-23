@@ -21,6 +21,10 @@ dialog.node-modal-dialog:not(.confirmation-dialog) {
 dialog.node-modal-dialog.worktree-details-dialog {
   min-height: 0;
 }
+
+.desktop-custom-titlebar dialog.node-modal-dialog { top: 36px; bottom: 0; max-height: min(85vh, calc(100dvh - 60px)); }
+.desktop-custom-titlebar dialog.node-modal-dialog:not(.confirmation-dialog) { min-height: min(480px, calc(100dvh - 60px)); }
+.desktop-custom-titlebar dialog.node-modal-dialog:is(.worktree-details-dialog, .composer-only-dialog) { min-height: 0; }
 dialog.node-modal-dialog.composer-only-dialog { min-height: 0; }
 .composer-only-dialog .agent-chatbox-section { margin-top: 0; padding-top: 0; border-top: 0; }
 
@@ -1235,6 +1239,9 @@ dialog.add-worktree-dialog {
 .project-shortcut-editor textarea:focus { outline: none; border-color: var(--accent); box-shadow: none; }
 .worktree-field .custom-select-control:focus-within { border-color: var(--accent); box-shadow: none; }
 .agent-picker-trigger:focus-visible { outline: none; border-color: var(--accent); box-shadow: none; }
+.workflow-model-options { max-height: 280px; overflow: auto; width: 100%; }
+.workflow-model-options .workflow-model-option { width: max-content; min-width: 100%; white-space: nowrap; }
+.workflow-model-options .workflow-model-option > span:last-child { overflow: visible; text-overflow: clip; white-space: nowrap; }
 .worktree-field input[readonly] { color: var(--text-secondary); text-overflow: ellipsis; }
 .worktree-create-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
 .worktree-source-tabs { display: flex; gap: 7px; flex-wrap: wrap; }

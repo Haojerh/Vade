@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { fork, type ChildProcess } from 'node:child_process';
+import { DatabaseSync } from 'node:sqlite';
 import { executableOnPath, resolveAgent } from './sessions.js';
 import type { AccountProvider, ProviderAccount } from '../../shared/contracts.js';
 import { CliError, type CommandRunner } from '../integrations/cli.js';
@@ -20,12 +21,15 @@ export async function readCredentialJson(file: string): Promise<any> {
 }
 
 export function hasCredential(provider: AccountProvider, value: any, system = false): boolean {
+  if (provider === 'opencode') return typeof value?.['opencode-go']?.key === 'string' && value['opencode-go'].type === 'api' && value['opencode-go'].key.length > 0 && value['opencode-go'].key.length <= 16384 && !/[\r\n]/.test(value['opencode-go'].key);
   const token = provider === 'codex' ? value?.tokens?.access_token || value?.OPENAI_API_KEY || (system ? process.env.OPENAI_API_KEY : null) : value?.claudeAiOauth?.accessToken;
   return typeof token === 'string' && token.length > 0 && token.length <= 16384 && !/[\r\n]/.test(token);
 }
 
 export class ProviderAccounts {
   private creating = false;
+  private openCodeBackend?: { at: number; value: Promise<'1' | '2' | null> };
+  private openCodeBackendMajor: '1' | '2' | null = null;
   private logins = new Map<string, { state: 'pending' | 'complete' | 'failed'; url?: string; process?: ChildProcess; timer?: NodeJS.Timeout }>();
   constructor(private store: AdeStore, private runner: CommandRunner, private resolve = resolveAgent) {}
 
@@ -39,18 +43,51 @@ export class ProviderAccounts {
   selected(provider: AccountProvider): string {
     return String(this.store.db.prepare('SELECT account_id FROM provider_account_selection WHERE provider = ?').get(provider)?.account_id ?? 'system');
   }
-  selectionKey(): string { return `${this.selected('codex')}:${this.selected('claude')}`; }
+  selectionKey(): string { return `${this.selected('codex')}:${this.selected('claude')}:${this.selected('opencode')}`; }
   credentialPath(provider: AccountProvider, id = this.selected(provider)): string {
+    if (provider === 'opencode') return id === 'system' ? path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json') : path.join(this.directory(provider,id), 'opencode', 'auth.json');
     const directory = id === 'system' ? provider === 'codex' ? process.env.CODEX_HOME || path.join(os.homedir(), '.codex') : process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude') : this.directory(provider, id);
     return path.join(directory, provider === 'codex' ? 'auth.json' : '.credentials.json');
   }
+  async openCodeCredentials(id = this.selected('opencode')): Promise<any> {
+    if (!this.openCodeBackend || Date.now() - this.openCodeBackend.at > 60000) {
+      const resolved = this.resolve('opencode') ?? this.resolve('opencode2');
+      this.openCodeBackend = { at: Date.now(), value: resolved ? this.runner(resolved.executable, [...resolved.args, '--version'], { timeoutMs: 5000, maxStdout: 1024, maxStderr: 1024 })
+        .then(result => result.exitCode === 0 ? /^(?:opencode2?\s+)?v?([12])\.\d+\.\d+(?:[-+][\w.-]+)?$/i.exec(result.stdout.trim())?.[1] as '1' | '2' ?? null : null).catch(() => null) : Promise.resolve(null) };
+    }
+    const backend = await this.openCodeBackend.value;
+    this.openCodeBackendMajor = backend;
+    if (backend === '1') {
+      if (id === 'system' && process.env.OPENCODE_AUTH_CONTENT && process.env.OPENCODE_AUTH_CONTENT.length <= 65536) {
+        try { return JSON.parse(process.env.OPENCODE_AUTH_CONTENT); } catch { /* Native v1 falls back to its file for invalid inline JSON. */ }
+      }
+      return readCredentialJson(this.credentialPath('opencode', id));
+    }
+    if (backend !== '2') return null;
+    const file = id === 'system' && process.env.OPENCODE_DB && path.isAbsolute(process.env.OPENCODE_DB) ? process.env.OPENCODE_DB : path.join(path.dirname(this.credentialPath('opencode', id)), 'opencode.db');
+    let db: DatabaseSync | undefined;
+    try {
+      db = new DatabaseSync(file, { readOnly: true }); db.exec('PRAGMA busy_timeout=100');
+      const rows = db.prepare('SELECT CASE WHEN length(CAST(value AS BLOB)) <= 32768 THEN value END AS value FROM credential WHERE integration_id = ? ORDER BY active DESC, time_created DESC LIMIT 8').all('opencode-go');
+      for (const row of rows) {
+        if (typeof row.value !== 'string') continue;
+        try { const value = JSON.parse(row.value); if (value.type === 'key') { const result = { 'opencode-go': { type: 'api', key: value.key } }; if (hasCredential('opencode', result)) return result; } } catch { /* Malformed native records are not credentials. */ }
+      }
+      return null;
+    } catch { return null; } finally { db?.close(); }
+  }
   private loginCommand(provider: AccountProvider, id: string): string {
-    const command = provider === 'codex' ? 'codex login' : 'claude auth login';
+    const openCode = provider === 'opencode' && !this.resolve('opencode') ? 'opencode2' : 'opencode';
+    const command = provider === 'codex' ? 'codex login' : provider === 'opencode' ? this.openCodeBackendMajor === '2'
+      ? `${openCode} auth login opencode-go --standalone` : `${openCode} auth login --provider opencode-go` : 'claude auth login';
     if (id === 'system') return command;
     const directory = this.directory(provider, id);
     if (/[\r\n]/.test(directory)) throw new CliError('INVALID_ARGUMENT', 'Account directory cannot be used for sign-in');
-    const variable = provider === 'codex' ? 'CODEX_HOME' : 'CLAUDE_CONFIG_DIR';
+    const variable = provider === 'codex' ? 'CODEX_HOME' : provider === 'opencode' ? 'XDG_DATA_HOME' : 'CLAUDE_CONFIG_DIR';
     const quoted = directory.replaceAll("'", process.platform === 'win32' ? "''" : "'\"'\"'");
+    if (provider === 'opencode') return process.platform === 'win32'
+      ? `& { $previousData = $env:XDG_DATA_HOME; $previousDb = $env:OPENCODE_DB; $previousAuth = $env:OPENCODE_AUTH_CONTENT; try { $env:XDG_DATA_HOME = '${quoted}'; $env:OPENCODE_DB = 'opencode.db'; $env:OPENCODE_AUTH_CONTENT = ''; ${command} } finally { $env:XDG_DATA_HOME = $previousData; $env:OPENCODE_DB = $previousDb; $env:OPENCODE_AUTH_CONTENT = $previousAuth } }`
+      : `XDG_DATA_HOME='${quoted}' OPENCODE_DB=opencode.db OPENCODE_AUTH_CONTENT='' ${command}`;
     // User runs this explicit native login; HTTP never accepts executable commands or credentials.
     return process.platform === 'win32'
       ? `& { $previous = $env:${variable}; try { $env:${variable} = '${quoted}'; ${command} } finally { $env:${variable} = $previous } }`
@@ -59,7 +96,7 @@ export class ProviderAccounts {
   async list(provider: AccountProvider): Promise<ProviderAccount[]> {
     const active = this.selected(provider);
     return Promise.all([{ id: 'system', label: 'System default' }, ...this.rows(provider)].map(async row => {
-      const credentials = await readCredentialJson(this.credentialPath(provider, row.id));
+      const credentials = provider === 'opencode' ? await this.openCodeCredentials(row.id) : await readCredentialJson(this.credentialPath(provider, row.id));
       const detected = hasCredential(provider, credentials, row.id === 'system');
       return { ...row, active: row.id === active, detected, loginCommand: this.loginCommand(provider, row.id), ...(this.logins.has(row.id) ? { signIn: { state: this.logins.get(row.id)!.state, url: this.logins.get(row.id)!.url } } : {}) };
     }));
@@ -92,6 +129,7 @@ export class ProviderAccounts {
     } finally { this.creating = false; }
   }
   async startLogin(provider: AccountProvider, id: string): Promise<void> {
+    if (provider === 'opencode') throw new CliError('RUNTIME_UNAVAILABLE', 'Run the native sign-in command in a visible terminal to enter your OpenCode Go API key.');
     const directory = this.directory(provider, id);
     if (this.logins.get(id)?.state === 'pending') return;
     if ([...this.logins.values()].filter(login => login.state === 'pending').length >= 2) throw new CliError('RATE_LIMITED', 'Finish an existing sign-in first');

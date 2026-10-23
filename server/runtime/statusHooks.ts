@@ -8,6 +8,10 @@ import { CliError } from '../integrations/cli.js';
 export const STATUS_EVENTS = {
   codex: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'Interrupt'],
   claude: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure'],
+  codebuddy: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure'],
+  opencode: ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'Stop', 'SessionError'],
+  opencode2: ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'Stop', 'SessionError'],
+  kilo: ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'Stop', 'SessionError'],
   antigravity: ['SessionStart', 'PreInvocation', 'PostInvocation', 'PreToolUse', 'PostToolUse', 'Stop'],
 } as const;
 
@@ -32,7 +36,7 @@ process.stdin.on('data', chunk => {
     if (env.ADE_STATUS_SESSION && env.ADE_STATUS_SESSION !== id) process.exit(0);
     const cwd = path.resolve(env.ADE_STATUS_CWD);
     if (agy ? !Array.isArray(p.workspacePaths) || !p.workspacePaths.slice(0,32).some(v=>typeof v==='string' && v.length<=4096 && path.resolve(v)===cwd)
-      : typeof p.cwd !== 'string' || p.cwd.length>4096 || path.resolve(p.cwd)!==cwd || p.hook_event_name!==event) process.exit(0);
+      : typeof p.cwd !== 'string' || p.cwd.length>4096 || path.relative(cwd,path.resolve(p.cwd))!=='' || p.hook_event_name!==event) process.exit(0);
     let previous;
     try { const stat=fs.statSync(env.ADE_STATUS_FILE); if(stat.size<=4096) previous=JSON.parse(fs.readFileSync(env.ADE_STATUS_FILE,'utf8')); } catch {}
     if (agy && previous?.token===env.ADE_STATUS_TOKEN && previous?.id===id && ['completed','failed','interrupted'].includes(previous.state) && previous.event==='Stop'
@@ -45,8 +49,9 @@ process.stdin.on('data', chunk => {
       const tool = agy ? p.toolCall?.name : p.tool_name;
       state = ['AskUserQuestion','request_user_input','ask_question','ask_user_question','ask_permission'].includes(tool) ? 'waiting' : 'working';
     } else if (event==='PermissionRequest') state='waiting';
-    else if (event==='Notification' && ['permission_prompt','idle_prompt','elicitation_dialog','agent_needs_input'].includes(p.notification_type)) state='waiting';
-    else if (event==='StopFailure' && provider==='claude') state='failed';
+    else if (event==='Notification' && ['permission_prompt','idle_prompt','elicitation_dialog','agent_needs_input'].includes(p.notification_type)
+      && !(provider==='codebuddy' && p.notification_type==='idle_prompt')) state='waiting';
+    else if (event==='StopFailure' && ['claude','codebuddy'].includes(provider)) state='failed';
     else if (event==='Stop') {
       if (agy) {
         const fullyIdle=p.fullyIdle ?? p.fully_idle, reason=String(p.terminationReason ?? p.termination_reason ?? '').toUpperCase();
@@ -77,12 +82,13 @@ process.stdin.on('end',()=>process.exit(0)); process.stdin.on('error',()=>proces
 export function statusFile(directory: string, id: string): string { return path.join(directory, 'status', id + '.json'); }
 
 export function installStatusHooks(directory: string, provider: AdeProvider, node: string, configFile?: string): void {
-  if (provider === 'terminal') return;
+  if (provider === 'terminal' || provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') return;
   const script = path.join(directory, 'ade-status-hook.cjs');
   if (/["%\r\n]/.test(node + script)) throw new CliError('INVALID_ARGUMENT', 'Runtime path cannot be used for provider status hooks');
   fs.mkdirSync(path.join(directory, 'status'), { recursive: true, mode: 0o700 });
   fs.writeFileSync(script, STATUS_HOOK_SCRIPT, { mode: 0o600 });
   const file = configFile ?? (provider === 'antigravity' ? path.join(os.homedir(), '.gemini', 'config', 'hooks.json')
+    : provider === 'codebuddy' ? path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'settings.json')
     : provider === 'claude' ? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'settings.json')
     : path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'hooks.json'));
   let original = '{}', config: any;
@@ -128,7 +134,7 @@ export function readAgentStatus(directory: string, record: SessionRecord, live: 
     const file = statusFile(directory, record.id); if (fs.statSync(file).size > 4096) return missing;
     const event = JSON.parse(fs.readFileSync(file, 'utf8'));
     if (event.token !== record.statusToken || event.provider !== record.provider || event.id !== record.providerThreadId || !STATUS_EVENTS[record.provider].includes(event.event as never)
-      || !['working','waiting','idle','completed','failed','interrupted'].includes(event.state) || !Number.isFinite(Date.parse(event.at)) || Date.parse(event.at) > Date.now() + 5000) return missing;
+      || !['working','waiting','idle','completed','failed','interrupted','unknown'].includes(event.state) || !Number.isFinite(Date.parse(event.at)) || Date.parse(event.at) > Date.now() + 5000) return missing;
     const toolCall = typeof event.toolCall?.name === 'string' && event.toolCall.name.length <= 80 && typeof event.toolCall?.summary === 'string' && event.toolCall.summary.length <= 1000 ? event.toolCall : undefined;
     return { data: { state: event.state, source: 'provider-hook', event: event.event, ...(toolCall ? { toolCall } : {}), ...(['question', 'approval', 'auth'].includes(event.attention) ? { attention: event.attention } : {}) }, meta: { availability: live ? 'ready' : 'unavailable', observedAt: event.at, attemptedAt: now, partial: false, stale: !live, issue: live ? null : missing.meta.issue } };
   } catch { return missing; }

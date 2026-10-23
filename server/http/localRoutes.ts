@@ -69,7 +69,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     }
     if (pathname === '/api/workflow/models') {
       requireMethod('GET'); queryKeys('provider'); const provider = query.get('provider');
-      if (!['codex', 'claude', 'antigravity'].includes(provider ?? '')) throw new CliError('INVALID_ARGUMENT', 'Select a supported provider');
+      if (!['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(provider ?? '')) throw new CliError('INVALID_ARGUMENT', 'Select a supported provider');
       sendJson(200, await runtime.organization.models.list(provider as import('../../shared/contracts.js').WorkflowProvider)); return;
     }
     if (pathname === '/api/workflow/runs') {
@@ -119,10 +119,10 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       const record = await runtime.sessions.resumeHistory(project.id, tree.id, tree.path, source);
       sendJson(200, { nodeId: record.id, projectId: record.projectId }); return;
     }
-    const accountRoute = pathname.match(/^\/api\/provider-accounts\/(codex|claude)(?:\/(select|login|delete))?$/);
+    const accountRoute = pathname.match(/^\/api\/provider-accounts\/(codex|claude|opencode)(?:\/(select|login|delete))?$/);
     if (accountRoute) {
       queryKeys();
-      const provider = accountRoute[1] as 'codex' | 'claude';
+      const provider = accountRoute[1] as 'codex' | 'claude' | 'opencode';
       if (!accountRoute[2] && (method === 'GET' || method === 'HEAD')) { sendJson(200, await runtime.accounts.list(provider)); return; }
       requireMethod('POST');
       if (accountRoute[2]) {

@@ -108,6 +108,25 @@ export function transcriptToolActivity(provider: string, session: string, line: 
   try {
     const record = JSON.parse(line);
     if (record.sessionId && record.sessionId !== session) return [];
+    if (provider === 'codebuddy') {
+      if (!['function_call', 'function_call_result'].includes(record.type)) return [];
+      const result = record.type === 'function_call_result';
+      const calls = result && record.name === 'REPL' ? record.providerData?.toolResult?.replToolCalls?.calls : null;
+      if (result && !Array.isArray(calls)) return [];
+      const input = inputObject(result ? record.providerData?.arguments : record.arguments);
+      const item = toolActivityFromCall(session, record.callId ?? record.call_id ?? record.id, record.name, input, record.timestamp);
+      if (item && record.name === 'REPL') {
+        if (typeof input.description === 'string') item.label = `REPL: ${input.description.replace(/[\x00-\x1f\x7f]/g, ' ').slice(0, 160)}`;
+        const code = record.providerData?.argumentsDisplayText ?? input.code;
+        if (typeof code === 'string') item.detail = code.slice(0, 2000);
+        if (Array.isArray(calls)) item.children = calls.slice(0, 20).flatMap((call: any) => {
+          // The native REPL records child inputs separately from stdout and results.
+          const child = toolActivityFromCall(session, call?.id, call?.name, call?.arguments, record.timestamp);
+          return child ? [child] : [];
+        });
+      }
+      return item ? [item] : [];
+    }
     if (provider === 'codex') {
       const p = record.payload;
       if (record.type !== 'response_item' || !['function_call', 'custom_tool_call'].includes(p?.type)) return [];
@@ -123,6 +142,15 @@ export function transcriptToolActivity(provider: string, session: string, line: 
       return item ? [item] : [];
     });
   } catch { return []; }
+}
+
+export function mergeToolActivity(items: ToolActivity[]): ToolActivity[] {
+  const calls = new Map<string, ToolActivity>();
+  for (const item of items) {
+    const previous = calls.get(item.id);
+    calls.set(item.id, previous ? { ...previous, ...item, at: previous.at ?? item.at, detail: previous.detail ?? item.detail } : item);
+  }
+  return [...calls.values()].slice(-200);
 }
 
 export function databaseToolActivity(file: string, session: string): ToolActivity[] {

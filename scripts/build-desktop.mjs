@@ -1,5 +1,10 @@
 import { build } from 'esbuild';
 import { cp, mkdir } from 'node:fs/promises';
+import { createRequire } from 'node:module';
+
+const nativeSpeech = process.platform === 'win32' ? `sherpa-onnx-win-${process.arch}` : `sherpa-onnx-${process.platform}-${process.arch}`;
+try { createRequire(import.meta.url).resolve(nativeSpeech); }
+catch { throw new Error(`Missing desktop speech dependency ${nativeSpeech}. Run npm install --include=optional before building.`); }
 
 await mkdir('build/orchestration', { recursive: true });
 await cp('resources/orchestration', 'build/orchestration', { recursive: true });

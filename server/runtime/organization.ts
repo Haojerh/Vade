@@ -5,7 +5,7 @@ import type { OrganizationConfig, SendMessageRequest, WorkflowRun, WorkflowStep,
 import type { AdeStore } from './store.js';
 import type { AdeGit } from './git.js';
 import type { AdeSessions } from './sessions.js';
-import { executableOnPath } from './sessions.js';
+import { executableOnPath, UncertainMessageDelivery } from './sessions.js';
 import { WorkflowSetup } from './workflowSetup.js';
 import { WorkflowModels } from './workflowModels.js';
 import { bounded, fields, invalid, readOrganization, validateOrganization } from './workflowConfig.js';
@@ -77,7 +77,7 @@ export class OrganizationRuntime {
     const config = this.config();
     // Worker/coordinator messages must not accidentally create nested workflows.
     const active = this.runs().find(run => !terminal(run) && (run.orchestratorId === sessionId || run.steps.some(step => step.sessionId === sessionId)));
-    if (active) invalid('This agent belongs to an active workflow. Use its question controls, Terminal, or cancel the workflow before submitting another task.');
+    if (active) invalid(`This agent belongs to workflow ${active.id.slice(0, 8)} (${active.state}). Use its question controls or Terminal, or cancel that run in Settings → Workflow runs before submitting another task.`);
     if (!config.enabled) return this.sessions.send(projectId, sessionId, request);
     if (!this.setup.status().ready) invalid('Workflow setup needs repair. Reinstall it in Settings or disable Workflow / Organization.');
     const record = this.sessions.require(projectId, sessionId);
@@ -94,12 +94,15 @@ export class OrganizationRuntime {
       const files = await storeAttachments(uploads, path.join(this.store.directory, 'attachments'));
       const originalRequest = [request.message, ...files.map(attachmentReference)].join('\n');
       const project = this.store.project(projectId), tree = await this.git.requireWorktree(project, record.worktreeId);
-      if (this.runs(projectId).some(run => !terminal(run) && run.worktreeId === tree.id)) invalid('This checkout already belongs to an active workflow');
+      const checkoutRun = this.runs(projectId).find(run => !terminal(run) && run.worktreeId === tree.id);
+      if (checkoutRun) invalid(`This checkout belongs to workflow ${checkoutRun.id.slice(0, 8)} (${checkoutRun.state}): ${checkoutRun.originalRequest.slice(0, 90)}. Continue that run or cancel it in Settings → Workflow runs before starting another. Failed and cancelled runs do not hold this checkout.`);
+      const baseSha = config.isolatedWorktrees && project.kind === 'git' ? await this.git.headCommit(tree.path) : null;
+      if (config.isolatedWorktrees && !baseSha) invalid('Isolated workflows require a Git checkout with an initial commit. Create a commit yourself, or disable Isolated Worktrees in Settings.');
       const now = new Date().toISOString();
-      const run: WorkflowRun = { id: crypto.randomUUID(), projectId, orchestratorId: sessionId, worktreeId: tree.id, originalRequest, createdAt: now, updatedAt: now, state: 'planning', config, steps: config.nodes.map(node => ({ nodeId: node.id, state: 'pending', sessionId: null, stream: null, result: null, delivery: 'not-sent' })), streams: [], baseSha: project.kind === 'git' ? (await this.git.run(tree.path, ['rev-parse', 'HEAD'])).trim() : null, error: null, result: null, messages: [] };
+      const run: WorkflowRun = { id: crypto.randomUUID(), projectId, orchestratorId: sessionId, worktreeId: tree.id, originalRequest, createdAt: now, updatedAt: now, state: 'planning', config, steps: config.nodes.map(node => ({ nodeId: node.id, state: 'pending', sessionId: null, stream: null, result: null, delivery: 'not-sent' })), streams: [], baseSha, error: null, result: null, messages: [] };
       this.save(run);
       try { await this.sessions.send(projectId, sessionId, { message: this.instructions(run, sessionId, 'You are the orchestrator. Plan, delegate, wait for explicit worker reports, integrate if needed, then finish and answer the user.') + '\nOriginal user request:\n' + originalRequest }, true); }
-      catch (error) { run.state = 'blocked'; run.error = this.error(error); this.save(run); throw error; }
+      catch (error) { run.state = error instanceof UncertainMessageDelivery ? 'blocked' : 'failed'; run.error = this.error(error); this.save(run); throw error; }
       return { ok: true, message: `Workflow ${run.id} started; this agent is the orchestrator` };
     } finally { this.locks.delete(sessionId); this.startingCheckouts.delete(checkoutKey); }
   }
@@ -219,7 +222,7 @@ export class OrganizationRuntime {
     // Wait briefly for native input readiness, without ever repeating a write.
     for (let i = 0; i < 20; i++) {
       const state = this.sessions.status(run.projectId, step.sessionId).data?.state;
-      if (state && ['idle', 'completed', 'failed', 'interrupted'].includes(state)) break;
+      if (state && ['idle', 'completed', 'failed', 'interrupted'].includes(state) && this.sessions.messagePromptReady(run.projectId, step.sessionId)) break;
       await new Promise(resolve => setTimeout(resolve, 250));
     }
     const predecessors = run.config.edges.filter(edge => edge.target === step.nodeId).map(edge => ({ node: edge.source, result: run.steps.find(item => item.nodeId === edge.source)?.result }));

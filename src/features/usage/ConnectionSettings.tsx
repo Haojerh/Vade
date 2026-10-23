@@ -107,15 +107,15 @@ export function ConnectionSettings({ kind }: { kind: 'integrations' | 'accounts'
     
     {loading && !section && <p role="status">Detecting local connections…</p>}
     {connections.map(connection => {
-      const managed = connection.id === 'codex' || connection.id === 'claude';
+      const managed = connection.id === 'codex' || connection.id === 'claude' || connection.id === 'opencode';
       const accounts = connection.accounts ?? [{ id: 'system', label: 'System default', active: true, detected: connection.connected, loginCommand: connection.loginCommand }];
       const instruction = accounts.find(a => `${connection.id}:${a.id}` === expanded);
       const active = accounts.find(a => a.active);
       return <section key={connection.id} className="connection-card" aria-label={connection.label}>
         <div className="connection-card-heading">{connection.id === 'github' ? <Icon name="git-branch" size={22} /> : <ProviderIcon provider={connection.id} size={22} />}<h2>{connection.label}</h2>
-          <span className={`connection-badge ${connection.connected && connection.installed ? 'is-connected' : 'is-undetected'}`}>{connection.connected && connection.installed ? 'Active' : 'Not Active'}</span>
+          <span className={`connection-badge ${connection.connected && connection.installed ? 'is-connected' : 'is-undetected'}`}>{connection.connected === null && connection.installed ? 'Native sign-in' : connection.connected && connection.installed ? 'Active' : 'Not Active'}</span>
         </div>
-        <p>{kind === 'integrations' ? 'Pull requests, issues, and commits through the GitHub CLI.' : 'Choose the account used to display subscription usage.'}</p>
+        <p>{kind === 'integrations' ? 'Pull requests, issues, and commits through the GitHub CLI.' : managed ? 'Choose the account used to display subscription usage.' : 'Uses your native CLI sign-in. Saved account profiles and subscription usage are unavailable.'}</p>
         {kind === 'accounts' && <>
           <div className="connection-accounts-heading"><div><strong>Accounts</strong><p>Showing accounts for {host}.</p></div>
             {managed && <button className="btn btn-secondary btn-sm" disabled={loading || adding} onClick={() => { setName(''); setAddError(null); addDialog.open(connection.id as AccountProvider); }}><Icon name="plus" size={13} />Add account</button>}
@@ -140,15 +140,15 @@ export function ConnectionSettings({ kind }: { kind: 'integrations' | 'accounts'
         </div>
         {instruction && <div className="connection-login">
           <strong>{instruction.label}</strong>
-          {managed && instruction.id !== 'system' && <div className="connection-oauth"><p role="status">{instruction.signIn?.state === 'pending' ? 'Waiting for browser sign-in…' : instruction.signIn?.state === 'complete' ? 'Sign-in complete. You can select this account.' : instruction.signIn?.state === 'failed' ? 'Sign-in did not finish. Try again when ready.' : 'Sign in through your provider’s browser authorization.'}</p>{instruction.signIn?.url && instruction.signIn.state === 'pending' && <a className="btn btn-secondary btn-sm" href={instruction.signIn.url} target="_blank" rel="noreferrer">Open sign-in page<Icon name="external-link" size={13} /></a>}{instruction.signIn?.state !== 'pending' && <button className="btn btn-secondary btn-sm" onClick={() => { void providerAccountAction(connection.id as AccountProvider, 'login', instruction.id).then(accounts => updateAccounts(connection.id as AccountProvider, accounts)).catch(() => setError('Could not start sign-in. Check that the provider CLI is installed.')); }}>Sign in with {connection.label}</button>}</div>}
-          <p>Run this {host === 'Windows' ? 'PowerShell ' : ''}command on the ADE host and complete the provider’s sign-in. Then re-check and select the account above.</p>
+          {managed && connection.id !== 'opencode' && instruction.id !== 'system' && <div className="connection-oauth"><p role="status">{instruction.signIn?.state === 'pending' ? 'Waiting for browser sign-in…' : instruction.signIn?.state === 'complete' ? 'Sign-in complete. You can select this account.' : instruction.signIn?.state === 'failed' ? 'Sign-in did not finish. Try again when ready.' : 'Sign in through your provider’s browser authorization.'}</p>{instruction.signIn?.url && instruction.signIn.state === 'pending' && <a className="btn btn-secondary btn-sm" href={instruction.signIn.url} target="_blank" rel="noreferrer">Open sign-in page<Icon name="external-link" size={13} /></a>}{instruction.signIn?.state !== 'pending' && <button className="btn btn-secondary btn-sm" onClick={() => { void providerAccountAction(connection.id as AccountProvider, 'login', instruction.id).then(accounts => updateAccounts(connection.id as AccountProvider, accounts)).catch(() => setError('Could not start sign-in. Check that the provider CLI is installed.')); }}>Sign in with {connection.label}</button>}</div>}
+          <p>Run this {host === 'Windows' ? 'PowerShell ' : ''}command on the ADE host and complete the provider’s sign-in. {connection.id === 'opencode' && 'Choose OpenCode Go and enter its API key in your terminal. Keys stay in native credential storage. '}Then re-check{managed ? ' and select the account above.' : '. For CodeBuddy, use /login if its native UI requests sign-in.'}</p>
           <code>{instruction.loginCommand}</code><button className="btn btn-secondary btn-sm" onClick={() => void copy(`${connection.id}:${instruction.id}`, instruction.loginCommand)}><Icon name="terminal" size={13} />{copied === `${connection.id}:${instruction.id}` ? 'Copied' : 'Copy sign-in command'}</button>
         </div>}
       </section>;
     })}
     <Modal isOpen={addDialog.present} isClosing={addDialog.closing} busy={adding} onClose={addDialog.close} className="provider-account-dialog" aria-labelledby="add-provider-account-title">
-      <div className="connection-card-heading"><h2 id="add-provider-account-title">Add {addDialog.data === 'claude' ? 'Claude Code' : 'Codex'} account</h2><OverlayCloseButton onClick={addDialog.close} disabled={adding} /></div>
-      <p>Create an account profile and complete the provider’s browser sign-in. Selection changes usage display; running agents keep their existing accounts.</p>
+      <div className="connection-card-heading"><h2 id="add-provider-account-title">Add {addDialog.data === 'claude' ? 'Claude Code' : addDialog.data === 'opencode' ? 'OpenCode Go' : 'Codex'} account</h2><OverlayCloseButton onClick={addDialog.close} disabled={adding} /></div>
+      <p>Create an account profile and complete native sign-in. OpenCode Go prompts for its API key in your terminal. Selection changes usage display; running agents keep their existing accounts.</p>
       <form onSubmit={event => { event.preventDefault(); void add(); }}><label className="worktree-field">Account name<input autoFocus maxLength={60} value={name} disabled={adding} onChange={event => setName(event.target.value)} placeholder="e.g. Personal" /></label></form>
       <DialogError error={addError} /><DialogActions onCancel={addDialog.close} onConfirm={add} busy={adding} disabled={!name.trim()} confirmLabel="Create account" busyLabel="Creating…" />
     </Modal>
