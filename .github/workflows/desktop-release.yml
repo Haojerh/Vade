@@ -24,6 +24,9 @@ jobs:
           if ($env:GITHUB_REF_NAME -ne "v$packageVersion" -or $packageVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Tag must match the stable package.json version' }
       - run: npm ci --include=optional
       - run: npm run build:desktop
+        env:
+          NODE_OPTIONS: --max-old-space-size=3072 --max-semi-space-size=4
+          GOMAXPROCS: '1'
       - name: Build and publish Windows installer and updater manifest
         run: node scripts/package-desktop.mjs --release --publish
         env:
