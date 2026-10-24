@@ -8,7 +8,11 @@ Vade checks the stable public GitHub Releases feed for `Haojerh/ADE` three secon
 
 ## Producing releases
 
+Packaged backend utility processes use the real Electron resources directory as their working directory. `app.getAppPath()` points inside `app.asar` in an installed build and cannot serve as a native Windows process cwd. Bundled file locations remain explicit absolute paths. The speech worker must appear in both the packaged file list and ASAR-unpack rules.
+
 `npm run package:desktop` keeps the unpacked development build. `npm run package:release` creates an installer and updater metadata without publishing. Windows uses a per-user NSIS installer; macOS produces DMG/ZIP; Linux produces AppImage. Release files are placed in a timestamped directory under `release/`.
+
+Desktop builds render `src/assets/brand/vade.svg` into the packaged app PNG and a multi-resolution Windows ICO through `scripts/build-brand-icons.mjs`. The application, installer, uninstaller, desktop shortcut and Start menu entry use Vade branding. The per-user Windows setup creates both shortcuts and preserves application data on uninstall.
 
 The Windows GitHub Actions workflow in `.github/workflows/desktop-release.yml` runs when a stable `vX.Y.Z` tag is pushed. The tag must match `package.json`. It builds and publishes the NSIS installer, its blockmap and `latest.yml` to the same GitHub Release, using the repository's built-in Actions token. Optional `WINDOWS_CSC_LINK` and `WINDOWS_CSC_KEY_PASSWORD` secrets configure normal Windows signing. Credentials stay in the build environment. No release is published by ordinary local builds.
 

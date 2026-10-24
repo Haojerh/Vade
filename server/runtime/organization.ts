@@ -50,6 +50,18 @@ export class OrganizationRuntime {
     const rows = this.store.db.prepare('SELECT data FROM workflow_runs ORDER BY updated_at DESC LIMIT 100').all();
     return rows.map(row => JSON.parse(String(row.data)) as WorkflowRun).filter(run => !projectId || run.projectId === projectId);
   }
+  summaries(projectId?:string):import('../../shared/contracts.js').WorkflowRunSummary[] {
+    const rows=this.store.db.prepare(`SELECT id, json_extract(data,'$.projectId') AS project,
+      json_extract(data,'$.worktreeId') AS worktree, json_extract(data,'$.mode') AS mode,
+      substr(json_extract(data,'$.originalRequest'),1,320) AS preview,
+      json_extract(data,'$.createdAt') AS created, json_extract(data,'$.updatedAt') AS updated,
+      json_extract(data,'$.state') AS state, json_extract(data,'$.error') IS NOT NULL AS has_error,
+      (SELECT json_group_array(json_extract(value,'$.state')) FROM json_each(workflow_runs.data,'$.steps')) AS steps,
+      (SELECT json_group_array(DISTINCT json_extract(value,'$.provider')) FROM json_each(workflow_runs.data,'$.config.nodes')) AS providers
+      FROM workflow_runs WHERE (? IS NULL OR json_extract(data,'$.projectId')=?) ORDER BY updated_at DESC LIMIT 100`).all(projectId??null,projectId??null);
+    return rows.map(row=>{const states=JSON.parse(String(row.steps??'[]')) as string[];return{id:String(row.id),projectId:String(row.project),worktreeId:String(row.worktree),mode:row.mode==='adhoc'?'adhoc':'configured',requestPreview:String(row.preview??''),createdAt:String(row.created),updatedAt:String(row.updated),state:row.state as WorkflowRun['state'],hasError:Boolean(row.has_error),providers:JSON.parse(String(row.providers??'[]')),counts:{total:states.length,completed:states.filter(state=>state==='completed').length,running:states.filter(state=>state==='starting'||state==='running').length,pending:states.filter(state=>state==='pending').length,failed:states.filter(state=>state==='failed'||state==='interrupted').length,skipped:states.filter(state=>state==='skipped').length}};});
+  }
+  details(id:string):WorkflowRun {return this.get(id);}
   private get(id: string): WorkflowRun {
     const row = this.store.db.prepare('SELECT data FROM workflow_runs WHERE id = ?').get(id);
     if (!row) throw new CliError('RUN_NOT_FOUND', 'Workflow run was not found'); return JSON.parse(String(row.data));

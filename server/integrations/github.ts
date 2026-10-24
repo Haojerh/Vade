@@ -14,8 +14,8 @@ import {
 } from '../../shared/contracts.js';
 import { runGit, CommandRunner, defaultCommandRunner, CliError } from './cli.js';
 import { createGitHubAccountReader } from './githubAccounts.js';
-import { toIsoOrNull } from './orca/utils.js';
-import { collectGraph } from './orca/graph.js';
+import { toIsoOrNull } from '../providers/transcriptUtils.js';
+
 
 export interface ParsedRepo {
   owner: string;
@@ -393,7 +393,8 @@ export async function collectGitHubData(
     if (!query.nodeId || typeof query.nodeId !== 'string') {
       throw new CliError('INVALID_ARGUMENT', 'Query parameter nodeId must be provided for worktree scope');
     }
-    const graph = preloadedGraph ?? (await collectGraph(project.id, null, runner)).graph;
+    if (!preloadedGraph) throw new CliError('SCOPE_UNAVAILABLE', 'Worktree scope requires a discovered local snapshot');
+    const graph = preloadedGraph;
     const foundNode = graph.nodes.find((n) => n.id === query.nodeId);
     if (!foundNode) {
       throw new CliError('NODE_NOT_FOUND', `Worktree node ${query.nodeId} not found`);

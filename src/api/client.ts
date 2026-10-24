@@ -1,4 +1,10 @@
 import { readTerminalShell } from '../app/terminalShellPreference';
+export async function fetchCommitFiles(projectId:string,sha:string,nodeId?:string,signal?:AbortSignal):Promise<import('../../shared/contracts').CommitFiles>{return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/commit-files?${new URLSearchParams({sha,...(nodeId?{nodeId}:{})})}`,{signal}));}
+export async function fetchCommitDiff(projectId:string,sha:string,path:string,nodeId?:string,signal?:AbortSignal):Promise<import('../../shared/contracts').SourceDiff>{return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/commit-diff?${new URLSearchParams({sha,path,...(nodeId?{nodeId}:{})})}`,{signal}));}
+export async function sourceRequest<T>(projectId:string,action:'status'|'diff'|'compare'|'action',values:Record<string,string>|import('../../shared/contracts').SourceActionRequest,signal?:AbortSignal):Promise<T>{
+  const url=`/api/projects/${encodeURIComponent(projectId)}/source-control/${action}`;
+  return handleResponse(await fetch(action==='action'?url:`${url}?${new URLSearchParams(values as Record<string,string>)}`,{signal,...(action==='action'?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(values)}:{})}));
+}
 export async function speechRequest<T>(path: string, value?: object, signal?: AbortSignal): Promise<T> {
   return handleResponse(await fetch(`/api/speech/${path}`, { signal, ...(value ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) } : {}) }));
 }
@@ -11,7 +17,8 @@ export const fetchOrganization = (signal?: AbortSignal) => workflowRequest<Organ
 export const saveOrganization = (config: OrganizationConfig) => workflowRequest<OrganizationConfig>('config', config);
 export const fetchWorkflowSetup = (signal?: AbortSignal) => workflowRequest<WorkflowSetupStatus>('setup', undefined, signal);
 export const fetchWorkflowModels = (provider: WorkflowProvider, signal?: AbortSignal) => workflowRequest<WorkflowModel[]>(`models?provider=${encodeURIComponent(provider)}`, undefined, signal);
-export const fetchWorkflowRuns = (signal?: AbortSignal) => workflowRequest<WorkflowRun[]>('runs', undefined, signal);
+export const fetchWorkflowRunSummaries=(signal?:AbortSignal)=>workflowRequest<import('../../shared/contracts').WorkflowRunSummary[]>('runs?summary=1',undefined,signal);
+export const fetchWorkflowRunDetails=(id:string,signal?:AbortSignal)=>workflowRequest<WorkflowRun>(`runs/${encodeURIComponent(id)}`,undefined,signal);
 export const cancelWorkflowRun = (id: string) => workflowRequest<{ ok: boolean }>(`runs/${encodeURIComponent(id)}/cancel`, {});
 export async function systemRequest<T>(path: 'computer-awake' | 'resources/details' | 'ports' | `ports/${string}/stop`, value?: object, signal?: AbortSignal): Promise<T> {
   return handleResponse(await fetch(`/api/${path}`, { signal, ...(value ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) } : {}) }));
@@ -180,6 +187,19 @@ export async function updateTerminal(projectId: string, nodeId: string, action: 
   await handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/terminal-${action}`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data), signal,
   }));
+}
+
+export async function interruptAgent(projectId:string,nodeId:string):Promise<import('../../shared/contracts').InterruptAgentResponse> {
+  const request:import('../../shared/contracts').InterruptAgentRequest={};
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/interrupt`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)}));
+}
+
+const openingTerminals=new Map<string,Promise<import('../../shared/contracts').TerminalPage>>();
+/** Share one opening-time recovery across Chat mounts. Observed exits stay stopped. */
+export function openChatTerminal(projectId:string,nodeId:string) {
+  const key=`${projectId}:${nodeId}`,pending=openingTerminals.get(key);if(pending)return pending;
+  const operation=(async()=>{let page=await fetchTerminal(projectId,nodeId,0);if(!page.live&&page.recoverable){await resumeTerminal(projectId,nodeId);page=await fetchTerminal(projectId,nodeId,0);}return page;})().finally(()=>openingTerminals.delete(key));
+  openingTerminals.set(key,operation);return operation;
 }
 
 export async function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
@@ -519,10 +539,10 @@ export async function providerAccountAction(provider: import('../../shared/contr
 export async function fetchProviderAccounts(provider: import('../../shared/contracts').AccountProvider, signal?: AbortSignal): Promise<import('../../shared/contracts').ProviderAccount[]> {
   return handleResponse(await fetch('/api/provider-accounts/' + provider, { signal }));
 }
-export async function workspaceFilesRequest<T>(projectId: string, action: 'roots' | 'list' | 'read' | 'diff' | 'search' | 'save' | 'open', values: Record<string, string>, signal?: AbortSignal): Promise<T> {
+export async function workspaceFilesRequest<T>(projectId: string, action: 'roots' | 'list' | 'read' | 'diff' | 'search' | 'save' | 'open' | 'stat' | 'action', values: Record<string, string>, signal?: AbortSignal): Promise<T> {
   const url = `/api/projects/${encodeURIComponent(projectId)}/files/${action}`;
   const query = new URLSearchParams(Object.entries(values).filter(([, value]) => value !== ''));
-  return handleResponse(await fetch(action === 'save' || action === 'open' ? url : `${url}?${query}`, {
-    signal, ...(action === 'save' || action === 'open' ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) } : {}),
+  return handleResponse(await fetch(action === 'save' || action === 'open' || action === 'action' ? url : `${url}?${query}`, {
+    signal, ...(action === 'save' || action === 'open' || action === 'action' ? { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values) } : {}),
   }));
 }

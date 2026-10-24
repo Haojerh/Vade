@@ -155,7 +155,8 @@ export interface ProviderActivity {
   message?: string; // bounded native error message only
 }
 
-export interface AgentStatus { state: State; source: 'provider-hook' | 'provider-terminal'; event: string; attention?: 'question' | 'approval' | 'auth'; toolCall?: { name: string; summary: string } }
+export interface AgentWorkTime { startedAt: ISO; activeSince: ISO | null; workedMs: number; endedAt: ISO | null; partial: boolean }
+export interface AgentStatus { state: State; source: 'provider-hook' | 'provider-terminal'; event: string; attention?: 'question' | 'approval' | 'auth'; toolCall?: { name: string; summary: string }; workTime?: AgentWorkTime }
 
 export type AgentPermissionMode = 'manual' | 'auto' | 'yolo';
 export interface AgentPreferences {
@@ -473,6 +474,7 @@ export interface CommitGraphEntry {
   refs: string[];
 }
 export interface CommitGraphData { commits: CommitGraphEntry[]; truncated: boolean }
+export interface CommitFiles { sha:string; files:{path:string;status:string}[]; truncated:boolean; excluded:number }
 
 export interface CreateAgentResponse {
   ok: boolean;
@@ -573,6 +575,16 @@ export interface TerminalPage {
   exitCode: number | null;
 }
 export interface TerminalInputRequest { data: string }
+export interface SourceFile { path:string; index:string; worktree:string; added:number|null; removed:number|null; stagedAdded?:number|null; stagedRemoved?:number|null; workingAdded?:number|null; workingRemoved?:number|null }
+export interface SourceStatus { worktreeId:string; branch:string|null; head:string|null; upstream:string|null; ahead:number; behind:number; files:SourceFile[]; version:string; refs:string[]; base:string|null; canCreatePr:boolean; conflicts:boolean; truncated:boolean; excluded:number }
+export type SourceAction='stage'|'unstage'|'discard'|'commit'|'push'|'forcePush'|'pull'|'fetch'|'fastForward'|'sync'|'rebase'|'publish'|'createPr';
+export interface SourceActionRequest { worktreeId:string; action:SourceAction; version:string; paths?:string[]; message?:string; base?:string; title?:string; body?:string }
+export interface SourceActionResponse { ok:true; url?:string }
+export interface SourceReviewQuery { worktreeId:string; base?:string }
+export interface SourceDiff { path:string; original:string; modified:string; binary:boolean; reason?:string }
+/** Fixed native interruption on the exact working owned agent. No client keys. */
+export type InterruptAgentRequest = Record<string, never>;
+export interface InterruptAgentResponse { ok: true }
 export interface TerminalResizeRequest { cols: number; rows: number }
 export type TerminalClientMessage = { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number } | { type: 'ack'; cursor: number };
 export type TerminalServerMessage = { type: 'output'; page: TerminalPage } | { type: 'error'; message: string };
@@ -603,6 +615,12 @@ export interface WorkflowRun {
   baseSha: string | null; error: string | null; result: string | null;
   planReason?: string; integrationTreeId?: string; integrationPath?: string; integrationShas?: string[];
   messages: { id: string; from: string; to: string; text: string; at: string }[];
+}
+export interface WorkflowRunSummary {
+  id:string; projectId:string; worktreeId:string; mode:'configured'|'adhoc';
+  requestPreview:string; createdAt:string; updatedAt:string; state:WorkflowRun['state'];
+  counts:{total:number;completed:number;running:number;pending:number;failed:number;skipped:number};
+  providers:WorkflowProvider[]; hasError:boolean;
 }
 /** Local speech contracts. Audio is mono float32 PCM at exactly 16 kHz. */
 export interface LocalSpeechModel {
@@ -638,5 +656,8 @@ export interface DesktopUpdateStatus {
 export interface WorkspaceListing { entries: WorkspaceEntry[]; truncated: boolean; gitError: string | null }
 export interface WorkspaceSearchOptions { matchCase?: boolean; wholeWord?: boolean; regex?: boolean; include?: string; exclude?: string; showDotfiles?: boolean; showIgnored?: boolean }
 export interface WorkspaceSearch { matches: { path: string; line?: number; preview?: string; status?: string | null; ranges?: [number, number][] }[]; truncated: boolean }
-export interface WorkspaceFile { path: string; text: string; version: string; original: string | null; gitError: string | null; git?: boolean }
+export interface WorkspaceFile { path: string; text: string; version: string; original: string | null; gitError: string | null; git?: boolean; preview?: { kind: 'image' | 'binary'; size: number; mime: string | null; dataUrl?: string } }
+export interface WorkspaceFileActionRequest { worktreeId: string; action: 'file' | 'folder' | 'duplicate' | 'copy' | 'rename' | 'trash' | 'restore'; path: string; destination?: string; version?: string; restoreId?: string }
+export interface WorkspaceFileActionResult { path: string; restoreId?: string }
+export interface WorkspaceFileStat { version: string; directory: boolean }
 export interface SaveWorkspaceFileRequest { worktreeId: string; path: string; text: string; version: string }

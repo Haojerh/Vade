@@ -1,7 +1,8 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Columns2, GitCompareArrows, PanelTop } from 'lucide-react';
-import type { WorkspaceFile } from '../../../shared/contracts';
-import { workspaceFilesRequest } from '../../api/client';
+import { ArrowDown, ArrowUp, Columns2, GitCompareArrows, PanelTop, FileQuestion, FolderOpen, FileText, CodeXml } from 'lucide-react';
+import type { WorkspaceFile,SourceDiff } from '../../../shared/contracts';
+import { workspaceFilesRequest,sourceRequest,fetchCommitDiff } from '../../api/client';
+import { MessageMarkdown } from '../workflow/MessageMarkdown';
 import { Modal } from '../../components/ui/Modal';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
@@ -11,6 +12,7 @@ import { Skeleton } from '../../components/ui/Skeleton';
 import { FileTypeIcon } from '../../components/ui/FileTypeIcon';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { useEditorAutosave } from './editorPreferences';
+import { ImagePreview, fileSize } from './ImagePreview';
 
 const loadCode = () => import('./CodeEditor');
 const loadRich = () => import('./RichMarkdownEditor');
@@ -18,28 +20,32 @@ const CodeEditor = lazy(loadCode), RichMarkdownEditor = lazy(loadRich);
 const cache = new Map<string, WorkspaceFile>();
 function remember(key: string, file: WorkspaceFile) {
   cache.delete(key); cache.set(key, file);
-  let size = [...cache.values()].reduce((total, entry) => total + entry.text.length * 2 + (entry.original?.length ?? 0) * 2, 0);
-  while (cache.size > 12 || size > 12 * 1024 * 1024) { const first = cache.keys().next().value!; const value = cache.get(first)!; cache.delete(first); size -= value.text.length * 2 + (value.original?.length ?? 0) * 2; }
+  let size = [...cache.values()].reduce((total, entry) => total + entry.text.length * 2 + (entry.original?.length ?? 0) * 2 + (entry.preview?.dataUrl?.length ?? 0) * 2, 0);
+  while (cache.size > 12 || size > 12 * 1024 * 1024) { const first = cache.keys().next().value!; const value = cache.get(first)!; cache.delete(first); size -= value.text.length * 2 + (value.original?.length ?? 0) * 2 + (value.preview?.dataUrl?.length ?? 0) * 2; }
 }
 export function warmWorkspaceEditor() { void loadCode().catch(() => {}); void loadRich().catch(() => {}); }
 
-export function FileOverlay({ projectId, worktreeId, path, line, closing, onClose, onSaved }: {
-  projectId: string; worktreeId: string; path: string; line?: number; closing: boolean; onClose: () => void; onSaved: () => void;
+export function FileOverlay({ projectId, worktreeId, path, line, initialDiff = false, initialInline=false, emptyBaseline=false, sourceLayer, commit, closing, onClose, onSaved }: {
+  projectId: string; worktreeId: string; path: string; line?: number; initialDiff?: boolean; initialInline?:boolean; emptyBaseline?:boolean; sourceLayer?:'staged'|'working'; commit?:{sha:string;nodeId?:string}; closing: boolean; onClose: () => void; onSaved: () => void;
 }) {
-  const key = `${projectId}:${worktreeId}:${path}`, cached = cache.get(key);
+  const commitSha=commit?.sha,commitNodeId=commit?.nodeId;
+  const key = `${projectId}:${worktreeId}:${path}${commitSha?`:commit:${commitNodeId??'repository'}:${commitSha}`:''}`, cached = cache.get(key);
   const [file, setFile] = useState<WorkspaceFile | null>(cached ?? null), [text, setText] = useState(cached?.text ?? ''), [error, setError] = useState<string | null>(null);
   const markdown = /\.(md|markdown)$/i.test(path), richSafe = markdown && text.length <= 256 * 1024 && !/^---\r?\n|^\s*<[/!A-Za-z]/m.test(text);
   const [loading, setLoading] = useState(!cached), [refreshing, setRefreshing] = useState(false), [saving, setSaving] = useState(false), [diffLoading, setDiffLoading] = useState(false);
   const [diffStats, setDiffStats] = useState<{ added: number; removed: number } | null>(null);
-  const [view, setView] = useState<'code' | 'diff' | 'rich'>(markdown && !line ? 'rich' : 'code'), [inline, setInline] = useState(false), [navigation, setNavigation] = useState<{direction: 'next' | 'previous'; id: number}>();
+  const [stagedText,setStagedText]=useState<string|null>(null);
+  const [imageFailed, setImageFailed] = useState(false);
+  const [view, setView] = useState<'code' | 'diff' | 'rich'>(initialDiff ? 'diff' : markdown && !line ? 'rich' : 'code'), [inline, setInline] = useState(initialInline), [navigation, setNavigation] = useState<{direction: 'next' | 'previous'; id: number}>();
   const autosave = useEditorAutosave(), lastView = useRef<'code' | 'rich'>(markdown ? 'rich' : 'code');
   const confirm = useConfirmationState<'close' | 'reload'>(), alive = useRef(true), savingRef = useRef(false), latest = useRef(text), loaded = useRef(file); latest.current = text; loaded.current = file;
   const dirty = file !== null && text !== file.text;
+  useEffect(() => { if (file?.preview && view !== 'code') setView('code'); }, [file?.preview, view]);
   const load = useCallback(async (signal?: AbortSignal) => {
-    setRefreshing(true); setError(null);
+    setRefreshing(true); setError(null); setImageFailed(false);
     const before = loaded.current;
     try {
-      const next = await workspaceFilesRequest<WorkspaceFile>(projectId, 'read', { worktreeId, path }, signal);
+      const next:WorkspaceFile = commitSha?await fetchCommitDiff(projectId,commitSha,path,commitNodeId,signal).then(diff=>{if(diff.binary)throw new Error(diff.reason??'This committed file cannot be displayed.');return{path,text:diff.modified,version:commitSha,original:diff.original,git:true,gitError:null};}):await workspaceFilesRequest<WorkspaceFile>(projectId, 'read', { worktreeId, path }, signal);
       if (!signal?.aborted && alive.current) {
         remember(key, next);
         if (!before || latest.current === before.text) { setFile(next); setText(next.text); }
@@ -47,22 +53,22 @@ export function FileOverlay({ projectId, worktreeId, path, line, closing, onClos
       }
     } catch (reason) { if (!signal?.aborted && alive.current) setError(reason instanceof Error ? reason.message : 'Unable to read this file'); }
     finally { if (!signal?.aborted && alive.current) { setLoading(false); setRefreshing(false); } }
-  }, [projectId, worktreeId, path, key]);
+  }, [projectId, worktreeId, path, key,commitSha,commitNodeId]);
   useEffect(() => { alive.current = true; const abort = new AbortController(); void load(abort.signal); return () => { alive.current = false; abort.abort(); }; }, [load]);
   const save = useCallback(async () => {
     const current = loaded.current;
-    if (!current || savingRef.current || latest.current === current.text) return;
+    if (commitSha || !current || current.preview || savingRef.current || latest.current === current.text) return;
     savingRef.current = true; setSaving(true); setError(null); const submitted = latest.current;
     try {
       const next = await workspaceFilesRequest<WorkspaceFile>(projectId, 'save', { worktreeId, path, text: submitted, version: current.version });
       if (alive.current) { const saved = { ...next, original: current.original }; remember(key, saved); loaded.current = saved; setFile(saved); onSaved(); }
     } catch (reason) { if (alive.current) setError(reason instanceof Error ? reason.message : 'Unable to save this file'); }
     finally { savingRef.current = false; if (alive.current) setSaving(false); }
-  }, [projectId, worktreeId, path, key, onSaved]);
+  }, [projectId, worktreeId, path, key, onSaved,commitSha]);
   useEffect(() => { if (!autosave || !dirty || saving || error || confirm.present) return; const timer = setTimeout(() => void save(), 600); return () => clearTimeout(timer); }, [autosave, dirty, text, saving, error, save, confirm.present]);
   useEffect(() => { if (!dirty) return; const prevent = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; }; window.addEventListener('beforeunload', prevent); return () => window.removeEventListener('beforeunload', prevent); }, [dirty]);
   useEffect(() => {
-    if (dirty || loading || saving) return;
+    if (commitSha || dirty || loading || saving || file?.preview) return;
     const abort = new AbortController(); let running = false;
     const timer = setInterval(async () => {
       if (document.hidden || running) return; running = true;
@@ -73,17 +79,18 @@ export function FileOverlay({ projectId, worktreeId, path, line, closing, onClos
       finally { running = false; }
     }, 3000);
     return () => { abort.abort(); clearInterval(timer); };
-  }, [dirty, loading, saving, projectId, worktreeId, path, key]);
+  }, [dirty, loading, saving, file?.preview?.kind, projectId, worktreeId, path, key,commitSha]);
   useEffect(() => {
-    if (view !== 'diff') { setDiffLoading(false); return; }
+    if (view !== 'diff'||commitSha) { setDiffLoading(false); return; }
     const abort = new AbortController();
-    setDiffLoading(loaded.current?.original === null);
-    void workspaceFilesRequest<WorkspaceFile>(projectId, 'diff', { worktreeId, path }, abort.signal).then(next => {
-      if (!abort.signal.aborted) setFile(current => current && ({ ...current, original: next.original, gitError: next.gitError }));
+    setDiffLoading(Boolean(sourceLayer)||loaded.current?.original === null);
+    const baseline=sourceLayer?sourceRequest<SourceDiff>(projectId,'diff',{worktreeId,path,kind:sourceLayer},abort.signal).then(diff=>{if(diff.binary)throw new Error(diff.reason??'This diff cannot be displayed.');if(!abort.signal.aborted)setStagedText(sourceLayer==='staged'?diff.modified:null);return{original:diff.original,gitError:null};}):workspaceFilesRequest<WorkspaceFile>(projectId, 'diff', { worktreeId, path }, abort.signal);
+    void baseline.then(next => {
+      if (!abort.signal.aborted) setFile(current => current && ({ ...current, original: emptyBaseline&&!sourceLayer ? '' : next.original, gitError:emptyBaseline&&!sourceLayer?null:next.gitError }));
     }).catch(reason => { if (!abort.signal.aborted) setError(reason instanceof Error ? reason.message : 'Unable to read Git changes'); })
       .finally(() => { if (!abort.signal.aborted) setDiffLoading(false); });
     return () => abort.abort();
-  }, [view, file?.version, projectId, worktreeId, path]);
+  }, [view, file?.version, projectId, worktreeId, path,sourceLayer,emptyBaseline,commitSha]);
   const showDiff = () => {
     if (view === 'diff') { setView(lastView.current); return; }
     lastView.current = view; setView('diff');
@@ -98,8 +105,8 @@ export function FileOverlay({ projectId, worktreeId, path, line, closing, onClos
     <Modal isOpen isClosing={closing} busy={saving} onClose={() => void close()} className="workspace-file-dialog" aria-label={`Edit ${path}`} onKeyDown={event => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void save(); }
     }}>
-      <header className="workspace-editor-toolbar"><FileTypeIcon path={path} /><span className="workspace-editor-path" title={path}>{path}{!autosave && dirty ? ' •' : ''}</span><span className="workspace-save-state" role="status">{saving ? 'Saving…' : !autosave && dirty ? 'Unsaved' : ''}</span>
-        {markdown && <SegmentedControl label="Markdown view" choices={[{ value: 'rich', label: 'Rich' }, { value: 'code', label: 'Code' }]} value={view === 'diff' ? undefined : view} onChange={choice => setView(choice as 'code' | 'rich')} radius={5} />}
+      <header className="workspace-editor-toolbar"><FileTypeIcon path={path} /><span className="workspace-editor-path" title={path}>{path}{!autosave && dirty ? ' •' : ''}</span><span className="workspace-save-state" role="status">{commitSha?`Commit ${commitSha.slice(0,7)} · Read only`:saving ? 'Saving…' : !autosave && dirty ? 'Unsaved' : ''}</span>
+        {markdown && <SegmentedControl label="Markdown view" choices={[{ value: 'rich', label: 'Rich text', icon:<FileText size={15}/> }, { value: 'code', label: 'Source code', icon:<CodeXml size={15}/> }]} value={view === 'diff' ? undefined : view} onChange={choice => setView(choice as 'code' | 'rich')} radius={5} />}
         <button className="btn-icon" disabled={!file?.git} aria-pressed={view === 'diff'} aria-label="Show Git changes" title="Show Git changes" onClick={() => void showDiff()}><GitCompareArrows size={16} /></button>
         {view === 'diff' && <>{diffStats && <span className="workspace-diff-stats" aria-label={`${diffStats.added} added lines, ${diffStats.removed} removed lines`}><span className="workspace-diff-added">+{diffStats.added}</span><span className="workspace-diff-removed">−{diffStats.removed}</span></span>}<span className="workspace-toolbar-divider" /><button className="btn-icon" title={inline ? 'Switch to side-by-side diff' : 'Switch to inline diff'} aria-label={inline ? 'Switch to side-by-side diff' : 'Switch to inline diff'} onClick={() => setInline(!inline)}>{inline ? <Columns2 size={16} /> : <PanelTop size={16} />}</button>
           <button className="btn-icon" title="Previous change" aria-label="Previous change" onClick={() => setNavigation(current => ({ direction: 'previous', id: (current?.id ?? 0) + 1 }))}><ArrowUp size={16} /></button>
@@ -107,12 +114,12 @@ export function FileOverlay({ projectId, worktreeId, path, line, closing, onClos
         <span className="workspace-toolbar-divider" /><button className="btn-icon" title="Reload file" aria-label="Reload file" disabled={saving || refreshing} onClick={() => dirty ? confirm.open('reload') : void load()}><RefreshIcon busy={refreshing} size={16} /></button>
         <OverlayCloseButton aria-label="Close file editor" disabled={saving} onClick={() => void close()} />
       </header>
-      {error && <p className="workspace-error" role="alert">{error}</p>}
+      {error && file && <p className="workspace-error" role="alert">{error.replace(/^\[[A-Z_]+\]\s*/, '')}</p>}
       {file?.gitError && <p className="workspace-error">Diff unavailable: {file.gitError}</p>}
-      <div className="workspace-editor-body">{loading ? <Skeleton lines={14} className="workspace-editor-skeleton" label="Loading file" /> : file && <Suspense fallback={<Skeleton lines={14} className="workspace-editor-skeleton" label="Loading editor" />}>
-        {view === 'rich' && richSafe ? <RichMarkdownEditor value={text} onChange={setText} onSave={() => void save()} onBlur={blur} /> : <>
+      <div className="workspace-editor-body">{loading ? <Skeleton lines={14} className="workspace-editor-skeleton" label="Loading file" /> : file?.preview ? file.preview.kind === 'image' && !imageFailed ? <ImagePreview src={file.preview.dataUrl!} path={path} size={file.preview.size} mime={file.preview.mime} onError={()=>setImageFailed(true)}/> : <div className="workspace-preview-empty"><FileQuestion size={38} /><h3>Preview unavailable</h3><p>{file.preview.size>2*1024*1024 ? 'This file exceeds the 2 MiB preview limit.' : 'This binary format cannot be displayed or edited here.'}</p><span>{path.split('/').pop()} · {fileSize(file.preview.size)}</span><button className="btn btn-secondary" onClick={() => void workspaceFilesRequest(projectId,'open',{worktreeId,path,target:'system'}).catch(reason=>setError((reason as Error).message))}><FolderOpen size={15} />Reveal in File Explorer</button></div> : !file && error ? <div className="workspace-preview-empty"><FileQuestion size={38} /><h3>Unable to open file</h3><p>{error.replace(/^\[[A-Z_]+\]\s*/, '')}</p><button className="btn btn-secondary" onClick={() => void load()}><RefreshIcon size={14} busy={refreshing} />Try again</button></div> : file && <Suspense fallback={<Skeleton lines={14} className="workspace-editor-skeleton" label="Loading editor" />}>
+        {view === 'rich' && richSafe ? commitSha?<div className="workspace-rich-document message-markdown"><MessageMarkdown text={text}/></div>:<RichMarkdownEditor value={text} onChange={setText} onSave={() => void save()} onBlur={blur} /> : <>
           {view === 'rich' && !richSafe && <p className="workspace-editor-note">This document uses the source editor to preserve its size or embedded syntax.</p>}
-          <CodeEditor path={path} value={text} original={file.original} diff={view === 'diff' && file.original !== null} inline={inline} navigation={navigation} line={line} onChange={setText} onSave={() => void save()} onBlur={blur} onDiffStats={setDiffStats} />
+          <CodeEditor path={path} value={view==='diff'&&sourceLayer==='staged'?(stagedText??text):text} original={file.original} diff={view === 'diff' && file.original !== null} inline={inline} navigation={navigation} line={line} readOnly={Boolean(commitSha)||view==='diff'&&sourceLayer==='staged'} onChange={value=>{if(!commitSha&&(view!=='diff'||sourceLayer!=='staged'))setText(value);}} onSave={() => void save()} onBlur={blur} onDiffStats={setDiffStats} />
         </>}
       </Suspense>}{view === 'diff' && diffLoading && <div className="workspace-baseline-loading"><Skeleton lines={14} className="workspace-editor-skeleton" label="Loading Git changes" /></div>}</div>
     </Modal>

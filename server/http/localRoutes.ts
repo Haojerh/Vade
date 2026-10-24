@@ -34,14 +34,41 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     return value;
   };
   try {
-    const workspaceFiles = pathname.match(/^\/api\/projects\/([^/]+)\/files\/(roots|list|read|diff|search|save|open)$/);
+    const reviewPage=pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/source-control\/review$/);
+    if(reviewPage){requireMethod('GET');queryKeys('worktreeId','base');const location=await runtime.sourceControl.reviewUrl(reviewPage[1],text(query.get('worktreeId'),'worktree ID'),query.get('base')??undefined);res.writeHead(302,{Location:location,'Cache-Control':'no-store'});res.end();return;}
+    const commitFiles=pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/commit-files$/);
+    if(commitFiles){requireMethod('GET');queryKeys('sha','nodeId');sendJson(200,await runtime.sourceControl.commitFiles(commitFiles[1],text(query.get('sha'),'commit SHA',64),query.get('nodeId')??undefined));return;}
+    const commitDiff=pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/commit-diff$/);
+    if(commitDiff){requireMethod('GET');queryKeys('sha','nodeId','path');sendJson(200,await runtime.sourceControl.commitDiff(commitDiff[1],text(query.get('sha'),'commit SHA',64),query.get('path')??'',query.get('nodeId')??undefined));return;}
+    const scm=pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/source-control\/(status|diff|compare|action)$/);
+    if(scm){const [,projectId,action]=scm;
+      if(action==='action'){requireMethod('POST');queryKeys();const request=await body<import('../../shared/contracts.js').SourceActionRequest>(['worktreeId','action','version','paths','message','base','title','body'],50000);if(typeof request.worktreeId!=='string')throw new CliError('INVALID_ARGUMENT','Select a worktree');sendJson(200,await runtime.sourceControl.action(projectId,request));return;}
+      requireMethod('GET');queryKeys('worktreeId',...(action==='diff'?['path','kind','base']:action==='compare'?['base']:[]));const worktreeId=text(query.get('worktreeId'),'worktree ID');
+      if(action==='status')sendJson(200,await runtime.sourceControl.status(projectId,worktreeId));
+      else if(action==='compare')sendJson(200,await runtime.sourceControl.compare(projectId,worktreeId,query.get('base')??undefined));
+      else{const kind=query.get('kind');if(kind!=='staged'&&kind!=='working'&&kind!=='branch')throw new CliError('INVALID_ARGUMENT','Choose a diff kind');sendJson(200,await runtime.sourceControl.diff(projectId,worktreeId,query.get('path')??'',kind,query.get('base')??undefined));}return;
+    }
+    const workspaceFiles = pathname.match(/^\/api\/projects\/([^/]+)\/files\/(roots|list|read|diff|search|save|open|stat|action|browser)$/);
     if (workspaceFiles) {
       const projectId = workspaceFiles[1], action = workspaceFiles[2];
-      if (action === 'roots') {
+      if (action === 'action') {
+        requireMethod('POST'); queryKeys(); const request=await body<import('../../shared/contracts.js').WorkspaceFileActionRequest>(['worktreeId','action','path','destination','version','restoreId']);
+        sendJson(200,await runtime.fileActions.change(projectId,request));
+      } else if (action === 'stat') {
+        requireMethod('GET'); queryKeys('worktreeId','path'); sendJson(200,await runtime.fileActions.stat(projectId,query.get('worktreeId')??'',query.get('path')??''));
+      } else if (action === 'browser') {
+        requireMethod('GET'); queryKeys('worktreeId','path');
+        const file=await runtime.files.read(projectId,query.get('worktreeId')??'',query.get('path')??'');
+        if(file.preview && !file.preview.dataUrl) throw new CliError('INVALID_ARGUMENT','This file does not have a browser preview');
+        res.setHeader('Content-Security-Policy',"sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:;");
+        res.setHeader('X-Content-Type-Options','nosniff'); res.setHeader('Cache-Control','no-store');
+        res.setHeader('Content-Type',file.preview?.mime??(/\.html?$/i.test(file.path)?'text/html; charset=utf-8':'text/plain; charset=utf-8'));
+        res.statusCode=200; res.end(method==='HEAD'?undefined:file.preview?.dataUrl?Buffer.from(file.preview.dataUrl.split(',')[1],'base64'):file.text);
+      } else if (action === 'roots') {
         requireMethod('GET'); queryKeys(); sendJson(200, await runtime.files.discoverRoots(projectId));
       } else if (action === 'open') {
-        requireMethod('POST'); queryKeys(); const request = await body<{worktreeId: string; target: string}>(['worktreeId', 'target']);
-        sendJson(200, await runtime.files.open(projectId, request.worktreeId, request.target));
+        requireMethod('POST'); queryKeys(); const request = await body<{worktreeId: string; target: string; path?: string}>(['worktreeId', 'target','path']);
+        sendJson(200, await runtime.files.open(projectId, request.worktreeId, request.target, request.path));
       } else if (action === 'save') {
         requireMethod('POST'); queryKeys();
         const request = await body<import('../../shared/contracts.js').SaveWorkspaceFileRequest>(['worktreeId', 'path', 'text', 'version'], 13 * 1024 * 1024);
@@ -94,10 +121,13 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       sendJson(200, await runtime.organization.models.list(provider as import('../../shared/contracts.js').WorkflowProvider)); return;
     }
     if (pathname === '/api/workflow/runs') {
-      requireMethod('GET'); queryKeys('projectId'); const projectId = query.get('projectId') ?? undefined;
+      requireMethod('GET'); queryKeys('projectId','summary'); const projectId = query.get('projectId') ?? undefined;
       if (projectId) runtime.store.project(projectId);
-      sendJson(200, runtime.organization.runs(projectId)); return;
+      if(query.has('summary')&&query.get('summary')!=='1')throw new CliError('INVALID_ARGUMENT','Invalid workflow summary option');
+      sendJson(200, query.get('summary')==='1'?runtime.organization.summaries(projectId):runtime.organization.runs(projectId)); return;
     }
+    const workflowDetails=pathname.match(/^\/api\/workflow\/runs\/([0-9a-f-]{36})$/i);
+    if(workflowDetails){requireMethod('GET');queryKeys();sendJson(200,runtime.organization.details(workflowDetails[1]));return;}
     const workflowCancel = pathname.match(/^\/api\/workflow\/runs\/([0-9a-f-]{36})\/cancel$/i);
     if (workflowCancel) { requireMethod('POST'); queryKeys(); await body<{}>([]); await runtime.organization.cancel(workflowCancel[1]); sendJson(200, { ok: true }); return; }
     if (pathname === '/api/workflow/control') {
@@ -231,7 +261,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       } else { requireMethod('GET'); sendJson(200, section({ projects: runtime.store.projects() })); }
       return;
     }
-    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|terminal|terminal-input|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|events))?)$/);
+    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|interrupt|terminal|terminal-input|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|events))?)$/);
     if (!match) { sendError(404, 'INVALID_ARGUMENT', 'Unknown standalone ADE endpoint'); return; }
     const [, projectId, route, nodeId, action] = match;
     const project = runtime.store.project(projectId);
@@ -360,6 +390,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       if (tree.path !== record.cwd) throw new CliError('INVALID_ARGUMENT', 'The original session folder is no longer available');
       await runtime.sessions.resume(projectId, nodeId);
     }
+    else if (action === 'interrupt') { queryKeys(); await body<import('../../shared/contracts.js').InterruptAgentRequest>([]); await runtime.sessions.interrupt(projectId,nodeId); }
     else if (action === 'terminal-input') { const request = await body<{ data: string }>(['data'], 65536); await runtime.sessions.input(projectId, nodeId, request.data); }
     else if (action === 'terminal-resize') { const request = await body<{ cols: number; rows: number }>(['cols', 'rows']); await runtime.sessions.resize(projectId, nodeId, request.cols, request.rows); }
     else if (action === 'create-agent') {

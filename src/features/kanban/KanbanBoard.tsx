@@ -76,14 +76,16 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
             draggable={card.status === 'todo' || card.status === 'failed'}
             onDragStart={event => { draggingCard.current = true; event.dataTransfer.setData(KANBAN_DRAG_TYPE, card.id); event.dataTransfer.effectAllowed = 'copy'; requestAnimationFrame(() => onDragStateChange?.(true)); }}
             onDragEnd={() => onDragStateChange?.(false)}>
-            <div className="kanban-card-heading"><strong>{card.title}</strong><button className="btn-close" aria-label={`Remove task ${card.title}`} onClick={() => { setDeleteError(null); remove.open(card); }}><Icon name="close" size={13} /></button></div>
+            <div className="kanban-card-heading"><strong>{card.title}</strong><button type="button" className="btn-close kanban-card-remove" title="Remove task" aria-label={`Remove task ${card.title}`} onClick={() => { setDeleteError(null); remove.open(card); }}><Icon name="close" size={13} /></button></div>
             <p className="kanban-card-prompt" title={card.prompt}>{card.prompt}</p>
+            {(card.assignment || card.files.length>0) && <div className="kanban-card-footer">
+            {card.files.length>0&&<span className="kanban-card-attachments" title={`${card.files.length} attached ${card.files.length===1?'file':'files'}`}><Icon name="paperclip" size={12}/><span>{card.files.length}</span></span>}
             {card.assignment && <div className="kanban-assignment">
-              <span className="kanban-assignment-label">Assigned agent</span>
               <span className="kanban-assignment-agent" title={card.assignment.label}><Icon name="terminal" size={13} /><span>{card.assignment.label}</span></span>
               {card.status === 'pending' && <span className="kanban-execution-label">{card.assignment.sawWorking ? 'Executing' : 'Awaiting execution'}</span>}
             </div>}
-            {card.error && <p className="text-xs text-danger">{card.error}</p>}
+            </div>}
+            {card.error && <p className="kanban-card-error"><Icon name="alert-circle" size={12}/><span>{card.error}</span></p>}
           </article>)}
           {!cards.some(card => card.status === column.status) && <p className="kanban-empty text-xs text-muted">{column.status === 'todo' ? 'Add your next task' : 'No tasks yet'}</p>}
         </div>

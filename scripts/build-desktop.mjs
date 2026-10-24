@@ -1,4 +1,5 @@
 import { build } from 'esbuild';
+import './build-brand-icons.mjs';
 import { cp, mkdir } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 

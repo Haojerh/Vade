@@ -18,9 +18,10 @@ for (const defaults of [monaco.typescript.typescriptDefaults, monaco.typescript.
   defaults.setModeConfiguration({ ...defaults.modeConfiguration, diagnostics: false });
 }
 
-export default function CodeEditor({ path, value, original, diff, inline = false, navigation, line, onChange, onSave, onBlur, onDiffStats }: {
+export default function CodeEditor({ path, value, original, diff, inline = false, navigation, line, onChange, onSave, onBlur, onDiffStats, readOnly=false, wrap=true, ignoreWhitespace=false, autoFocus=true }: {
   path: string; value: string; original: string | null; diff: boolean; line?: number;
   inline?: boolean; navigation?: { direction: 'next' | 'previous'; id: number };
+  readOnly?:boolean; wrap?:boolean; ignoreWhitespace?:boolean; autoFocus?:boolean;
   onChange: (value: string) => void; onSave: () => void; onBlur?: () => void;
   onDiffStats?: (stats: { added: number; removed: number } | null) => void;
 }) {
@@ -34,8 +35,8 @@ export default function CodeEditor({ path, value, original, diff, inline = false
     const language = monaco.languages.getLanguages().find(lang => lang.filenames?.includes(path.split('/').pop()!) || lang.extensions?.includes(`.${extension}`))?.id ?? 'plaintext';
     const modified = model.current ?? monaco.editor.createModel(current.current, language); model.current = modified;
     const base = diff ? monaco.editor.createModel(original ?? '', language) : null;
-    const options: monaco.editor.IStandaloneEditorConstructionOptions = { theme: document.documentElement.dataset.theme === 'light' ? 'vs' : 'vs-dark', automaticLayout: true, minimap: { enabled: false }, fontSize: 13, lineHeight: 21, padding: { top: 12 }, scrollBeyondLastLine: false, wordWrap: 'on', fixedOverflowWidgets: false, renderValidationDecorations: 'off' };
-    const view = diff ? monaco.editor.createDiffEditor(host.current, { ...options, originalEditable: false, renderSideBySide: !inline, enableSplitViewResizing: true }) : monaco.editor.create(host.current, { ...options, model: modified });
+    const options: monaco.editor.IStandaloneEditorConstructionOptions = { readOnly,theme: document.documentElement.dataset.theme === 'light' ? 'vs' : 'vs-dark', automaticLayout: true, minimap: { enabled: false }, fontSize: 13, lineHeight: 21, padding: { top: 12 }, scrollBeyondLastLine: false, wordWrap: 'on', fixedOverflowWidgets: false, renderValidationDecorations: 'off' };
+    const view = diff ? monaco.editor.createDiffEditor(host.current, { ...options, originalEditable: false, renderSideBySide: !inline, compactMode:inline, useInlineViewWhenSpaceIsLimited:false, enableSplitViewResizing: true }) : monaco.editor.create(host.current, { ...options, model: modified });
     if (diff) { diffEditor.current = view as monaco.editor.IStandaloneDiffEditor; diffEditor.current.setModel({ original: base!, modified }); }
     callbacks.current.onDiffStats?.(null);
     const stats = diffEditor.current?.onDidUpdateDiff(() => {
@@ -54,11 +55,12 @@ export default function CodeEditor({ path, value, original, diff, inline = false
     const blur = editor.onDidBlurEditorWidget(() => callbacks.current.onBlur?.());
     if (position.current) editor.restoreViewState(position.current);
     else if (line) { editor.setPosition({ lineNumber: line, column: 1 }); editor.revealLineInCenter(line); }
-    editor.focus();
+    if(autoFocus)editor.focus();
     return () => { position.current = editor.saveViewState(); stats?.dispose(); subscription.dispose(); blur.dispose(); save.dispose(); view.dispose(); base?.dispose(); diffEditor.current = null; };
   }, [path, diff, original, line]);
   useEffect(() => () => { model.current?.dispose(); model.current = null; }, []);
-  useEffect(() => { diffEditor.current?.updateOptions({ renderSideBySide: !inline }); }, [inline]);
+  useEffect(() => { diffEditor.current?.updateOptions({ renderSideBySide: !inline,compactMode:inline,useInlineViewWhenSpaceIsLimited:false }); }, [inline]);
+  useEffect(()=>{const editor=diffEditor.current;if(editor){editor.updateOptions({readOnly,wordWrap:wrap?'on':'off',ignoreTrimWhitespace:ignoreWhitespace});}},[readOnly,wrap,ignoreWhitespace,diff,original]);
   useEffect(() => { if (navigation) diffEditor.current?.goToDiff(navigation.direction); }, [navigation]);
   useEffect(() => { if (model.current && model.current.getValue(monaco.editor.EndOfLinePreference.TextDefined, true) !== value) model.current.setValue(value); }, [value]);
   return <div className="workspace-code-editor" ref={host} />;

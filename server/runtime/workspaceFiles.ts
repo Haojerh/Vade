@@ -31,6 +31,15 @@ export class WorkspaceFiles {
   private statuses = new Map<string, { at: number; value: Promise<{ statuses: Map<string, string>; error: string | null }> }>();
   private nameIndexes = new Map<string, { at: number; value: Promise<import('../integrations/cli.js').CommandResult> }>();
   constructor(private store: AdeStore, private git: AdeGit) {}
+  invalidate() { this.statuses.clear(); this.nameIndexes.clear(); }
+  /** Backend-only Git paths, under a freshly discovered checkout. Missing
+   * descendants are allowed for tracked deletions; existing ancestors are checked. */
+  async validateGitPath(root:string,relative:string,projectId:string) {
+    this.relative(relative);
+    if(this.protectedPath(root,path.join(root,relative),projectId))invalid('Private Vade settings are excluded from source control');
+    let target=root;
+    for(const part of relative.split('/')) {target=path.join(target,part);try{if((await fs.lstat(target)).isSymbolicLink())invalid('Symbolic links are excluded from source control');}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return;throw error;}}
+  }
   async discoverRoots(projectId: string): Promise<import('../../shared/contracts.js').WorkspaceRoot[]> {
     const project = this.store.project(projectId);
     return (await this.git.worktrees(project)).map(tree => ({ id: tree.id, path: tree.path, branch: tree.branch, label: tree.main ? project.name : path.basename(tree.path) }));
@@ -76,6 +85,17 @@ export class WorkspaceFiles {
       return bytes.subarray(0, length);
     } finally { await handle.close(); }
   }
+  async ownedPath(projectId: string, worktreeId: string, relative: string, missing = false) {
+    this.relative(relative, true); const scope = await this.root(projectId, worktreeId, true);
+    if (!missing) return { ...scope, target: await this.resolve(scope.root, relative, projectId) };
+    this.relative(relative);
+    const parent = path.posix.dirname(relative), directory = await this.resolve(scope.root, parent === '.' ? '' : parent, projectId);
+    const name = path.posix.basename(relative);
+    if (/[<>"|?*]/.test(name) || /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(name)) invalid('Choose a valid file or folder name');
+    const target = path.join(directory, name);
+    if (this.protectedPath(scope.root, target, projectId)) invalid('Private Vade settings cannot be modified');
+    return { ...scope, target };
+  }
   private status(root: string, enabled: boolean) {
     if (!enabled) return Promise.resolve({ statuses: new Map<string, string>(), error: null });
     const cached = this.statuses.get(root); if (cached && Date.now() - cached.at < 2500) return cached.value;
@@ -115,7 +135,15 @@ export class WorkspaceFiles {
   }
   async read(projectId: string, worktreeId: string, relative: string, baseline = false): Promise<WorkspaceFile> {
     this.relative(relative); const scope = await this.root(projectId, worktreeId), target = await this.resolve(scope.root, relative, projectId);
-    const bytes = await this.bytes(target), text = decode(bytes); let original: string | null = null, gitError: string | null = null;
+    const stat = await fs.stat(target);
+    if (!stat.isFile()) invalid('Select a regular file');
+    if (stat.size > MAX_FILE) return { path: relative, text: '', version: '', original: null, gitError: null, preview: { kind: 'binary', size: stat.size, mime: null } };
+    const bytes = await this.bytes(target); let text: string;
+    try { text = decode(bytes); } catch {
+      const mime = bytes.subarray(0,8).equals(Buffer.from([137,80,78,71,13,10,26,10])) ? 'image/png' : bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255 ? 'image/jpeg' : /^GIF8[79]a/.test(bytes.subarray(0,6).toString()) ? 'image/gif' : bytes.subarray(0,4).toString() === 'RIFF' && bytes.subarray(8,12).toString() === 'WEBP' ? 'image/webp' : bytes.subarray(0,2).toString() === 'BM' ? 'image/bmp' : bytes.subarray(0,4).equals(Buffer.from([0,0,1,0])) ? 'image/x-icon' : null;
+      return { path: relative, text: '', version: hash(bytes), original: null, gitError: null, preview: { kind: mime ? 'image' : 'binary', size: stat.size, mime, ...(mime ? { dataUrl: `data:${mime};base64,${bytes.toString('base64')}` } : {}) } };
+    }
+    let original: string | null = null, gitError: string | null = null;
     if (scope.git && baseline) {
       try {
         // Only a bounded, validated, worktree-relative object selector reaches Git.
@@ -136,7 +164,8 @@ export class WorkspaceFiles {
     if (this.saving.has(target)) invalid('A save is already in progress for this file'); this.saving.add(target);
     const temp = path.join(path.dirname(target), `.vade-save-${crypto.randomUUID()}`);
     try {
-      if (hash(await this.bytes(target)) !== version) invalid('File changed on disk. Reload it before saving; your edits have been kept.');
+      const current = await this.bytes(target); decode(current);
+      if (hash(current) !== version) invalid('File changed on disk. Reload it before saving; your edits have been kept.');
       const mode = (await fs.stat(target)).mode;
       await fs.writeFile(temp, text, { flag: 'wx', mode });
       if (await this.resolve(scope.root, relative, projectId) !== target || hash(await this.bytes(target)) !== version) invalid('File changed on disk. Reload it before saving; your edits have been kept.');
@@ -146,19 +175,20 @@ export class WorkspaceFiles {
       return { path: relative, text: written.toString('utf8'), version: hash(written), original: null, gitError: null, git: scope.git };
     } finally { this.saving.delete(target); await fs.unlink(temp).catch(() => {}); }
   }
-  async open(projectId: string, worktreeId: string, target: unknown) {
+  async open(projectId: string, worktreeId: string, target: unknown, relative = '') {
     if (target !== 'system' && target !== 'vscode') invalid('Choose File Explorer or VS Code');
-    const scope = await this.root(projectId, worktreeId, true); await this.resolve(scope.root, '', projectId);
+    const scope = await this.root(projectId, worktreeId, true); this.relative(relative,true);
+    const selected = await this.resolve(scope.root, relative, projectId), stat = await fs.stat(selected);
     let executable: string | null, args: string[];
-    if (target === 'system') { executable = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe') : executableOnPath(process.platform === 'darwin' ? 'open' : 'xdg-open'); args = [scope.root]; }
-    else if (process.platform === 'darwin') { executable = executableOnPath('open'); args = ['-a', 'Visual Studio Code', scope.root]; }
+    if (target === 'system') { executable = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'explorer.exe') : executableOnPath(process.platform === 'darwin' ? 'open' : 'xdg-open'); args = process.platform==='win32' && !stat.isDirectory() ? ['/select,',selected] : process.platform==='darwin' && !stat.isDirectory() ? ['-R',selected] : [stat.isDirectory()?selected:path.dirname(selected)]; }
+    else if (process.platform === 'darwin') { executable = executableOnPath('open'); args = ['-a', 'Visual Studio Code', selected]; }
     else {
       executable = executableOnPath('code');
       if (process.platform === 'win32') executable = [process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Programs', 'Microsoft VS Code', 'Code.exe'), process.env.ProgramFiles && path.join(process.env.ProgramFiles, 'Microsoft VS Code', 'Code.exe'), ...(process.env.PATH ?? '').split(path.delimiter).map(dir => path.resolve(dir.replace(/^"|"$/g, ''), '..', 'Code.exe'))].find((file): file is string => Boolean(file && existsSync(file))) ?? null;
-      args = ['--', scope.root];
+      args = ['--', selected];
     }
     if (!executable) throw new CliError('CLI_MISSING', target === 'vscode' ? 'VS Code was not detected on this computer' : 'No system file manager was detected');
-    await new Promise<void>((resolve, reject) => { const child = spawn(executable!, args, { shell: false, detached: true, stdio: 'ignore', windowsHide: true }); child.once('error', () => reject(new CliError('CLI_FAILED', 'Unable to open the selected application'))); child.once('spawn', () => { child.unref(); resolve(); }); });
+    await new Promise<void>((resolve, reject) => { const child = spawn(executable!, args, { shell: false, detached: true, stdio: 'ignore', windowsHide: false }); child.once('error', () => reject(new CliError('CLI_FAILED', 'Unable to open the selected application'))); child.once('spawn', () => { child.unref(); resolve(); }); });
     return { ok: true };
   }
   async search(projectId: string, worktreeId: string, query: string, mode: string, options: WorkspaceSearchOptions = {}): Promise<WorkspaceSearch> {

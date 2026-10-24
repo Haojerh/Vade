@@ -989,3 +989,9 @@
 .graph-toolbar-actions > .btn { flex-shrink: 0; white-space: nowrap; }
 .graph-legend { flex-wrap: wrap; gap: 10px; }
 .legend-item { white-space: nowrap; }
+.agent-work-time { display:flex; align-items:center; gap:7px; margin:10px 0; color:var(--text-secondary); font-size:12px; }
+.agent-work-time time { font-variant-numeric:tabular-nums; }
+.provider-working-line { display:flex; align-items:center; gap:12px; }
+.conversation-section>.provider-activity { margin-top:4px; }
+.conversation-section .conversation-history-content { padding-bottom:4px; }
+.agent-stop-symbol { display:inline-block; width:11px; height:11px; border-radius:2px; background:currentColor; }

@@ -914,6 +914,22 @@
 .commit-history-rail path { fill: none; stroke-width: 1.5; }
 .commit-history-dot { position: absolute; top: 50%; left: 0; transform: translateY(-50%); }
 .commit-history-content { min-width: 0; flex: 1; }
+.commit-history-entry { position:relative; }
+.commit-history-entry .commit-history-chevron { position:absolute; top:12px; background:var(--surface-1); border-radius:2px; }
+.commit-history-entry .commit-history-details { padding:2px 6px 12px 4px; gap:8px; }
+.commit-history-graph .commit-files { display:flex; flex-direction:column; gap:1px; padding:0; margin:0; min-width:0; }
+.commit-history-graph .commit-files>li { display:flex; align-items:center; gap:6px; min-height:26px; min-width:0; padding:0; }
+.commit-files>li>svg { flex-shrink:0; }
+.commit-files>li>span { color:var(--text-main); font-size:11px; font-weight:500; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.commit-files small { color:var(--text-muted); font-size:10px; min-width:0; flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.commit-files b { margin-left:auto; flex-shrink:0; font-size:10px; font-weight:500; color:#e2c08d; }
+.commit-files b[data-status=A] { color:#73c991; }.commit-files b[data-status=D] { color:var(--state-failed-text); }
+[data-theme=light] .commit-files b { color:#895503; }[data-theme=light] .commit-files b[data-status=A] { color:#587c0c; }
+.commit-files-error { display:flex; flex-direction:column; align-items:flex-start; gap:6px; color:var(--state-failed-text); }
+.commit-files>li>button { display:flex; align-items:center; gap:6px; min-width:0; width:100%; border:0; border-radius:4px; padding:4px 2px; background:transparent; color:inherit; font:inherit; cursor:pointer; text-align:left; }
+.commit-files>li>button:hover,.commit-files>li>button:focus-visible { background:var(--surface-hover); color:var(--text-main); }
+.commit-files>li>button>svg { flex-shrink:0; }
+.commit-files>li>button>span { color:var(--text-main); font-size:11px; font-weight:500; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
 .commit-history-row { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 8px; border: 0; background: transparent; color: var(--text-main); text-align: left; cursor: pointer; font-size: 12px; padding: 0 4px; }
 .commit-history-row:hover { background: var(--surface-2); }
 .commit-history-subject { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 35px; }

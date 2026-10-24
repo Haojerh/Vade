@@ -50,10 +50,10 @@ export function formatGitHubDateTime(iso: string | null | undefined): string {
   }
 }
 
-export function renderGitHubSectionMeta(section: Section<unknown> | undefined, label: string): React.ReactNode {
+export function renderGitHubSectionMeta(section: Section<unknown> | undefined, label: string,showEmpty=true): React.ReactNode {
   if (!section) return null;
   const { meta } = section;
-  if (!meta.issue && !meta.stale && !meta.partial && meta.availability === 'ready') {
+  if (!meta.issue && !meta.stale && !meta.partial && (meta.availability === 'ready'||!showEmpty&&meta.availability==='empty')) {
     return null;
   }
 
@@ -69,7 +69,7 @@ export function renderGitHubSectionMeta(section: Section<unknown> | undefined, l
           Data is stale. Last observed: {formatGitHubDateTime(meta.observedAt)}
         </div>
       )}
-      {meta.availability === 'empty' && !meta.issue && (
+      {showEmpty && meta.availability === 'empty' && !meta.issue && (
         <div className="meta-alert-item alert-info">
           Repository reported empty {label.toLowerCase()}.
         </div>
@@ -130,8 +130,8 @@ export const CommitsTabPane: React.FC<CommitsTabPaneProps> = ({
       aria-labelledby={tabId}
       className="tab-pane"
     >
-      {commitGraphEnabled && projectId ? (
-        <CommitHistoryGraph key={graph.key} observation={graph} />
+      {projectId ? (
+        <CommitHistoryGraph key={graph.key} observation={graph} showGraph={commitGraphEnabled} />
       ) : (
         <>
           {renderGitHubSectionMeta(data?.commits, 'Commits')}
@@ -255,12 +255,13 @@ export const PullRequestsTabPane: React.FC<PullRequestsTabPaneProps> = ({
         </button>
       </div>
 
-      {renderGitHubSectionMeta(data?.pullRequests, 'Pull Requests')}
+      {renderGitHubSectionMeta(data?.pullRequests, 'Pull Requests',false)}
 
       {filteredPrs.length === 0 ? (
+        data?.pullRequests?.meta.issue?null:
         <div className="empty-hint">
           {prs.length === 0
-            ? 'No pull requests found for this repository and branch filter.'
+            ? 'No pull requests found.'
             : `No ${prFilter} pull requests found.`}
         </div>
       ) : (
@@ -412,12 +413,13 @@ export const IssuesTabPane: React.FC<IssuesTabPaneProps> = ({
         </button>
       </div>
 
-      {renderGitHubSectionMeta(data?.issues, 'Issues')}
+      {renderGitHubSectionMeta(data?.issues, 'Issues',false)}
 
       {filteredIssues.length === 0 ? (
+        data?.issues?.meta.issue?null:
         <div className="empty-hint">
           {issues.length === 0
-            ? 'No repository issues found.'
+            ? 'No issues found.'
             : `No ${issueFilter} issues found.`}
         </div>
       ) : (

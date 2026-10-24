@@ -84,17 +84,6 @@
 .organization-inspector .organization-delete:hover { color: var(--state-failed-text); background: var(--state-failed-bg); }
 .organization-provider-field { display: grid; gap: 7px; margin-bottom: 16px; }
 .organization-connections { margin-top: 20px; padding: 20px; background: var(--surface-1); border: 1px solid var(--border-main); border-radius: 12px; }
-.organization-runs { margin-top: 30px; }
-.organization-runs details { border-bottom: 1px solid var(--border-main); padding: 14px 0; }
-.organization-runs summary { display: flex; justify-content: space-between; gap: 16px; cursor: pointer; }
-.organization-runs summary > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.organization-runs summary > span:last-child { color: var(--text-secondary); }
-.organization-run-details { padding-top: 16px; }
-.organization-run-details > p { color: var(--text-secondary); }
-.organization-run-details .organization-error { color: var(--state-failed-text); }
-.organization-run-step { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border-subtle); }
-.organization-run-step > span { margin-left: auto; color: var(--text-secondary); }
-.organization-run-step p { flex-basis: 100%; white-space: pre-wrap; overflow-wrap: anywhere; margin: 0 0 6px; }
 .organization-actions { margin-top: 24px; justify-content: flex-start; flex-wrap: wrap; }
 .organization-setup { display: grid; gap: 20px; }
 .organization-component { padding: 26px; border: 1px solid var(--border-main); border-radius: 16px; background: var(--surface-1); min-width: 0; }

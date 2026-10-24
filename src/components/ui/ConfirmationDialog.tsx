@@ -12,6 +12,7 @@ export interface ConfirmationDialogProps {
   cancelLabel?: string;
   confirmVariant?: 'danger' | 'primary';
   isConfirming?: boolean;
+  confirmDisabled?: boolean;
   error?: string | null;
   onConfirm: () => void | Promise<void>;
   onClose: () => void;
@@ -26,6 +27,7 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
   cancelLabel = 'Cancel',
   confirmVariant = 'danger',
   isConfirming = false,
+  confirmDisabled = false,
   error = null,
   onConfirm,
   onClose,
@@ -43,7 +45,7 @@ export const ConfirmationDialog: React.FC<ConfirmationDialogProps> = ({
         {description}
       </div>
       <DialogError error={error} style={{ marginTop: 12 }} />
-      <DialogActions onCancel={onClose} onConfirm={onConfirm} busy={isConfirming} confirmLabel={confirmLabel} cancelLabel={cancelLabel} variant={confirmVariant} autoFocusCancel />
+      <DialogActions onCancel={onClose} onConfirm={onConfirm} busy={isConfirming} disabled={confirmDisabled} confirmLabel={confirmLabel} cancelLabel={cancelLabel} variant={confirmVariant} autoFocusCancel />
     </Modal>
   );
 };

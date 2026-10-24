@@ -20,6 +20,7 @@ import { OpenCodeChatControls } from './openCodeChatControls.js';
 import { CodeBuddyChatControls } from './codeBuddyChatControls.js';
 import { codeBuddyCommandOutput } from './conversation.js';
 import { AntigravityChatControls } from './antigravityChatControls.js';
+import { AgentWorkClock } from './agentWorkClock.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 
 const PROVIDERS: { id: AdeProvider; name: string; command: string; package?: string; entry?: string }[] = [
@@ -155,6 +156,7 @@ export class AdeSessions {
   private listeners = new Map<string, Set<() => void>>();
   private statusListeners = new Map<string, Set<() => void>>();
   private resultTurns = new Map<string, { state: string; turn: string; token?: string; attention?: AgentStatus['attention'] }>();
+  private workClock = new AgentWorkClock();
   private chatControls = new ProviderChatControls();
   private openCodeControls = new OpenCodeChatControls();
   private codeBuddyControls = new CodeBuddyChatControls();
@@ -270,7 +272,8 @@ export class AdeSessions {
   }
 
   private observeResult(record: SessionRecord, status: Section<AgentStatus>): Section<AgentStatus> {
-    if (record.provider === 'terminal' || status.meta.availability !== 'ready' || !status.data) return status;
+    if (record.provider === 'terminal') return status;
+    if (status.meta.availability !== 'ready' || !status.data) { const workTime=this.workClock.observe(record,status); return status.data&&workTime?{...status,data:{...status.data,workTime}}:status; }
     if (this.live.get(record.id)?.resumeInitializing && ['working', 'completed'].includes(status.data.state)) return { ...status, data: { state: 'idle', source: status.data.source, event: 'resume-initialization' } };
     if (this.live.get(record.id)?.resumeTurnObserved === false && status.data.state === 'completed') return { ...status, data: { state: 'idle', source: status.data.source, event: 'resume-ready' } };
     if (record.provider === 'antigravity' && status.data.state === 'working' && status.data.event === 'PreToolUse' && status.data.toolCall?.summary) {
@@ -283,6 +286,8 @@ export class AdeSessions {
         status = { ...status, data: { ...status.data, state: 'waiting', attention: 'approval', source: 'provider-terminal', event: 'native-approval-prompt' } };
       }
     }
+    const workTime=this.workClock.observe(record,status);
+    if(workTime)status={...status,data:{...status.data!,workTime}};
     const state = status.data!.state, previous = this.resultTurns.get(record.id);
     if (state === 'waiting' && status.data!.attention === 'question' && status.meta.observedAt && this.live.get(record.id)?.live && (previous?.state !== 'waiting' || previous.attention !== 'question' || previous.token !== record.statusToken)) {
       const event = `${record.statusToken}:${status.meta.observedAt}`;
@@ -674,6 +679,43 @@ export class AdeSessions {
     } catch (error) {
       if (wrote) { live.draftInput = true; throw new CliError('CLI_FAILED', `The setting may be partially applied (${error instanceof Error ? error.message.slice(0, 160) : 'unknown error'}). Inspect Terminal before retrying; no input was replayed.`); }
       throw error;
+    } finally { this.sending.delete(id); }
+  }
+
+  async interrupt(projectId: string, id: string): Promise<void> {
+    const record = this.require(projectId,id), session = this.live.get(id);
+    if (!session?.live || record.provider === 'terminal') throw new CliError('RUNTIME_UNAVAILABLE','The agent terminal is not running. Open Terminal to inspect or resume it.');
+    if (this.sending.has(id)) throw new CliError('RATE_LIMITED','Agent input is busy. No interruption was sent.');
+    await session.screen?.settled();
+    const current = this.require(projectId,id), status = this.status(projectId,id);
+    if (this.live.get(id) !== session || !session.live || current.statusToken !== record.statusToken) throw new CliError('RUNTIME_UNAVAILABLE','The agent session changed. No interruption was sent.');
+    if (status.meta.availability !== 'ready' || status.meta.stale || status.data?.state !== 'working') throw new CliError('INVALID_ARGUMENT','The agent is no longer working. No interruption was sent.');
+    // OpenCode v1/v2 and Kilo arm cancellation on the first Escape. Confirm
+    // only after their own focused prompt paints "esc again to interrupt".
+    // Separate writes avoid parsing two adjacent bytes as an Alt/Escape key.
+    const armed = /\besc(?:ape)?\s+again to interrupt\b/i.test(session.screen?.viewportText().split('\n').slice(-8).join('\n')??'');
+    const outputBefore=session.start+session.buffer.length;
+    const first = this.input(projectId,id,'\x1b');
+    if (!isOpenCode(record.provider) || armed) { await first; return; }
+    this.sending.add(id);
+    try {
+      await first;
+      const deadline=Date.now()+1800;
+      while(Date.now()<deadline) {
+        await new Promise(resolve=>setTimeout(resolve,30));
+        await session.screen?.settled();
+        const current=this.require(projectId,id), status=this.status(projectId,id);
+        if(this.live.get(id)!==session || !session.live || current.statusToken!==record.statusToken) throw new CliError('RUNTIME_UNAVAILABLE','The agent session changed. No confirmation key was sent.');
+        if(status.meta.availability!=='ready'||status.meta.stale) throw new CliError('RUNTIME_UNAVAILABLE','Agent status is unavailable. Inspect Terminal before trying again.');
+        if(status.data?.state!=='working') return;
+        const footer=session.screen?.viewportText().split('\n').slice(-8).join('\n')??'';
+        if(session.start+session.buffer.length<=outputBefore || !/\besc(?:ape)?\s+again to interrupt\b/i.test(footer)) continue;
+        session.inputRevision=(session.inputRevision??0)+1;
+        session.turnStatus.input('\x1b',Date.now(),true);
+        await this.command(session,{type:'input',data:'\x1b'});
+        return;
+      }
+      throw new CliError('CLI_FAILED','The native interruption confirmation did not appear. Open Terminal to inspect the agent; no keys were retried.');
     } finally { this.sending.delete(id); }
   }
 

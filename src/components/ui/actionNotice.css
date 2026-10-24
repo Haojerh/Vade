@@ -1,0 +1,7 @@
+.action-notice { position:fixed; right:18px; bottom:46px; z-index:10000; display:flex; align-items:center; gap:6px; width:max-content; max-width:min(360px,calc(100vw - 36px)); padding:8px; font-size:12px; border:1px solid var(--border-main); border-radius:6px; background:var(--surface-2); color:var(--text-main); box-shadow:0 6px 20px #0002; opacity:1; transform:translateY(0); transition:opacity 150ms var(--ease-out),transform 150ms var(--ease-out); }
+.action-notice.is-closing { opacity:0; transform:translateY(4px); pointer-events:none; }
+.action-notice>span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.action-notice>.btn-icon { flex-shrink:0; }
+.action-notice a { display:inline-flex; align-items:center; gap:4px; }
+@starting-style { .action-notice { opacity:0; transform:translateY(4px); } }
+@media(prefers-reduced-motion:reduce) { .action-notice,.action-notice.is-closing { transform:none; transition:none; } }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { CaseSensitive, WholeWord, Regex, MoreHorizontal, Folder, FolderOpen, CircleSlash, ListFilter, Search, ListCollapse, Check, X, CodeXml } from 'lucide-react';
+import { CaseSensitive, WholeWord, Regex, MoreHorizontal, Folder, FolderOpen, CircleSlash, ListFilter, Search, SearchX, ListCollapse, Check, X, CodeXml } from 'lucide-react';
 import type { Node, WorkspaceRoot, WorkspaceEntry, WorkspaceListing, WorkspaceSearch } from '../../../shared/contracts';
 import { workspaceFilesRequest } from '../../api/client';
 import { Icon } from '../../components/ui/Icon';
@@ -12,6 +12,7 @@ import { BinaryControl } from '../../components/ui/BinaryControl';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { usePopoverState } from '../../hooks/usePopoverState';
 import { FileOverlay, warmWorkspaceEditor } from './FileOverlay';
+import { useExplorerActions } from './useExplorerActions';
 import './explorer.css';
 
 const errorText = (error: unknown) => error instanceof Error ? error.message.replace(/^\[[A-Z_]+\]\s*/, '') : 'Unable to access workspace files';
@@ -23,6 +24,7 @@ function rememberTree(scope: string, value: Record<string, WorkspaceListing>) {
 }
 function preference(key: string) { try { return localStorage.getItem(`vade:explorer-${key}`) !== 'false'; } catch { return true; } }
 function statusLabel(value: string | null) { return value === '??' ? 'U' : value === '!!' ? null : value?.trim().slice(-1) ?? null; }
+const fileTarget = (path: string) => ({path,name:path.split('/').pop()!,directory:false,symlink:false});
 function nameProjection(matches: WorkspaceSearch['matches']) {
   const listing: Record<string, WorkspaceListing> = { '': { entries: [], truncated: false, gitError: null } }, known = new Map<string, WorkspaceEntry>();
   for (const match of matches) {
@@ -54,11 +56,12 @@ export function ExplorerPanel({ projectId, worktrees: snapshotTrees, active = tr
   const [results, setResults] = useState<{ key: string; data: WorkspaceSearch } | null>(null), [error, setError] = useState<string | null>(null), [loading, setLoading] = useState(false), [revision, setRevision] = useState(0);
   const [matchCase, setMatchCase] = useState(false), [wholeWord, setWholeWord] = useState(false), [regex, setRegex] = useState(false), [include, setInclude] = useState(''), [exclude, setExclude] = useState('');
   const [showDotfiles, setShowDotfiles] = useState(() => preference('dotfiles')), [showIgnored, setShowIgnored] = useState(() => preference('ignored'));
-  const overlay = useConfirmationState<{ path: string; line?: number }>(), menu = usePopoverState(), menuTrigger = useRef<HTMLButtonElement>(null);
+  const overlay = useConfirmationState<{ path: string; line?: number; diff?: boolean }>(), menu = usePopoverState(), menuTrigger = useRef<HTMLButtonElement>(null);
   const worktree = worktrees.find(tree => tree.id === selected) ?? worktrees[0], worktreeId = worktree?.id ?? '';
   const scope = `${projectId}:${worktreeId}`, currentScope = useRef(scope); currentScope.current = scope;
   const directoryRef = useRef(directories); directoryRef.current = directories;
   const refresh = useCallback(() => setRevision(value => value + 1), []);
+  const fileActions = useExplorerActions({projectId,worktreeId,rootPath:worktree?.path??'',onRefresh:refresh,onView:(path,diff)=>overlay.open({path,diff})});
   const searchKey = JSON.stringify([query.trim(), mode, matchCase, wholeWord, regex, include, exclude, showDotfiles, showIgnored]);
   const searchData = results?.key === searchKey ? results.data : null;
   const projected = useMemo(() => nameProjection(searchData?.matches ?? []), [searchData]);
@@ -103,8 +106,10 @@ export function ExplorerPanel({ projectId, worktrees: snapshotTrees, active = tr
   };
   const tree = (parent: string, depth = 0): ReactNode => visible[parent]?.entries.filter(entry => (showDotfiles || !entry.name.startsWith('.')) && (showIgnored || entry.status !== '!!')).map(entry => {
     const open = filtered ? !collapsed.has(entry.path) : expanded.has(entry.path), label = statusLabel(entry.status);
+    const rename=fileActions.rename;
+    if(rename?.path===entry.path)return <div key={entry.path}><div className="workspace-inline-rename" style={{paddingLeft:25+depth*16}}>{entry.directory?<Folder size={13}/>:<FileTypeIcon path={entry.path} size={13}/>}<div><input aria-label={`Rename ${entry.name}`} autoFocus value={rename.name} disabled={rename.busy&&rename.ready} maxLength={200} onFocus={event=>{const dot=entry.directory?-1:entry.name.lastIndexOf('.');event.currentTarget.setSelectionRange(0,dot>0?dot:entry.name.length);}} onChange={event=>rename.change(event.target.value)} onBlur={()=>{if(rename.ready&&!rename.busy)rename.commit();}} onKeyDown={event=>{event.stopPropagation();if(event.key==='Enter'){event.preventDefault();rename.commit();}else if(event.key==='Escape'){event.preventDefault();rename.cancel();}}}/>{rename.error&&<span role="alert">{rename.error}</span>}</div></div>{entry.directory&&open&&tree(entry.path,depth+1)}</div>;
     return <div key={entry.path}><button className={`workspace-tree-row ${entry.status === '!!' ? 'ignored' : ''}`} data-status={label} style={{ paddingLeft: 8 + depth * 16 }} role="treeitem" aria-expanded={entry.directory ? open : undefined} disabled={entry.symlink} title={entry.symlink ? 'Symbolic links are not editable' : entry.path}
-      onClick={() => entry.directory ? toggle(entry.path) : overlay.open({ path: entry.path })}>
+      onContextMenu={event=>fileActions.context(event,entry)} onKeyDown={event=>fileActions.keyboard(event,entry)} onClick={() => entry.directory ? toggle(entry.path) : overlay.open({ path: entry.path })}>
       <span className="workspace-tree-caret">{entry.directory && <Icon name={open ? 'chevron-down' : 'chevron-right'} size={12} />}</span>
       {entry.directory ? open ? <FolderOpen size={13} /> : <Folder size={13} /> : <FileTypeIcon path={entry.path} size={13} />}
       <span className="workspace-file-name">{entry.name}</span>{label ? <span className="workspace-git-status">{label}</span> : entry.status === '!!' ? <CircleSlash className="workspace-ignored-icon" size={13} /> : null}
@@ -134,17 +139,19 @@ export function ExplorerPanel({ projectId, worktrees: snapshotTrees, active = tr
       {mode === 'contents' && <div className="workspace-search-filters"><label>Files to include<input aria-label="Files to include" placeholder="e.g. *.ts, src/**" value={include} onChange={event => setInclude(event.target.value)} /></label><label>Files to exclude<input aria-label="Files to exclude" placeholder="e.g. *.min.js, dist/**" value={exclude} onChange={event => setExclude(event.target.value)} /></label></div>}
       {error && <div className="workspace-error panel-alert alert-error" role="alert"><Icon name="alert-circle" size={16} /><div><strong>Unable to load files</strong><p>{error}</p><button className="btn btn-secondary btn-sm" disabled={loading} onClick={refresh}><RefreshIcon busy={loading} size={13} />Retry</button></div></div>}
       {directories['']?.gitError && <p className="workspace-error">{directories[''].gitError}</p>}
-      {query.trim() && mode === 'contents' && searchData && <div className="workspace-result-count">{searchData.matches.length}{searchData.truncated ? '+' : ''} {searchData.matches.length === 1 ? 'result' : 'results'} in {groups.size} {groups.size === 1 ? 'file' : 'files'}</div>}
-      <div className="workspace-tree" role={mode === 'names' ? 'tree' : undefined} aria-label="Workspace files" aria-busy={loading}>
+      {query.trim() && mode === 'contents' && searchData && <div className="workspace-result-count">{searchData.matches.length ? <>{searchData.matches.length}{searchData.truncated?'+':''} {searchData.matches.length===1?'result':'results'} in {groups.size} {groups.size===1?'file':'files'}</> : searchData.truncated?'Search limit reached':'No results'}</div>}
+      <div className="workspace-tree" role={mode === 'names' ? 'tree' : undefined} aria-label="Workspace files" aria-busy={loading} onContextMenu={fileActions.context} onKeyDown={fileActions.keyboard}>
         {query.trim() && !searchData && !error ? <Skeleton lines={7} label="Searching files" /> : mode === 'names' || !query.trim() ? tree('') : [...groups].map(([path, matches]) => <div className="workspace-result-group" key={path}>
-          <button className="workspace-result-heading" aria-expanded={!collapsed.has(path)} onClick={() => setCollapsed(current => { const next = new Set(current); if (next.has(path)) next.delete(path); else next.add(path); return next; })}><Icon name={collapsed.has(path) ? 'chevron-right' : 'chevron-down'} size={12} /><FileTypeIcon path={path} size={14} /><strong>{path.split('/').pop()}</strong><small>{path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''}</small><span className="workspace-result-badge">{matches.length}</span></button>
-          {!collapsed.has(path) && matches.map((match, index) => <button className="workspace-search-result" key={`${match.line}:${index}`} onClick={() => overlay.open(match)}><span className="workspace-match-line">{match.line}</span><code><Highlight text={match.preview ?? ''} ranges={match.ranges} /></code></button>)}
+          <button className="workspace-result-heading" onContextMenu={event=>fileActions.context(event,fileTarget(path))} onKeyDown={event=>fileActions.keyboard(event,fileTarget(path))} aria-expanded={!collapsed.has(path)} onClick={() => setCollapsed(current => { const next = new Set(current); if (next.has(path)) next.delete(path); else next.add(path); return next; })}><Icon name={collapsed.has(path) ? 'chevron-right' : 'chevron-down'} size={12} /><FileTypeIcon path={path} size={14} /><strong>{path.split('/').pop()}</strong><small>{path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''}</small><span className="workspace-result-badge">{matches.length}</span></button>
+          {fileActions.rename?.path===path && <div className="workspace-inline-rename"><FileTypeIcon path={path} size={13}/><div><input autoFocus aria-label={`Rename ${path}`} value={fileActions.rename.name} disabled={fileActions.rename.busy} onChange={event=>fileActions.rename?.change(event.target.value)} onFocus={event=>{const name=path.split('/').pop()!;const dot=name.lastIndexOf('.');event.currentTarget.setSelectionRange(0,dot>0?dot:name.length);}} onBlur={()=>{if(fileActions.rename?.ready&&!fileActions.rename.busy)fileActions.rename.commit();}} onKeyDown={event=>{event.stopPropagation();if(event.key==='Enter'){event.preventDefault();fileActions.rename?.commit();}else if(event.key==='Escape'){event.preventDefault();fileActions.rename?.cancel();}}}/>{fileActions.rename.error&&<span role="alert">{fileActions.rename.error}</span>}</div></div>}
+          {!collapsed.has(path) && matches.map((match, index) => <button className="workspace-search-result" key={`${match.line}:${index}`} onContextMenu={event=>fileActions.context(event,fileTarget(path))} onKeyDown={event=>fileActions.keyboard(event,fileTarget(path))} onClick={() => overlay.open(match)}><span className="workspace-match-line">{match.line}</span><code><Highlight text={match.preview ?? ''} ranges={match.ranges} /></code></button>)}
         </div>)}
         {!Object.keys(directories).length && !query.trim() && loading && <Skeleton lines={9} label="Loading files" />}
-        {query.trim() && searchData && !searchData.matches.length && <p className="empty-hint">No matching files.</p>}
-        {(searchData?.truncated || Object.values(directories).some(list => list.truncated)) && <p className="empty-hint">Results limited. Narrow your search or folder.</p>}
+        {query.trim() && searchData && !searchData.matches.length && <div className="workspace-search-empty"><SearchX size={27}/><strong>{searchData.truncated?'No matches in searched files':mode==='contents'?'No content matches':'No matching files'}</strong><p>{searchData.truncated?'The search reached its scan limit. Narrow the included folders and try again.':<>Nothing matched <q>{query}</q>. Try a different search or relax your filters.</>}</p><div><button className="btn btn-secondary btn-sm" onClick={()=>setQuery('')}>Clear search</button>{(include||exclude||regex||wholeWord||matchCase||!showDotfiles||!showIgnored)&&<button className="btn btn-secondary btn-sm" onClick={()=>{setInclude('');setExclude('');setRegex(false);setWholeWord(false);setMatchCase(false);setShowDotfiles(true);setShowIgnored(true);}}>Reset filters</button>}</div></div>}
+        {(query.trim()?searchData?.truncated&&Boolean(searchData.matches.length):Object.values(directories).some(list=>list.truncated))&&<p className="workspace-search-limit">Showing a limited set of results. Narrow the search or folder.</p>}
       </div>
     </>}
-    {overlay.present && overlay.data && projectId && worktreeId && <FileOverlay key={`${scope}:${overlay.data.path}`} projectId={projectId} worktreeId={worktreeId} path={overlay.data.path} line={overlay.data.line} closing={overlay.closing} onClose={overlay.close} onSaved={refresh} />}
+    {fileActions.ui}
+    {overlay.present && overlay.data && projectId && worktreeId && <FileOverlay key={`${scope}:${overlay.data.path}:${overlay.data.diff}`} projectId={projectId} worktreeId={worktreeId} path={overlay.data.path} line={overlay.data.line} initialDiff={overlay.data.diff} closing={overlay.closing} onClose={overlay.close} onSaved={refresh} />}
   </section>;
 }

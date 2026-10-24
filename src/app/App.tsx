@@ -1,4 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { RightSidebarTabs } from './RightSidebarTabs';
+import { ActivitySection } from '../features/sourceControl/ActivitySection';
+import { SourceControlPanel } from '../features/sourceControl/SourceControlPanel';
 import { flushSync } from 'react-dom';
 import { useDashboard } from './useDashboard';
 import { useDashboardLayoutPrefs } from './useDashboardLayoutPrefs';
@@ -78,6 +81,9 @@ export const App: React.FC = () => {
   } = useDashboard();
 
   const [rightSection, setRightSection] = useState<'source' | 'agents' | 'explorer'>(() => { try { const value = localStorage.getItem('vade:right-section'); return value === 'agents' || value === 'explorer' ? value : 'source'; } catch { return 'source'; } });
+  const [sourcePrRequest,setSourcePrRequest]=useState(0),[sourcePrAvailable,setSourcePrAvailable]=useState(false);
+  const [activityRevision,setActivityRevision]=useState(0);
+  const refreshActivity=useCallback(()=>{setActivityRevision(value=>value+1);void refreshGitHub();},[refreshGitHub]);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [historyDrag, setHistoryDrag] = useState<HistoryDrag | null>(null);
   const historyProject = useRef(selectedProjectId); historyProject.current = selectedProjectId;
@@ -439,12 +445,13 @@ export const App: React.FC = () => {
         ariaLabel="Source Control and Agents Sidebar"
       >
         <div className="right-tools">
-          <nav className="right-tool-tabs github-tabs-nav" data-section={rightSection} role="tablist" aria-label="Right sidebar sections">
-            {(['explorer', 'source', 'agents'] as const).map(section => <button key={section} className={`tab-btn ${rightSection === section ? 'active' : ''}`} role="tab" aria-label={section === 'source' ? 'Source Control' : section === 'agents' ? 'Agents' : 'Explorer'} title={section === 'source' ? 'Source Control' : section === 'agents' ? 'Agents' : 'Explorer'} aria-selected={rightSection === section} onClick={() => { setRightSection(section); try { localStorage.setItem('vade:right-section', section); } catch {} }}><Icon name={section === 'source' ? 'git-branch' : section === 'agents' ? 'message-square' : 'folder'} size={15} /></button>)}
-            <button type="button" className="btn-icon right-tool-collapse" aria-label="Collapse tools sidebar" title="Collapse tools sidebar" onClick={() => handleToggleRight(false)}><Icon name="chevrons-right" size={14} /></button>
-          </nav>
+          <RightSidebarTabs value={rightSection} onChange={section=>{setRightSection(section);try{localStorage.setItem('vade:right-section',section);}catch{}}} onCollapse={()=>handleToggleRight(false)}/>
           <div className="right-tool-content" hidden={rightSection !== 'source'}>
+        {currentProject?.kind!=='folder'&&<SourceControlPanel key={selectedProjectId??'none'} projectId={selectedProjectId} active={rightSection==='source'&&rightSidebarOpen} prRequest={sourcePrRequest} onPrAvailable={setSourcePrAvailable} onRepositoryChange={refreshActivity}/>}
+        <ActivitySection loading={gitHubLoading} onRefresh={refreshActivity}>
         <GitHubPanel
+          refreshVersion={activityRevision}
+          onCreatePr={sourcePrAvailable?()=>setSourcePrRequest(value=>value+1):undefined}
           commitGraphEnabled={commitGraphEnabled}
           projectId={selectedProjectId}
           project={currentProject}
@@ -452,8 +459,9 @@ export const App: React.FC = () => {
           data={gitHubData}
           loading={gitHubLoading}
           error={gitHubError}
-          onRefresh={refreshGitHub}
+          onRefresh={refreshActivity}
         />
+        </ActivitySection>
           </div>
           {rightSection === 'agents' && <div className="right-tool-content"><AgentHistoryPanel key={selectedProjectId ?? 'all'} projectId={selectedProjectId} worktrees={graph?.nodes.filter(node => node.kind === 'worktree') ?? []} onResume={resumeSavedSession} onDragSession={setHistoryDrag} onOpen={(projectId, nodeId) => openInboxNode(projectId, nodeId, null)} revision={historyRevision} /></div>}
           <div className="right-tool-content" hidden={rightSection !== 'explorer'}><ExplorerPanel projectId={selectedProjectId} worktrees={graph?.nodes.filter(node => node.kind === 'worktree') ?? []} active={rightSection === 'explorer' && rightSidebarOpen} /></div>

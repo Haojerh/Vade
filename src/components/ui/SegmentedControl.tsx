@@ -1,6 +1,6 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 
-interface Choice { value: string; label: string }
+interface Choice { value: string; label: string; icon?: ReactNode }
 
 /** The active copy is clipped to the confirmed selection, keeping text and highlight in sync. */
 export function SegmentedControl({ label, choices, value, disabled, onChange, radius = 14 }: {
@@ -24,9 +24,9 @@ export function SegmentedControl({ label, choices, value, disabled, onChange, ra
     return () => { observer.disconnect(); cancelAnimationFrame(frame); };
   }, [value, signature, radius]);
   return <div ref={root} className="segmented-control" role="group" aria-label={label} data-ready={ready} data-disabled={disabled || undefined} style={{ gridTemplateColumns: `repeat(${choices.length}, minmax(0, 1fr))` }}>
-    {choices.map(choice => <button type="button" key={choice.value} aria-pressed={choice.value === value} disabled={disabled} onClick={() => onChange(choice.value)}>{choice.label}</button>)}
+    {choices.map(choice => <button type="button" key={choice.value} aria-label={choice.label} title={choice.icon ? choice.label : undefined} aria-pressed={choice.value === value} disabled={disabled} onClick={() => onChange(choice.value)}>{choice.icon ?? choice.label}</button>)}
     <div className="segmented-control-active" aria-hidden="true" style={{ gridTemplateColumns: `repeat(${choices.length}, minmax(0, 1fr))`, clipPath: clip ?? 'inset(0 100% 0 0)' }}>
-      {choices.map(choice => <span key={choice.value}>{choice.label}</span>)}
+      {choices.map(choice => <span key={choice.value}>{choice.icon ?? choice.label}</span>)}
     </div>
   </div>;
 }

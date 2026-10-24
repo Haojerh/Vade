@@ -25,7 +25,7 @@ export function fileTypeIcon(path: string): LucideIcon {
   if (/\.tar\.(gz|xz|bz2)$/.test(name)) return FileArchive;
   return byExtension.get(name.split('.').pop() ?? '') ?? File;
 }
-export function FileTypeIcon({ path, size = 14 }: { path: string; size?: number }) {
+export function FileTypeIcon({ path, size = 14,status }: { path: string; size?: number; status?:string }) {
   const Glyph = fileTypeIcon(path);
-  return <Glyph size={size} aria-hidden="true" className="file-type-icon" strokeWidth={1.7} />;
+  return <Glyph size={size} aria-hidden="true" className="file-type-icon" data-git-status={status} strokeWidth={1.7} />;
 }

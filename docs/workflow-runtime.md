@@ -1,5 +1,9 @@
 # Workflow / Organization runtime
 
+Settings shows searchable run cards with All/Active/Finished filters, explicit agent states, results and bounded team-message history. `GET /api/workflow/runs?summary=1` reads compact SQLite projections; `GET /api/workflow/runs/:id` loads full details only for an expanded run. The browser retains at most three details within a 4 MiB budget, pauses polling while hidden, and polls idle history less frequently. Unchanged summaries preserve the current UI state.
+
+Finishing or cancelling a run stops its owned worker processes. Agent tabs/session records, public history, worktrees and commits remain available for context and inspection. Neither completion nor cancellation automatically deletes a checkout or its files; normal guarded tab/worktree actions remain explicit.
+
 Workflow mode is disabled by default. Settings stores a versioned, acyclic graph in ADE's private SQLite registry. A run snapshots that graph, so changing settings cannot change an active assignment. There is no hardcoded orchestrator node: the exact owned agent receiving the user's message owns the run.
 
 With Workflow disabled, the installed `vade-cli` and `vade-orchestration` skills also support explicit user requests to spawn/delegate workers. New or resumed coding agents receive `VADE_CLI_PATH` and a private launch-bound `VADE_IDENTITY_FILE`. `context` discovers the current mode; `models` reads a provider catalog; `begin` accepts bounded worker definitions and dependencies chosen by the contacted agent. This creates an `adhoc` run without modifying the saved Settings graph or injecting another prompt into the active orchestrator. Planning, dispatch, mailboxes, isolation, integration, explicit results and cancellation use the same fenced runtime. The CLI cannot bypass the enabled Workflow setting.

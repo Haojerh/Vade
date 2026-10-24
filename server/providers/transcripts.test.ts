@@ -1,61 +1,24 @@
 import { test } from 'node:test';
-import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { publicTranscriptRecord, transcriptSettings } from './shared.js';
-import { readOpenCodePage, readOpenCodeModel, findOpenCodeSession, findExactOpenCodePaneSession } from './opencode.js';
-import { findClaudeTranscript } from './claude.js';
-import { findCodexTranscript } from './codex.js';
-import { resolveAntigravityConversation, readAntigravityToolActivity } from './antigravity.js';
-import { collectToolActivity } from '../integrations/orca/liveActivity.js';
-import { enrichAgentModelsAndEffort } from '../integrations/orca/graphWorkers.js';
-import { resolveCoordinatorConversation } from '../integrations/orca/nodeDetails.js';
-import { globalSourceMaps } from '../integrations/orca/state.js';
-import { transcriptToolActivity, databaseToolActivity, toolLabel, toolActivityFromCall, toolEditPreview } from './toolActivity.js';
 
-test('hookless Kilo tool activity uses a unique exact terminal title and directory even when model is already known', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-kilo-pane-'));
-  const file = path.join(dir, 'kilo.db');
-  const previousDb = process.env.KILO_DB, previousApp = process.env.ORCA_APPDATA_DIR;
-  process.env.KILO_DB = file;
-  process.env.ORCA_APPDATA_DIR = dir;
-  const db = new DatabaseSync(file);
-  const node = { id: 'kilo-exact-pane', kind: 'agent', agentType: 'kilo', label: 'Custom display name', path: dir, worktreeId: 'wt', model: 'observed-model' } as any;
-  try {
-    db.exec('CREATE TABLE session(id TEXT,title TEXT,directory TEXT); CREATE TABLE part(id TEXT,session_id TEXT,data TEXT)');
-    const insert = db.prepare('INSERT INTO session VALUES(?,?,?)');
-    insert.run('ses_exact', 'Testing tools', dir);
-    insert.run('ses_similar', 'Testing tools extended', dir);
-    insert.run('ses_elsewhere', 'Testing tools', dir + '-elsewhere');
-    db.prepare('INSERT INTO part VALUES(?,?,?)').run('p1', 'ses_exact', JSON.stringify({ type: 'tool', callID: 'call-1', tool: 'bash', state: { input: { command: 'npm test' }, time: { start: Date.now() } } }));
-    const allowed = (candidate: string) => candidate === file;
-    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools', dir, allowed)?.sessionId, 'ses_exact');
-    assert.equal(findExactOpenCodePaneSession('kilocode', 'Kilo Code | Testing tools', dir, allowed)?.sessionId, 'ses_exact');
-    assert.equal(findExactOpenCodePaneSession('kilo', 'Testing tools', dir, allowed), null);
-    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing', dir, allowed), null);
-    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools...', dir, allowed), null);
-    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools', dir + '-wrong', allowed), null);
-    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools', dir, () => false), null);
-    globalSourceMaps.nodeSourceMap.set(node.id, { handle: 'term-kilo', paneKey: 'pane-kilo', terminalTitle: 'Kilo CLI | Testing tools' });
-    await enrichAgentModelsAndEffort([node]);
-    assert.equal(node.model, 'observed-model');
-    assert.equal(node.toolActivity.meta.availability, 'ready');
-    assert.deepEqual(node.toolActivity.data.map((item: any) => item.label), ['Run: npm test']);
-    await collectToolActivity(node, { source: 'kilocode', worktreeId: 'wt', providerSession: { key: 'session_id', id: 'ses_exact' } }, allowed);
-    assert.equal(node.toolActivity.meta.availability, 'ready');
-    insert.run('ses_duplicate', 'Testing tools', dir);
-    assert.equal(findExactOpenCodePaneSession('kilo', 'Kilo CLI | Testing tools', dir, allowed), null);
-    await collectToolActivity(node, null, allowed);
-    assert.equal(node.toolActivity.meta.availability, 'unavailable');
-  } finally {
-    db.close(); globalSourceMaps.nodeSourceMap.delete(node.id);
-    if (previousDb === undefined) delete process.env.KILO_DB; else process.env.KILO_DB = previousDb;
-    if (previousApp === undefined) delete process.env.ORCA_APPDATA_DIR; else process.env.ORCA_APPDATA_DIR = previousApp;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
+import assert from 'node:assert/strict';
+
+import fs from 'node:fs';
+
+import os from 'node:os';
+
+import path from 'node:path';
+
+import { DatabaseSync } from 'node:sqlite';
+
+import { publicTranscriptRecord, transcriptSettings } from './shared.js';
+
+import { readOpenCodePage, readOpenCodeModel } from './opencode.js';
+
+
+
+import { readAntigravityToolActivity } from './antigravity.js';
+
+import { transcriptToolActivity, databaseToolActivity, toolLabel, toolActivityFromCall, toolEditPreview } from './toolActivity.js';
 
 test('edit previews normalize provider argument formats and stay bounded', () => {
   for (const [name, input] of [
@@ -154,37 +117,6 @@ test('effective transcript settings include Claude effort and Pi/OMP changes but
   }
 });
 
-test('standalone Claude/Pi/OMP resolve exact pane transcripts and reject a changed session cursor', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-provider-binding-'));
-  const previous = process.env.ORCA_APPDATA_DIR;
-  process.env.ORCA_APPDATA_DIR = dir;
-  const hookDir = path.join(dir, 'orca', 'agent-hooks');
-  fs.mkdirSync(hookDir, { recursive: true });
-  try {
-    for (const provider of ['claude', 'pi', 'omp']) {
-      const file = path.join(dir, provider + '.jsonl');
-      fs.writeFileSync(file, JSON.stringify({ type: provider === 'claude' ? 'assistant' : 'message',
-        uuid: 'public-reply', timestamp: '2026-10-16T10:00:00Z', message: { role: 'assistant', content: [{ type: 'text', text: 'Public reply' }] } }) + '\n');
-      const entry = { source: provider, worktreeId: 'exact-worktree', providerSession: { id: 'session-1', transcriptPath: file } };
-      const write = () => fs.writeFileSync(path.join(hookDir, 'last-status.json'), JSON.stringify({ entries: { 'exact-pane': entry } }));
-      write();
-      const node = { id: 'exact-node', agentType: provider, worktreeId: 'exact-worktree', runId: null } as any;
-      globalSourceMaps.nodeSourceMap.set(node.id, { paneKey: 'exact-pane' });
-      const result = await resolveCoordinatorConversation('project', node, null, undefined, true);
-      assert.equal(result.meta.availability, 'ready');
-      assert.equal(result.data?.messages[0].text, 'Public reply');
-      entry.providerSession.id = 'session-2'; write();
-      await assert.rejects(() => resolveCoordinatorConversation('project', node, null, { cursor: result.data!.nextCursor }, true), /cross-bound/);
-      entry.source = 'codex'; write();
-      assert.equal((await resolveCoordinatorConversation('project', node, null, undefined, true)).meta.availability, 'unsupported');
-    }
-  } finally {
-    globalSourceMaps.nodeSourceMap.delete('exact-node');
-    if (previous === undefined) delete process.env.ORCA_APPDATA_DIR; else process.env.ORCA_APPDATA_DIR = previous;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('OpenCode reads exact session model, effort and public parts; cursors check for newer messages', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-opencode-'));
   const file = path.join(dir, 'opencode.db');
@@ -260,134 +192,6 @@ test('OpenCode scan directions skip private parts and enforce the same part limi
   } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('Codex rollout traversal preserves dated directory priority and ignores unrelated years', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-codex-order-'));
-  const previous = process.env.CODEX_HOME;
-  const id = '11111111-2222-3333-4444-555555555555';
-  try {
-    process.env.CODEX_HOME = dir;
-    for (const date of ['2025/12/31', '2026/01/01', '2026/10/17', '2026/10/18', 'archive/12/31']) {
-      const folder = path.join(dir, 'sessions', date);
-      fs.mkdirSync(folder, { recursive: true });
-      fs.writeFileSync(path.join(folder, `rollout-${id}.jsonl`), '');
-    }
-    const newest = path.join(dir, 'sessions', '2026', '10', '18', `rollout-${id}.jsonl`);
-    assert.equal(findCodexTranscript(id), newest);
-    fs.writeFileSync(path.join(dir, 'session_index.jsonl'), JSON.stringify({ id, thread_name: 'Exact thread' }));
-    assert.equal(findCodexTranscript('Exact thread'), newest);
-    assert.equal(findCodexTranscript('missing thread'), null);
-  } finally {
-    if (previous === undefined) delete process.env.CODEX_HOME;
-    else process.env.CODEX_HOME = previous;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('findOpenCodeSession locates resumed sessions by title and rejects generic label', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-opencode-find-'));
-  const oldDb = process.env.OPENCODE_DB;
-  const oldKilo = process.env.KILO_DB;
-  const oldOrcaApp = process.env.ORCA_APPDATA_DIR;
-  const file = path.join(dir, 'opencode.db');
-  const kiloFile = path.join(dir, 'kilo.db');
-  process.env.OPENCODE_DB = file;
-  process.env.KILO_DB = kiloFile;
-  process.env.ORCA_APPDATA_DIR = dir;
-  const db = new DatabaseSync(file);
-  const kdb = new DatabaseSync(kiloFile);
-  try {
-    db.exec('CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, directory TEXT, model TEXT);');
-    db.prepare('INSERT INTO session VALUES(?, ?, ?, ?)').run('ses_123', 'Draft Report Implementation', null, null);
-    
-    // Matched by clean title or OC prefix
-    const found1 = findOpenCodeSession('opencode', 'OC | Draft Report Implementation');
-    assert.deepEqual(found1, { dbPath: file, sessionId: 'ses_123' });
-
-    const found2 = findOpenCodeSession('opencode', 'Draft Report Implementation...');
-    assert.deepEqual(found2, { dbPath: file, sessionId: 'ses_123' });
-
-    // Generic label must return null
-    assert.equal(findOpenCodeSession('opencode', 'opencode'), null);
-    assert.equal(findOpenCodeSession('opencode', 'Agent'), null);
-
-    // Kilo sessions with Kilo CLI / Kilo Code / KC prefixes
-    kdb.exec('CREATE TABLE session(id TEXT PRIMARY KEY, title TEXT, directory TEXT, model TEXT);');
-    kdb.prepare('INSERT INTO session VALUES(?, ?, ?, ?)').run('ses_kilo_1', 'Greeting', 'C:/work/repo', JSON.stringify({ id: 'nvidia/nemotron-3.5-super-vl:free', providerID: 'kilo' }));
-    kdb.prepare('INSERT INTO session VALUES(?, ?, ?, ?)').run('ses_kilo_2', 'Light chat', 'C:/work/repo', JSON.stringify({ id: 'nvidia/nemotron-3.5-super-vl:free', providerID: 'kilo' }));
-
-    const foundKilo1 = findOpenCodeSession('kilo', 'Kilo CLI | Greeting');
-    assert.deepEqual(foundKilo1, { dbPath: kiloFile, sessionId: 'ses_kilo_1' });
-
-    const foundKilo2 = findOpenCodeSession('kilo', 'Kilo Code | Greeting');
-    assert.deepEqual(foundKilo2, { dbPath: kiloFile, sessionId: 'ses_kilo_1' });
-
-    const foundKilo3 = findOpenCodeSession('kilo', 'KC | Greeting');
-    assert.deepEqual(foundKilo3, { dbPath: kiloFile, sessionId: 'ses_kilo_1' });
-
-    // Custom tab title matching via terminal checkpoint
-    const ptyId = 'test-pty-123';
-    const thDir = path.join(dir, 'orca', 'terminal-history', encodeURIComponent(ptyId));
-    fs.mkdirSync(thDir, { recursive: true });
-    fs.writeFileSync(path.join(thDir, 'checkpoint.json'), JSON.stringify({
-      snapshotAnsi: '\u001b[1mLight chat\u001b[22m - active kilo session',
-    }));
-
-    const foundByCp = findOpenCodeSession('kilo', 'custom-tab-label', null, { ptyId });
-    assert.deepEqual(foundByCp, { dbPath: kiloFile, sessionId: 'ses_kilo_2' });
-
-    // Model and effort read from session table
-    const modelRes = readOpenCodeModel(kiloFile, 'ses_kilo_1');
-    assert.deepEqual(modelRes, { model: 'nvidia/nemotron-3.5-super-vl:free', effort: null });
-  } finally {
-    db.close();
-    kdb.close();
-    if (oldDb) process.env.OPENCODE_DB = oldDb;
-    else delete process.env.OPENCODE_DB;
-    if (oldKilo) process.env.KILO_DB = oldKilo;
-    else delete process.env.KILO_DB;
-    if (oldOrcaApp) process.env.ORCA_APPDATA_DIR = oldOrcaApp;
-    else delete process.env.ORCA_APPDATA_DIR;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
-test('idle Antigravity node in same worktree does not steal active Antigravity session', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-idle-ag-'));
-  const previous = process.env.ORCA_APPDATA_DIR;
-  process.env.ORCA_APPDATA_DIR = dir;
-  const hookDir = path.join(dir, 'orca', 'agent-hooks');
-  fs.mkdirSync(hookDir, { recursive: true });
-  try {
-    // Only pane-1 has an active Antigravity session hook
-    const entry = {
-      source: 'antigravity',
-      worktreeId: 'shared-worktree',
-      providerSession: { key: 'conversation_id', id: 'b00aa6db-3e66-4788-aa65-a568ef353e6c' },
-    };
-    fs.writeFileSync(path.join(hookDir, 'last-status.json'), JSON.stringify({
-      entries: { 'pane-1': entry },
-    }));
-
-    // pane-2 is an idle tab in the SAME worktree
-    const activeNode = { id: 'node-active', agentType: 'antigravity', worktreeId: 'shared-worktree', label: 'Active AG' } as any;
-    const idleNode = { id: 'node-idle', agentType: 'antigravity', worktreeId: 'shared-worktree', label: 'antigravity' } as any;
-    globalSourceMaps.nodeSourceMap.set(activeNode.id, { paneKey: 'pane-1' });
-    globalSourceMaps.nodeSourceMap.set(idleNode.id, { paneKey: 'pane-2' });
-
-    // Idle node must NOT match pane-1 or return ready conversation
-    const idleRes = await resolveAntigravityConversation('project', idleNode, null);
-    assert.equal(idleRes.meta.availability, 'unsupported');
-    assert.equal(idleRes.meta.issue?.code, 'CONVERSATION_UNSUPPORTED');
-    assert.equal(idleRes.data, null);
-  } finally {
-    globalSourceMaps.nodeSourceMap.delete('node-active');
-    globalSourceMaps.nodeSourceMap.delete('node-idle');
-    if (previous === undefined) delete process.env.ORCA_APPDATA_DIR;
-    else process.env.ORCA_APPDATA_DIR = previous;
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
-});
-
 test('Antigravity reads exact-session protobuf tool metadata without output or reasoning', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-ag-tools-'));
   const previous = process.env.ANTIGRAVITY_APPDATA_DIR;
@@ -431,18 +235,8 @@ test('Antigravity reads exact-session protobuf tool metadata without output or r
     assert.deepEqual(readAntigravityToolActivity(id, allowed).map((item) => item.id), items.map((item) => item.id));
     assert.throws(() => readAntigravityToolActivity('../escape', allowed), /identity/);
     assert.throws(() => readAntigravityToolActivity(id, () => false), /outside allowed/);
-    const node = { id: 'agy', agentType: 'antigravity', worktreeId: 'wt' } as any;
-    await collectToolActivity(node, { source: 'antigravity', worktreeId: 'wt', providerSession: { key: 'conversation_id', id } }, allowed);
-    assert.equal(node.toolActivity.meta.availability, 'ready');
-    assert.equal(node.toolActivity.data.length, 3);
-    await collectToolActivity(node, { source: 'antigravity', worktreeId: 'other-wt', providerSession: { key: 'conversation_id', id } }, allowed);
-    assert.equal(node.toolActivity.meta.availability, 'unavailable');
-    await collectToolActivity(node, { providerSession: { key: 'session_id', id } }, allowed);
-    assert.equal(node.toolActivity.meta.availability, 'unavailable');
     db.prepare('UPDATE trajectory_meta SET cascade_id = ?').run('different-conversation');
     assert.throws(() => readAntigravityToolActivity(id, allowed), /identity changed/);
-    await collectToolActivity(node, { providerSession: { key: 'conversation_id', id } }, allowed);
-    assert.equal(node.toolActivity.meta.availability, 'unavailable');
     db.prepare('UPDATE trajectory_meta SET cascade_id = ?').run(id);
     const large = Buffer.alloc(524288);
     for (let index = 10; index < 27; index++) insert.run(index, large, null);
@@ -454,7 +248,9 @@ test('Antigravity reads exact-session protobuf tool metadata without output or r
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
 import { databaseProviderActivity, transcriptProviderActivity } from './providerActivity.js';
+
 import { claudeLocalCommandEffort } from './shared.js';
 
 test('Claude manual effort acknowledgements refresh metadata while ordinary prose does not', () => {

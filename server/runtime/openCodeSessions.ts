@@ -9,7 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import type { AdeProvider } from '../../shared/contracts.js';
 import type { SessionRecord } from './store.js';
 import { CliError } from '../integrations/cli.js';
-import { isPathInsideRoots } from '../integrations/orca/utils.js';
+import { isPathInsideRoots } from '../providers/transcriptUtils.js';
 
 export const isOpenCode = (provider: string): provider is 'opencode' | 'opencode2' | 'kilo' => provider === 'opencode' || provider === 'opencode2' || provider === 'kilo';
 export function validProviderSessionId(provider: AdeProvider, id: unknown): id is string {

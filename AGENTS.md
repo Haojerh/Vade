@@ -2,6 +2,8 @@
 
 ## Standalone ADE migration
 
+- `runtime/sourceControl.ts` owns explicit user-invoked staging, unstaging, staged-only commits, origin fetch/publish/push, force-with-lease, fast-forward pull/sync, rebase and GitHub PR creation. `/source-control/` routes accept typed actions, discovered worktrees/refs and fresh repository versions; no raw commands, remote URLs or flags. Passive collection never mutates Git. `features/sourceControl/` owns the sidebar and lazy read-only Monaco diff review. Keep private/symlink exclusions, per-checkout locks, stale-state refusal and uncertain-action warnings. See `docs/source-control.md`.
+
 - `runtime/speech.ts` owns fixed-manifest model downloads and bounded ordered local PCM sessions; `speechWorker.cjs` isolates native sherpa-onnx inference. Audio stays ephemeral, at most 60 seconds, and never becomes terminal input or automatic message submission. Browser/local engine, microphone and Toggle/Hold preferences live in `features/workflow/voicePreferences.ts`; capture uses the local AudioWorklet and stops on pane disposal. Model hashes/revisions stay backend-owned. Package the platform native addon and speech worker outside ASAR; no dependency on an installed Orca runtime.
 
 - `runtime/organization.ts` owns Workflow / Organization execution. The message endpoint creates configured runs only when enabled and explicitly confirmed. With Workflow disabled, a launch-bound private CLI identity may explicitly begin an agent-defined team; it never changes the saved graph. Collection stays observational. Settings setup installs the bundled standalone CLI/skills from `resources/orchestration`. No Orca runtime dependency. Preserve DAG blockers, run/session/launch-token fencing, explicit worker results, one writer per checkout, uncertain-send protection, and clean integration through an owned worktree. See `docs/workflow-runtime.md`.
@@ -14,7 +16,7 @@
 - Native chat interleaves bounded exact-session `ToolActivity` records separately from public turns. Edit disclosures open initially and display only recorded input diffs; other calls start collapsed. Never infer tool success or read live files for previews.
 - Saved Codex/Claude profiles support fixed native OAuth login, bounded sign-in status and confirmed removal. Account selection responses return only profile metadata without rescanning GitHub. Credentials and subprocess output remain backend-only; only allowlisted provider authorization URLs reach the browser.
 
-- Production `server/index.ts` creates `LocalRuntime` from `server/runtime/localRuntime.ts`. Orca adapters below remain legacy migration code and regression fixtures, not a standalone dependency.
+- Production `server/index.ts` creates `LocalRuntime` from `server/runtime/localRuntime.ts`. Retired Orca adapters and transport fixtures have been removed; bounded native provider readers remain in `server/providers/`.
 - Web and Electron (`desktop/main.cjs`) share the frontend, HTTP contracts and `~/.ade` registry (override with `ADE_DATA_DIR`).
 - `desktop/updater.cjs` owns the fixed `Haojerh/ADE` GitHub release feed. Update IPC is main-frame/origin restricted and accepts no arguments. Checks do not download or restart; explicit Update & restart owns installation. Keep platform checksum/signature verification, graceful backend shutdown and bounded same-origin route restoration. See `docs/desktop-updates.md`.
 - `server/runtime/store.ts` owns SQLite; `git.ts` owns bounded Git; `sessions.ts` launches detected Codex, Claude Code and Antigravity in owned PTYs. No arbitrary launch commands or flags. Terminal input goes only to a selected owned process, never to a shell launcher.
@@ -24,6 +26,7 @@
 - Worktree deletion refuses main/locked/dirty checkouts and open ADE sessions. Never force removal. Setup hooks and PR/issue sources remain unsupported.
 - `RegisterProject.tsx` owns onboarding; `AgentTerminal.tsx` owns terminal display, ordered input, cancellation and explicit reconnect. Never replay input on reconnect.
 - `runtime/workspaceFiles.ts` owns standalone file listing, bounded search (fixed native ripgrep with a filesystem fallback), UTF-8 reads, on-demand HEAD baselines and version-checked atomic saves in discovered worktrees. Reject traversal, private runtime data, Git metadata, symlinks, binary/oversized files and stale saves. Return the version of written bytes, never a subsequent writer's version. Fixed `open` targets launch only the discovered worktree in VS Code/system file manager. `features/explorer/` owns cached tree/name projection, grouped search, lazy local Monaco/Tiptap editors, inline/split diff navigation, skeletons and unsaved-change confirmation. `editorPreferences.ts` owns the General autosave setting. Keep Markdown embedded syntax lossless through source fallback and image references inert. Reuse `FileTypeIcon`, `Skeleton`, `RefreshIcon`, `Popover` and `SegmentedControl`. File editing is an explicit user action, separate from provider/tool previews; no commits, staging or shell commands are accepted by file APIs.
+- `runtime/workspaceActions.ts` owns bounded, fingerprint-fenced Explorer file operations and recoverable Vade Trash/Undo. Never mutate a worktree root, traverse symlinks, overwrite occupied destinations, or turn file actions into shell/Git commands. Binary preview descriptors are read-only; browser previews must retain their sandbox CSP. `scripts/build-brand-icons.mjs` renders the centered canonical Vade SVG into installer/application/shortcut icons.
 - Include `server/runtime/localRuntime.test.ts` in `npm test`; run `npm test` and `npm run build:desktop` after migration changes. Startup must work without Orca calls.
 
 Conventions, architecture patterns, and interface contracts for agents contributing to the `orca-visualization` project.
@@ -63,16 +66,16 @@ Standalone `POST /api/projects/:projectId/nodes/:nodeId/resume` accepts an empty
 - Node details support `direction=older` for bounded backward transcript pagination. Bind cursor direction as well as project/node/run/source, and include direction in cache keys. The agent modal opens at the newest end, prepends 20 older public turns on top-scroll or **Load more**, preserves the scroll anchor, and cancels obsolete requests. Never treat a forward cursor as older history.
 - `GET /api/projects/:projectId/nodes/:nodeId/events` streams `conversation` events containing `Section<ConversationPage>` forward deltas, with optional runId and opaque forward cursor. Reads are bounded to 20 public turns every 2 seconds, non-overlapping, with 15-second heartbeats and at most 32 connections. Preserve the forward cursor on reconnect and page hiding; keep older-history cursors separate. Close streams on selection changes and modal dismissal. Stream resets reload the exact source instead of merging sessions.
 
-Implemented in [`server/http/api.ts`](server/http/api.ts), [`server/http/readRoutes.ts`](server/http/readRoutes.ts), and [`server/http/actionRoutes.ts`](server/http/actionRoutes.ts). Collection uses `GET` or `HEAD`. Allowed mutation actions include agent-message, changing supported agent chat options, closing an agent tab, renaming a node title or worktree display name, creating a worktree or worktree agent, and deleting a worktree; other mutations return `405 METHOD_NOT_ALLOWED`.
+Implemented in [`server/http/api.ts`](server/http/api.ts) and [`server/http/localRoutes.ts`](server/http/localRoutes.ts). Collection uses `GET` or `HEAD`. Allowed mutation actions include agent-message, changing supported agent chat options, closing an agent tab, renaming a node title or worktree display name, creating a worktree or worktree agent, and deleting a worktree; other mutations return `405 METHOD_NOT_ALLOWED`.
 
 | Endpoint | Query Parameters | Response / Behavior | Description |
 |---|---|---|---|
-| `POST /api/projects/:projectId/worktrees` | JSON `CreateWorktreeRequest` | `CreateWorktreeResponse` | Create an independent worktree through Orca, using a discovered repository and bounded name, source, optional agent and setup policy. |
+| `POST /api/projects/:projectId/worktrees` | JSON `CreateWorktreeRequest` | `CreateWorktreeResponse` | Create an owned local Git worktree from a discovered repository and validated source. |
 | `POST /api/projects/:projectId/nodes/:nodeId/rename-worktree` | JSON `RenameNodeTitleRequest` | `RenameNodeTitleResponse` | Change only the exact project worktree's display name. |
 | `GET /api/projects/:projectId/commit-graph` | `nodeId` (optional discovered worktree) | `Section<CommitGraphData>` | Bounded local topological history with parent SHAs and ref labels; all refs for project scope, HEAD for worktree scope. |
 | `GET /api/health` | None | `HealthResponse` (`{ status: 'ok', readOnly: true }`) | Process liveness check for backend server. |
-| `GET /api/prerequisites` | None | `PrerequisitesStatus` | Verifies local Orca installation: desktop application, CLI, and orchestration skill. |
-| `GET /api/usage` | `refresh=1` (optional, standalone) | `Section<UsageData>` | Standalone bounded native provider quota reads; manual refresh bypasses cache and shares in-flight reads. Legacy Orca reads cached snapshots. No credentials or account identities. |
+| `GET /api/prerequisites` | None | `PrerequisitesStatus` | Standalone readiness metadata; no Orca installation checks. |
+| `GET /api/usage` | `refresh=1` (optional, standalone) | `Section<UsageData>` | Standalone bounded native provider quota reads; manual refresh bypasses cache and shares in-flight reads. No credentials or account identities. |
 | `GET /api/connections` | None | `Section<LocalConnectionsData>` | Standalone host CLI installation and system sign-in detection. |
 | `GET /api/provider-accounts/:provider` | None | `ProviderAccount[]` | Read bounded profile and native sign-in status metadata without credentials or rescanning integrations. |
 | `POST /api/provider-accounts/:provider` | `AddProviderAccountRequest` | `ProviderAccount[]` | Create an isolated Codex/Claude sign-in profile. |
@@ -80,7 +83,7 @@ Implemented in [`server/http/api.ts`](server/http/api.ts), [`server/http/readRou
 | `POST /api/provider-accounts/:provider/login` | `SelectProviderAccountRequest` | `ProviderAccount[]` | Start fixed native browser OAuth for an exact registered profile, with a ten-minute timeout. |
 | `POST /api/provider-accounts/:provider/delete` | `SelectProviderAccountRequest` | `ProviderAccount[]` | Remove only an owned saved profile after UI confirmation; System default cannot be removed. |
 | `GET /api/resources` | None | `AppResources` | Electron process working sets on desktop; backend resident memory on web. Excludes agents. |
-| `GET /api/projects` | None | `Section<Inventory>` | Lists registered Orca projects (Git repos and folder workspaces). |
+| `GET /api/projects` | None | `Section<Inventory>` | Lists locally registered ADE repositories and folder workspaces. |
 | `GET /api/projects/:projectId/snapshot` | `runId` (optional) | `DashboardSnapshot` | Full project dashboard graph, runtime metadata, nodes, edges, tasks, progress, and activity. |
 | `GET /api/projects/:projectId/events` | `runId` (optional) | SSE stream (`text/event-stream`) | Pushes full snapshot updates as `event: snapshot` with `id: <revision>` on collection changes. 15s comment heartbeats (`: heartbeat`). |
 | `GET /api/projects/:projectId/nodes/:nodeId` | `runId` (optional), `cursor` (optional, <= 512 chars), `limit` (optional, 1..200, default 100; UI requests 20) | `NodeDetails` | Node facts, tool/tasks/activity metadata and a source-bound conversation section. Worktrees and terminal nodes do not expose conversation history. |
@@ -88,10 +91,10 @@ Implemented in [`server/http/api.ts`](server/http/api.ts), [`server/http/readRou
 | `POST /api/projects/:projectId/nodes/:nodeId/message` | JSON `SendMessageRequest` | `SendMessageResponse` | User-authored text and optional bounded base64 attachments. Uploads require a discovered agent and a connected local terminal; never accept client-supplied host paths. |
 | `GET /api/projects/:projectId/nodes/:nodeId/chat-options` | `runId` (optional) | `Section<AgentChatOptions>` | Exact project/pane-bound native session options or local terminal provider controls and live model catalog. Unsupported runtimes degrade explicitly. |
 | `POST /api/projects/:projectId/nodes/:nodeId/chat-options` | `runId` (optional); JSON `SetAgentChatOptionRequest` | `AgentChatOptions` | Apply a catalog-validated model, effort, fast mode or service tier; or a fixed provider-picker/toggle action. Derive sessions/handles server-side; native mutations use fresh fences and operation fingerprints. No arbitrary commands or RPC parameters. |
-| `POST /api/projects/:projectId/nodes/:nodeId/close-tab` | None | `CloseAgentTabResponse` | Closes an agent's terminal tab via Orca CLI (`orca terminal close --terminal <handle> --tab --json`). |
-| `POST /api/projects/:projectId/nodes/:nodeId/rename` | JSON `RenameNodeTitleRequest` | `RenameNodeTitleResponse` | Renames an agent terminal tab via Orca CLI (`orca terminal rename --terminal <handle> [--title <text>] --json`). |
-| `POST /api/projects/:projectId/nodes/:nodeId/create-agent` | JSON `CreateAgentRequest` | `CreateAgentResponse` | Spawns a new agent terminal in a worktree via Orca CLI (`orca terminal create --worktree <selector> --command <cmd> [--title <title>] --json`). |
-| `POST /api/projects/:projectId/nodes/:nodeId/delete-worktree` | None | `DeleteWorktreeResponse` | Removes a worktree via Orca CLI (`orca worktree rm --worktree <selector> --force --json`). Also accessible via `DELETE /api/projects/:projectId/nodes/:nodeId/worktree`. |
+| `POST /api/projects/:projectId/nodes/:nodeId/close-tab` | None | `CloseAgentTabResponse` | Closes the exact owned local terminal/session entry. |
+| `POST /api/projects/:projectId/nodes/:nodeId/rename` | JSON `RenameNodeTitleRequest` | `RenameNodeTitleResponse` | Renames the exact local session display title. |
+| `POST /api/projects/:projectId/nodes/:nodeId/create-agent` | JSON `CreateAgentRequest` | `CreateAgentResponse` | Launches a detected provider with fixed validated settings in a discovered worktree. |
+| `POST /api/projects/:projectId/nodes/:nodeId/delete-worktree` | None | `DeleteWorktreeResponse` | Removes a clean unlocked non-main checkout with no open sessions; never forces deletion. Also accepts `DELETE /api/projects/:projectId/nodes/:nodeId/worktree`. |
 
 ## Error Responses
 
@@ -113,7 +116,7 @@ Standard error codes:
 
 ## Development Conventions for Agents
 
-1. **Git scope**: Do not push, create remote branches, or perform PR actions unless the user explicitly requests them. Application runtime code must never perform these actions.
+1. **Git scope**: Do not push, create remote branches, or perform PR actions during development unless the user explicitly requests those actions. The Source Control feature may perform its fixed typed Git/PR actions only in response to an explicit user action; passive runtime collection must never mutate Git or publish anything.
 2. **Observe Concurrency Boundaries**:
    - Backend files: [`server/`](server/), [`shared/contracts.ts`](shared/contracts.ts), [`scripts/`](scripts/).
    - Frontend files: [`src/`](src/), [`index.html`](index.html).
@@ -139,13 +142,12 @@ Standard error codes:
 - `src/features/github/useGitHubActivity.ts`: shared repository/worktree activity loading; worktree history lives in Inspect Worktree while the sidebar remains repository-wide.
 - `src/components/ui/` and `src/components/providers/`: shared Modal, Popover, ContextMenu, Select, AgentPicker, dialog actions/errors, reusable controls and provider icons. Use these primitives instead of duplicating overlay lifecycle or dismissal code.
 - `src/hooks/`, `src/styles/`, `src/assets/`: common hooks, domain-scoped stylesheets (`tokens.css`, `base.css`, `layout.css`, `workflow.css`, `panels.css`, `modals.css` imported via `global.css`), and attributed assets.
-- `server/http/`: request validation, routing (`api.ts`, `readRoutes.ts`, `actionRoutes.ts`), loopback/origin constraints, and response envelopes (`httpUtils.ts`).
-- `server/integrations/` and `server/integrations/orca/`: fixed read-only Orca (`inventory.ts`, `graph.ts`, `graphNodes.ts`, `graphWorkers.ts`, `nodeDetails.ts`, `actions.ts`, `prerequisites.ts`, `state.ts`, `utils.ts`), GitHub, CLI (`cli.ts`, `cliValidators.ts`), and usage adapters.
+- `server/http/`: request validation, routing (`api.ts`, `localRoutes.ts`), loopback/origin constraints, and response envelopes (`httpUtils.ts`).
+- `server/integrations/`: bounded Git/GitHub readers and fixed CLI validation. No Orca runtime transport or discovery remains.
 - `server/providers/`: exact-session transcript parsers and effective model/effort readers.
-- `server/integrations/orca/chat/`: `runtime.ts` owns the bounded fixed-method local transport; `options.ts` binds and validates exact sessions, models and mutations; `terminalAdapter.ts` selects the small provider adapters in `providers/`. Native options share Orca's live schema across providers. Terminal adapters encode only verified provider commands; do not hardcode model inventories, guess defaults, or treat a submitted command as a confirmed setting. Reuse the agent-message terminal lock.
-- `server/providers/toolActivity.ts` decodes bounded tool-call metadata separately from public conversation; `server/integrations/orca/liveActivity.ts` binds it to exact panes and reads run-scoped toolkit mailbox metadata. Graph packets must use stable observed event IDs, never working-state inference.
+- `server/providers/toolActivity.ts` decodes bounded recorded tool calls; standalone sessions bind them exactly. `transcriptUtils.ts`, `publicTranscript.ts` and `conversationCursors.ts` own bounded public parsing and source-bound cursors. Graph packets require stable observed event IDs.
 - Tool edit previews contain only bounded recorded edit arguments: at most two files/chunks, 16 lines each, and 200 characters per line. Show observed patch context or line numbers only; do not read current files, infer applied success, expose tool results/thinking, or mix edit previews into conversation history.
-- `server/services/`: snapshot collection, caching, and subscriptions. `server/index.ts` stays the process entry.
+- `server/services/`: attachment validation/staging and observed task progress. `server/index.ts` stays the process entry.
 - `shared/contracts.ts` stays dependency-free and shared by both layers.
 - Keep backend tests next to their modules; frontend behavior/render tests live in `src/tests/`.
 - Read the scoped `src/AGENTS.md` or `server/AGENTS.md` before changes in that layer.

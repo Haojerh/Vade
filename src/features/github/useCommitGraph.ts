@@ -50,5 +50,5 @@ export function useCommitGraph(projectId: string | null, nodeId: string | undefi
   }, [key, reads.acknowledge]);
   const retry = useCallback(() => setAttempt(value => value + 1), []);
   const current = state.key === key ? state : { key, section: null, error: '', loading: true, unread: new Set<string>() };
-  return { ...current, unread: new Set([...current.unread].filter(sha => !reads.ids.has(sha))), readIds: reads.ids, acknowledge, retry };
+  return { ...current, ...(projectId?{projectId}:{}),...(nodeId?{nodeId}:{}), unread: new Set([...current.unread].filter(sha => !reads.ids.has(sha))), readIds: reads.ids, acknowledge, retry };
 }

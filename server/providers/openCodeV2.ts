@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { ToolActivity } from '../../shared/contracts.js';
-import type { BoundedTranscriptReadResult } from '../integrations/orca/utils.js';
+import type { BoundedTranscriptReadResult } from '../providers/transcriptUtils.js';
 import { toolActivityFromCall } from './toolActivity.js';
 
 function open(file: string): DatabaseSync {

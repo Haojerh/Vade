@@ -15,6 +15,8 @@ import { AgentHistory } from './agentHistory.js';
 import { OrganizationRuntime } from './organization.js';
 import { LocalSpeech } from './speech.js';
 import { WorkspaceFiles } from './workspaceFiles.js';
+import { WorkspaceActions } from './workspaceActions.js';
+import { SourceControl } from './sourceControl.js';
 import { SessionHandoffs } from './sessionHandoff.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
@@ -36,6 +38,8 @@ export class LocalRuntime {
   readonly organization: OrganizationRuntime;
   readonly speech: LocalSpeech;
   readonly files: WorkspaceFiles;
+  readonly fileActions: WorkspaceActions;
+  readonly sourceControl: SourceControl;
   readonly handoffs: SessionHandoffs;
   desktopMemory: { bytes: number; at: number; pids?: number[] } | null = null;
   readonly id = crypto.randomUUID();
@@ -46,6 +50,8 @@ export class LocalRuntime {
   constructor(readonly store = new AdeStore(), runner: CommandRunner = defaultCommandRunner, connectionsService?: LocalConnections) {
     this.git = new AdeGit(store, runner);
     this.files = new WorkspaceFiles(store, this.git);
+    this.fileActions = new WorkspaceActions(store, this.files);
+    this.sourceControl = new SourceControl(this.git,this.files);
     this.speech = new LocalSpeech(store.directory);
     this.history = new AgentHistory(store);
     this.accounts = new ProviderAccounts(store, runner);

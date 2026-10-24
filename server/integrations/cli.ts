@@ -1,9 +1,8 @@
 import { spawn } from 'node:child_process';
-import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { Issue, ErrorCode } from '../../shared/contracts.js';
-import { validateOrcaArgs, validateGhEndpoint } from './cliValidators.js';
+import { validateGhEndpoint } from './cliValidators.js';
 
 export class CliError extends Error {
   public issue: Issue;
@@ -80,10 +79,6 @@ export function resolveExecutable(envVar: string, defaultName: string, candidate
   return defaultName;
 }
 
-const localAppData = process.env.LOCALAPPDATA || '';
-export const ORCA_PATH = resolveExecutable('ORCA_PATH', 'orca', [
-  path.join(localAppData, 'Programs', 'orca', 'resources', 'bin', 'orca.exe'),
-]);
 export const GIT_PATH = resolveExecutable('GIT_PATH', 'git');
 export const GH_PATH = resolveExecutable('GH_PATH', 'gh');
 
@@ -192,15 +187,6 @@ export async function runDeduplicatedCommand(
   return promise;
 }
 
-export interface OrcaEnvelope<T> {
-  id?: string;
-  ok: boolean;
-  result: T;
-  _meta?: {
-    runtimeId?: string;
-  };
-}
-
 export function cleanErrorMessage(msg: string): string {
   if (!msg || typeof msg !== 'string') return '';
   let cleaned = msg.trim();
@@ -226,97 +212,11 @@ export function cleanErrorMessage(msg: string): string {
   return cleaned || msg;
 }
 
-export interface RunOrcaOptions {
-  timeoutMs?: number;
-  env?: NodeJS.ProcessEnv;
-  replaceEnv?: boolean;
-}
-
-export async function runOrca<T = any>(
-  args: string[],
-  runner: CommandRunner = defaultCommandRunner,
-  options?: RunOrcaOptions
-): Promise<OrcaEnvelope<T>> {
-  validateOrcaArgs(args);
-
-  const timeoutMs = options?.timeoutMs ?? 8000;
-  const res = await runDeduplicatedCommand(
-    ORCA_PATH,
-    args,
-    {
-      timeoutMs,
-      ...(options?.env ? { env: options.env, replaceEnv: options.replaceEnv } : {}),
-    },
-    runner
-  );
-
-  if (res.exitCode !== 0) {
-    let msg = `Orca CLI exited with code ${res.exitCode}`;
-    let issueCode: ErrorCode = 'CLI_FAILED';
-    try {
-      const parsed = JSON.parse(res.stdout);
-      if (parsed && typeof parsed.error === 'string') {
-        msg = parsed.error;
-      } else if (parsed && parsed.error && typeof parsed.error.message === 'string') {
-        msg = parsed.error.message;
-        if (parsed.error.code === 'source_changed' || parsed.error.data?.reason === 'source_changed') {
-          issueCode = 'SOURCE_CHANGED';
-        } else if (
-          parsed.error.code === 'transcript_required' ||
-          parsed.error.data?.reason === 'provider_unsupported' ||
-          parsed.error.data?.reason === 'session_not_reported' ||
-          parsed.error.data?.reason === 'release_completed'
-        ) {
-          issueCode = 'CONVERSATION_UNSUPPORTED';
-        }
-      } else if (parsed && typeof parsed.message === 'string') {
-        msg = parsed.message;
-      }
-    } catch {
-      if (res.stderr.trim()) {
-        msg = res.stderr.trim().slice(0, 500);
-      }
-    }
-    msg = cleanErrorMessage(msg);
-    throw new CliError(issueCode, msg, false, res.exitCode, res.stderr);
-  }
-
-  try {
-    const envelope = JSON.parse(res.stdout);
-    if (!envelope || typeof envelope !== 'object') {
-      throw new Error('Expected JSON object');
-    }
-    if (envelope.ok !== true || envelope.result === undefined) {
-      const msg = cleanErrorMessage(
-        envelope.error?.message || envelope.message || 'Orca command reported failure'
-      );
-      const isUnsupported =
-        envelope.error?.code === 'transcript_required' ||
-        envelope.error?.data?.reason === 'provider_unsupported' ||
-        envelope.error?.data?.reason === 'session_not_reported';
-      throw new CliError(isUnsupported ? 'CONVERSATION_UNSUPPORTED' : 'INVALID_UPSTREAM', msg, false);
-    }
-    return envelope as OrcaEnvelope<T>;
-  } catch (err: any) {
-    if (err instanceof CliError) throw err;
-    throw new CliError('INVALID_UPSTREAM', `Failed to parse Orca JSON response: ${err.message}`, false);
-  }
-}
-
-export async function runGit(
-  args: string[],
-  cwd?: string,
-  runner: CommandRunner = defaultCommandRunner
-): Promise<string> {
-  if (args.length !== 2 || args[0] !== 'remote' || args[1] !== '-v') {
-    throw new CliError('INVALID_ARGUMENT', `Git command arguments not allowed: ${args.join(' ')}`);
-  }
-
-  const res = await runDeduplicatedCommand(GIT_PATH, args, { cwd, timeoutMs: 12000 }, runner);
-  if (res.exitCode !== 0) {
-    throw new CliError('CLI_FAILED', `git remote exited with code ${res.exitCode}: ${res.stderr.slice(0, 300)}`);
-  }
-  return res.stdout;
+export async function runGit(args:string[],cwd?:string,runner:CommandRunner=defaultCommandRunner):Promise<string>{
+  if(args.length!==2||args[0]!=='remote'||args[1]!=='-v')throw new CliError('INVALID_ARGUMENT',`Git command arguments not allowed: ${args.join(' ')}`);
+  const result=await runDeduplicatedCommand(GIT_PATH,args,{cwd,timeoutMs:12000},runner);
+  if(result.exitCode!==0)throw new CliError('CLI_FAILED',`git remote exited with code ${result.exitCode}: ${result.stderr.slice(0,300)}`);
+  return result.stdout;
 }
 
 export async function runGh(

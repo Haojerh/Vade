@@ -14,7 +14,8 @@ else {
   });
   app.whenReady().then(async () => {
     backend = utilityProcess.fork(path.join(__dirname, '../build/server.cjs'), [], {
-      cwd: app.getAppPath(),
+      // ASAR is a virtual directory; native process startup requires a real cwd.
+      cwd: app.isPackaged ? process.resourcesPath : app.getAppPath(),
       env: { ...process.env, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.getAppPath(), 'build/ptyHost.cjs'), ADE_SPEECH_WORKER: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/speechWorker.cjs'), ADE_ORCHESTRATION_RESOURCES: path.join(app.getAppPath(), 'build/orchestration') },
       stdio: 'pipe', serviceName: 'ADE local runtime',
     });
@@ -23,7 +24,7 @@ else {
     const ready = new Promise((resolve, reject) => {
       const timeout = setTimeout(() => reject(new Error('The ADE backend did not start within 20 seconds.')), 20000);
       backend.once('message', message => { clearTimeout(timeout); if (message?.type === 'ready') resolve(); else reject(new Error('Unexpected backend startup response.')); });
-      backend.once('exit', code => { clearTimeout(timeout); reject(new Error(`ADE backend exited (${code}). Check whether port 4317 is already in use.`)); });
+      backend.once('exit', code => { clearTimeout(timeout); reject(new Error(`ADE backend exited (${code}) before it became ready.`)); });
     });
     try {
       await ready;
@@ -36,7 +37,7 @@ else {
       const memoryTimer = setInterval(reportMemory, 5000);
       backend.once('exit', () => clearInterval(memoryTimer));
       const window = new BrowserWindow({ width: 1440, height: 920, minWidth: 760, minHeight: 540,
-        title: 'Vade', show: false, backgroundColor: '#181818',
+        title: 'Vade', icon: path.join(app.getAppPath(), 'resources/branding/vade.png'), show: false, backgroundColor: '#181818',
         ...(process.platform === 'win32' ? {
           titleBarStyle: 'hidden',
           titleBarOverlay: { color: '#00000000', symbolColor: '#d4d4d4', height: 35 },

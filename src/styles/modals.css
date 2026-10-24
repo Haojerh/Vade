@@ -265,10 +265,9 @@ dialog.node-modal-dialog.is-closing::backdrop {
   flex-shrink: 0;
 }
 
-@media (max-width: 900px) {
-  .node-modal-dialog:not(.confirmation-dialog) .modal-dialog-header { position: relative; padding-right: 58px; }
-  .node-modal-dialog .modal-header-actions > .btn-close { position: absolute; top: 14px; right: 14px; width: 26px; height: 26px; min-height: 26px; margin: 0; display: grid; place-items: center; z-index: 2; }
-}
+.node-modal-dialog:not(.confirmation-dialog) .modal-dialog-header { position: relative; padding-right: 58px; }
+.node-modal-dialog .modal-header-actions > .btn-close { position: absolute; top: 14px; right: 14px; width: 26px; height: 26px; min-height: 26px; margin: 0; display: grid; place-items: center; z-index: 2; }
+@media (max-width: 700px) { .node-modal-dialog .modal-meta-row, .node-modal-dialog .modal-node-id { display:none; } }
 @media (max-width: 600px) {
   dialog.node-modal-dialog:not(.confirmation-dialog) {
     width: calc(100vw - 24px);
@@ -1058,6 +1057,9 @@ kbd {
 
 /* Worktree Context Menu & Action Buttons */
 .worktree-context-menu {
+  max-height:calc(100dvh - 16px);
+  max-width:calc(100vw - 16px);
+  overflow:auto;
   position: fixed;
   background: var(--surface-1);
   border: 1px solid var(--border-main);
@@ -1097,6 +1099,8 @@ kbd {
 .context-menu-item:hover {
   background: var(--surface-hover);
 }
+.context-menu-separator { height:1px; margin:4px; background:var(--border-main); }
+.context-menu-shortcut { margin-left:auto; padding-left:20px; font-size:11px; color:var(--text-muted); }
 
 .context-menu-item-danger {
   color: var(--state-failed-text);

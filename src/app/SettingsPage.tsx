@@ -14,6 +14,7 @@ import { Select } from '../components/ui/Select';
 import type { TerminalShell } from '../../shared/contracts';
 import { TERMINAL_SHELL_OPTIONS, readTerminalShell, writeTerminalShell } from './terminalShellPreference';
 import { setEditorAutosave, useEditorAutosave } from '../features/explorer/editorPreferences';
+import { readAgentView, writeAgentView, type AgentView } from './agentViewPreference';
 
 type SettingsPageProps = Pick<ProjectSelectorProps, 'theme' | 'onToggleTheme' | 'cardStateColors' | 'onToggleCardStateColors'
   | 'orchestrationSeparated' | 'onToggleOrchestrationSeparated' | 'commitGraphEnabled' | 'onToggleCommitGraph'
@@ -35,6 +36,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = props => {
   const [search, setSearch] = useState('');
   const [terminalShell, setTerminalShell] = useState<TerminalShell>(readTerminalShell);
   const autosave = useEditorAutosave();
+  const [agentView,setAgentView] = useState<AgentView>(readAgentView);
   const current = sections.find(section => section.id === props.section) ?? sections[0];
   const options = [
     { section: 'general', label: 'Editor autosave', description: 'Save workspace files after a short pause and when leaving the editor. When off, save with Ctrl/Cmd+S.', checked: autosave, change: setEditorAutosave },
@@ -51,6 +53,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = props => {
   const showAwake = query ? matches('Keep computer awake On Agent Off Sleep', 'Choose when Vade prevents system sleep.') : current.id === 'general';
   const showNotifications = query ? matches('Agent finished notifications sound system popup', 'Get notified when an agent finishes.') : current.id === 'general';
   const showTerminal = query ? matches('Terminal PowerShell Command Prompt Bash Shell', 'Shell used when adding a Terminal from Add Agent.') : current.id === 'general';
+  const showAgentView = query ? matches('Agent default view','Chat UI first Terminal first overlay') : current.id === 'general';
   const showVoice = query ? matches('Voice dictation microphone speech browser local offline model', 'Dictate into Chat with Ctrl+E.') : current.id === 'voice';
   const navigation = useRef<HTMLElement>(null);
   const [indicator, setIndicator] = useState<React.CSSProperties>({ opacity: 0 });
@@ -84,11 +87,12 @@ export const SettingsPage: React.FC<SettingsPageProps> = props => {
         {!query && current.id === 'organization' ? <OrganizationBuilder /> : !query && current.id === 'setup' ? <WorkflowSetup /> : !query && current.id === 'agents' ? <AgentSettings /> : !query && (current.id === 'integrations' || current.id === 'accounts') ? <ConnectionSettings key={current.id} kind={current.id} /> : <section className="settings-preferences" aria-label={query ? 'Matching settings' : `${current.label} preferences`}>
           {showAppearance && <div className="settings-page-row"><div><h2>Appearance</h2><p>Choose your preferred color theme.</p></div><button className="btn btn-secondary" onClick={props.onToggleTheme} aria-label={`Toggle theme, current theme is ${props.theme}`}><Icon name={props.theme === 'dark' ? 'sun' : 'moon'} size={16} />{props.theme === 'dark' ? 'Dark' : 'Light'}</button></div>}
           {showAwake && <ComputerAwakeSetting />}
+          {showAgentView && <label className="settings-page-row settings-dropdown-row"><div><span className="settings-page-label">Agent default view</span><p>Choose what opens first when entering an agent overlay.</p></div><Select aria-label="Agent default view" value={agentView} onChange={event=>{const value=event.target.value as AgentView;setAgentView(value);writeAgentView(value);}}><option value="chat">Chat UI first</option><option value="terminal">Terminal first</option></Select></label>}
           {showVoice && <VoiceDictationSettings />}
           {showNotifications && <AgentNotificationSettings />}
           {showTerminal && <label className="settings-page-row settings-dropdown-row"><div><span className="settings-page-label">Terminal</span><p>Shell used when adding a Terminal from Add Agent.</p></div><Select aria-label="Terminal shell" value={terminalShell} onChange={event => { const value = event.target.value as TerminalShell; setTerminalShell(value); writeTerminalShell(value); }}>{TERMINAL_SHELL_OPTIONS.map(option => <option key={option.id} value={option.id}>{option.label}</option>)}</Select></label>}
           {filtered.map(option => <label className="settings-page-row" key={option.label}><div><span className="settings-page-label">{option.label}</span><p>{option.description}</p></div><input type="checkbox" role="switch" checked={option.checked} onChange={event => option.change?.(event.target.checked)} disabled={!option.change} /></label>)}
-          {!showAppearance && !showTerminal && !showAwake && !showNotifications && !showVoice && !filtered.length && <p className="settings-no-results">No settings found. Try another search.</p>}
+          {!showAppearance && !showTerminal && !showAgentView && !showAwake && !showNotifications && !showVoice && !filtered.length && <p className="settings-no-results">No settings found. Try another search.</p>}
         </section>}
       </div>
     </main>

@@ -30,6 +30,8 @@ interface GitHubPanelProps {
   onCollapse?: () => void;
   commitGraphEnabled?: boolean;
   worktreeBranch?: string;
+  onCreatePr?:()=>void;
+  refreshVersion?:number;
 }
 
 const REPOSITORY_QUERY: GitHubQuery = { scope: 'general' };
@@ -47,6 +49,8 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   onCollapse,
   commitGraphEnabled = false,
   worktreeBranch,
+  onCreatePr,
+  refreshVersion=0,
 }) => {
   const instanceId = React.useId();
   const titleId = `${instanceId}-github-title`;
@@ -58,7 +62,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
     data?.projectKind === 'folder';
   const [activeTab, setActiveTab] = useState<GitHubTabKey>('commits');
   const [graphRefresh, setGraphRefresh] = useState(0);
-  const graph = useCommitGraph(projectId, query.scope === 'worktree' ? query.nodeId : undefined, worktreeBranch, graphRefresh, commitGraphEnabled && !isFolder, project?.repoIds.join('|'));
+  const graph = useCommitGraph(projectId, query.scope === 'worktree' ? query.nodeId : undefined, worktreeBranch, graphRefresh+refreshVersion, !isFolder, project?.repoIds.join('|'));
   const graphUnread = graph.unread.size;
   const [prFilter, setPrFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
@@ -113,7 +117,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const { commits, prs, issues } = pagination;
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
-  const more = commitGraphEnabled && activeTab === 'commits' ? null : pagination.nextPage(activeTab);
+  const more = !!projectId && activeTab === 'commits' ? null : pagination.nextPage(activeTab);
   const loadingMore = pagination.loading.includes(activeTab);
   const pageError = pagination.errors[activeTab];
   useEffect(() => {
@@ -150,9 +154,9 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   }, [activeTab]);
 
   return (
-    <section className={`dashboard-panel github-panel ${embedded ? 'worktree-history-panel' : ''}`} aria-labelledby={titleId}>
+    <section className={`dashboard-panel github-panel ${embedded ? 'worktree-history-panel' : ''}`} aria-labelledby={embedded?titleId:undefined} aria-label={embedded?undefined:'Repository activity'}>
       {/* Panel Header */}
-      <div className="panel-header github-header">
+      {embedded&&<div className="panel-header github-header">
         <div className="github-header-top">
           <div className="panel-title-row">
             <svg
@@ -221,7 +225,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
             <div className="panel-subtitle text-muted">No associated repository</div>
           )}
         </div>
-      </div>
+      </div>}
 
       {isFolder ? (
         <div className="github-folder-empty-state" role="status">
@@ -264,14 +268,14 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
               id={tabId('commits')}
               aria-selected={activeTab === 'commits'}
               aria-controls={panelId('commits')}
-              className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${(commitGraphEnabled ? graphUnread : unread.commits.size) ? 'github-has-new' : ''}`}
+              className={`tab-btn ${activeTab === 'commits' ? 'active' : ''} ${(projectId ? graphUnread : unread.commits.size) ? 'github-has-new' : ''}`}
               onClick={() => selectTab('commits')}
             >
               Commits
-              {!commitGraphEnabled && unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
-              {commitGraphEnabled && graphUnread > 0 && <span className="sr-only">{graphUnread} new items</span>}
-              {!commitGraphEnabled && <span className="tab-count font-mono" title={`${commits.length} loaded`}>{commits.length}{pagination.nextPage('commits') ? '+' : ''}</span>}
-              {commitGraphEnabled && graph.section?.data && <span className="tab-count font-mono" title={`${graph.section.data.commits.length} local commits loaded`}>{graph.section.data.commits.length}{graph.section.data.truncated ? '+' : ''}</span>}
+              {!projectId && unread.commits.size > 0 && <span className="sr-only">{unread.commits.size} new items</span>}
+              {projectId && graphUnread > 0 && <span className="sr-only">{graphUnread} new items</span>}
+              {!projectId && <span className="tab-count font-mono" title={`${commits.length} loaded`}>{commits.length}{pagination.nextPage('commits') ? '+' : ''}</span>}
+              {projectId && graph.section?.data && <span className="tab-count font-mono" title={`${graph.section.data.commits.length} local commits loaded`}>{graph.section.data.commits.length}{graph.section.data.truncated ? '+' : ''}</span>}
             </button>
 
             <button
@@ -307,6 +311,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
 
           {/* Tab Panels */}
           <div className="panel-content github-tab-content" ref={scrollRef}>
+            {activeTab==='prs'&&onCreatePr&&<button type="button" className="btn btn-secondary btn-xs scm-pr-entry" onClick={onCreatePr}><Icon name="git-pull-request" size={13}/>Create PR</button>}
             {activeTab === 'commits' && (
               <CommitsTabPane
                 panelId={panelId('commits')}
@@ -347,7 +352,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
               />
             )}
 
-            {!(commitGraphEnabled && activeTab === 'commits') && (
+            {!(!!projectId && activeTab === 'commits') && (
               <div ref={sentinelRef} className="github-pagination" aria-live="polite" aria-busy={loadingMore}>
                 {pageError && <span role="alert">{pageError}</span>}
                 {loadingMore ? (

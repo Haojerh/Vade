@@ -1,7 +1,8 @@
 import { Disclosure } from '../../components/ui/Disclosure';
 import React, { useEffect, useRef, useState } from 'react';
-import type { OrganizationConfig, OrganizationNode, WorkflowModel, WorkflowProvider, WorkflowRun, WorkflowSetupStatus } from '../../../shared/contracts';
-import { cancelWorkflowRun, fetchOrganization, fetchWorkflowModels, fetchWorkflowRuns, fetchWorkflowSetup, saveOrganization } from '../../api/client';
+import type { OrganizationConfig, OrganizationNode, WorkflowModel, WorkflowProvider, WorkflowSetupStatus } from '../../../shared/contracts';
+import { fetchOrganization, fetchWorkflowModels, fetchWorkflowSetup, saveOrganization } from '../../api/client';
+import { WorkflowRuns } from './WorkflowRuns';
 import { Icon } from '../../components/ui/Icon';
 import { Select } from '../../components/ui/Select';
 import { WorkflowModelPicker } from './WorkflowModelPicker';
@@ -165,15 +166,4 @@ export function OrganizationBuilder() {
       </>}
     </>}
   </div>;
-}
-
-function WorkflowRuns() {
-  const [runs, setRuns] = useState<WorkflowRun[]>([]), [error, setError] = useState<string | null>(null), [busy, setBusy] = useState<string | null>(null);
-  useEffect(() => {
-    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout>;
-    const read = async () => { try { const next = await fetchWorkflowRuns(controller.signal); if (!controller.signal.aborted) { setRuns(next); setError(null); } } catch (error) { if (!controller.signal.aborted) setError((error as Error).message); } finally { if (!controller.signal.aborted) timer = setTimeout(read, 3000); } }; void read();
-    return () => { controller.abort(); clearTimeout(timer); };
-  }, []);
-  async function cancel(id: string) { setBusy(id); try { await cancelWorkflowRun(id); setRuns(await fetchWorkflowRuns()); } catch (error) { setError((error as Error).message); } finally { setBusy(null); } }
-  return <section className="organization-runs"><h2>Workflow runs</h2>{error && <p role="alert" className="organization-error">{error}</p>}{!runs.length && <p className="organization-note">Runs appear here after you send a task with Workflow / Organization enabled.</p>}{[...runs].sort((a, b) => Number(['completed', 'failed', 'cancelled'].includes(a.state)) - Number(['completed', 'failed', 'cancelled'].includes(b.state))).slice(0, 20).map(run => <details key={run.id}><summary><span>{run.originalRequest.slice(0, 90) || 'Attached task'} <small className="text-muted">? {run.id.slice(0, 8)}</small></span><span>{run.state}</span></summary><div className="organization-run-details"><p>Started {new Date(run.createdAt).toLocaleString()} · Orchestrator {run.orchestratorId.slice(0, 8)}</p>{run.planReason && <p>{run.planReason}</p>}{run.integrationPath && <p>Integration worktree: <code>{run.integrationPath}</code></p>}{run.error && <p className="organization-error">{run.error}</p>}{run.steps.map(step => <div className="organization-run-step" key={step.nodeId}><strong>{run.config.nodes.find(node => node.id === step.nodeId)?.title}</strong><span>{step.state}{step.stream ? ` · ${step.stream}` : ''}</span>{step.result && <p>{step.result}</p>}</div>)}{run.result && <p>{run.result}</p>}{!['completed', 'failed', 'cancelled'].includes(run.state) && <button className="btn btn-secondary" disabled={busy === run.id} onClick={() => void cancel(run.id)}>Cancel run · keep worktrees</button>}</div></details>)}</section>;
 }

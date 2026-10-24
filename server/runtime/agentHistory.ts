@@ -9,7 +9,7 @@ import { publicMessage } from './conversation.js';
 import { validCodexThreadId } from './codexThread.js';
 import { agyConversationSaved } from './agyBinding.js';
 import { CliError } from '../integrations/cli.js';
-import { isPathInsideRoots } from '../integrations/orca/utils.js';
+import { isPathInsideRoots } from '../providers/transcriptUtils.js';
 
 type Provider = Exclude<AdeProvider, 'terminal'>;
 interface Indexed { id: string; provider: Provider; threadId: string; cwd: string | null; title: string; lastMessage: string | null; messageCount: number; limited: boolean; updatedAt: string; model: string | null; file: string; root: string }

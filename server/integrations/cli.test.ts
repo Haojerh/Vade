@@ -1,7 +1,6 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  runOrca,
   runGit,
   runGh,
   runDeduplicatedCommand,
@@ -9,7 +8,7 @@ import {
   CommandRunner,
   defaultCommandRunner,
 } from './cli.js';
-import { validateOrcaArgs, validateGhEndpoint } from './cliValidators.js';
+import { validateGhEndpoint } from './cliValidators.js';
 
 describe('server/cli', () => {
   test('replacement environment does not restore inherited startup variables', async () => {
@@ -35,234 +34,6 @@ describe('server/cli', () => {
     for (const suffix of ['0', '-1', '10001', '2&page=3', '2&other=true']) {
       assert.throws(() => validateGhEndpoint(`repos/owner/repo/commits?per_page=20&page=${suffix}`));
     }
-  });
-  test('validates Orca allowlisted commands', () => {
-    // Valid commands
-    assert.doesNotThrow(() => validateOrcaArgs(['status', '--json']));
-    assert.doesNotThrow(() => validateOrcaArgs(['project', 'list', '--json']));
-    assert.doesNotThrow(() => validateOrcaArgs(['project', 'setups', '--json']));
-    assert.doesNotThrow(() => validateOrcaArgs(['repo', 'list', '--json']));
-    assert.doesNotThrow(() => validateOrcaArgs(['worktree', 'ps', '--limit', '200', '--json']));
-    assert.doesNotThrow(() =>
-      validateOrcaArgs(['worktree', 'list', '--repo', 'id:123', '--limit', '200', '--json'])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs(['terminal', 'list', '--worktree', 'id:abc', '--limit', '100', '--json'])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs(['terminal', 'list', '--worktree', 'id:abc', '--limit', '100', '--include-visual-layouts', '--json'])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs(['terminal', 'read', '--terminal', 'term_123', '--limit', '100', '--json'])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs([
-        'terminal',
-        'read',
-        '--terminal',
-        'term_123',
-        '--cursor',
-        'cur1',
-        '--limit',
-        '50',
-        '--json',
-      ])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs(['orchestration', 'run-list', '--limit', '50', '--json'])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs(['orchestration', 'worker-list', '--run', 'run_123', '--limit', '100', '--json'])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs(['orchestration', 'task-list', '--run', 'run_123', '--json'])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs([
-        'orchestration',
-        'worker-read',
-        '--dispatch',
-        'ctx_123',
-        '--source',
-        'transcript',
-        '--limit',
-        '100',
-        '--json',
-      ])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs([
-        'orchestration',
-        'worker-read',
-        '--dispatch',
-        'ctx_abc-123',
-        '--source',
-        'transcript',
-        '--cursor',
-        'server_cursor_1',
-        '--limit',
-        '50',
-        '--json',
-      ])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs([
-        'terminal',
-        'send',
-        '--terminal',
-        'term_abc-123',
-        '--text',
-        'fix the issue',
-        '--enter',
-        '--json',
-      ])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs([
-        'orchestration',
-        'send',
-        '--subject',
-        'review prompt',
-        '--body',
-        'please check the code',
-        '--to',
-        'dispatch:ctx_abc123',
-        '--json',
-      ])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs([
-        'terminal',
-        'rename',
-        '--terminal',
-        'term_abc-123',
-        '--title',
-        'My Agent Tab',
-        '--json',
-      ])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs([
-        'terminal',
-        'rename',
-        '--terminal',
-        'term_abc-123',
-        '--json',
-      ])
-    );
-    assert.doesNotThrow(() =>
-      validateOrcaArgs([
-        'terminal',
-        'create',
-        '--worktree',
-        'path:/some/worktree/path',
-        '--command',
-        'codex',
-        '--title',
-        'Codex Worker',
-        '--json',
-      ])
-    );
-
-    // Invalid commands / parameters
-    assert.throws(() => validateOrcaArgs([]), /INVALID_ARGUMENT/);
-    assert.throws(() => validateOrcaArgs(['orchestration', 'send']), /INVALID_ARGUMENT/);
-    assert.throws(() => validateOrcaArgs(['terminal', 'write']), /INVALID_ARGUMENT/);
-    assert.throws(() => validateOrcaArgs(['status', '; rm -rf /']), /INVALID_ARGUMENT/);
-    assert.throws(
-      () => validateOrcaArgs(['terminal', 'read', '--terminal', 'bad handle', '--json']),
-      /INVALID_ARGUMENT/
-    );
-    assert.throws(
-      () =>
-        validateOrcaArgs([
-          'orchestration',
-          'worker-read',
-          '--dispatch',
-          'bad_id',
-          '--source',
-          'transcript',
-          '--limit',
-          '100',
-          '--json',
-        ]),
-      /INVALID_ARGUMENT/
-    );
-    assert.throws(
-      () =>
-        validateOrcaArgs([
-          'orchestration',
-          'worker-read',
-          '--dispatch',
-          'ctx_123',
-          '--source',
-          'terminal',
-          '--limit',
-          '100',
-          '--json',
-        ]),
-      /INVALID_ARGUMENT/
-    );
-    assert.throws(
-      () =>
-        validateOrcaArgs([
-          'orchestration',
-          'worker-read',
-          '--dispatch',
-          'ctx_123',
-          '--source',
-          'transcript',
-          '--limit',
-          '500',
-          '--json',
-        ]),
-      /INVALID_ARGUMENT/
-    );
-  });
-
-  test('runOrca handles valid and invalid envelopes', async () => {
-    const fakeSuccessRunner: CommandRunner = async () => ({
-      stdout: JSON.stringify({ ok: true, result: { projects: [] }, _meta: { runtimeId: 'rt1' } }),
-      stderr: '',
-      exitCode: 0,
-    });
-
-    const res = await runOrca(['project', 'list', '--json'], fakeSuccessRunner);
-    assert.equal(res.ok, true);
-    assert.equal(res._meta?.runtimeId, 'rt1');
-
-    const fakeFailRunner: CommandRunner = async () => ({
-      stdout: JSON.stringify({ ok: false, error: 'Internal failure' }),
-      stderr: '',
-      exitCode: 0,
-    });
-
-    await assert.rejects(
-      () => runOrca(['status', '--json'], fakeFailRunner),
-      (err: any) => err instanceof CliError && err.issue.code === 'INVALID_UPSTREAM'
-    );
-
-    const fakeBadJsonRunner: CommandRunner = async () => ({
-      stdout: 'not json',
-      stderr: '',
-      exitCode: 0,
-    });
-
-    await assert.rejects(
-      () => runOrca(['status', '--json'], fakeBadJsonRunner),
-      (err: any) => err instanceof CliError && err.issue.code === 'INVALID_UPSTREAM'
-    );
-
-    const fakeExitCodeRunner: CommandRunner = async () => ({
-      stdout: '',
-      stderr: 'Command failed',
-      exitCode: 1,
-    });
-
-    await assert.rejects(
-      () => runOrca(['status', '--json'], fakeExitCodeRunner),
-      (err: any) => err instanceof CliError && err.issue.code === 'CLI_FAILED'
-    );
   });
 
   test('runGit enforces allowlisted arguments', async () => {
@@ -397,17 +168,5 @@ describe('server/cli', () => {
     assert.equal(r1.stdout, 'done');
     assert.equal(r2.stdout, 'done');
     assert.equal(callCount, 1);
-  });
-
-  test('validateOrcaArgs allows worktree rm and terminal close', () => {
-    assert.doesNotThrow(() => validateOrcaArgs(['worktree', 'rm', '--worktree', 'id:repo-123::path/to/wt', '--force', '--json']));
-    assert.doesNotThrow(() => validateOrcaArgs(['worktree', 'rm', '--worktree', 'path:C:/path/to/wt', '--json']));
-    assert.doesNotThrow(() => validateOrcaArgs(['terminal', 'close', '--terminal', 'term_abc123', '--tab', '--json']));
-    assert.doesNotThrow(() => validateOrcaArgs(['terminal', 'close', '--terminal', 'term_xyz', '--json']));
-    assert.doesNotThrow(() => validateOrcaArgs(['terminal', 'close', '--worktree', 'id:repo-123::path/to/wt', '--all', '--json']));
-
-    // Rejects invalid forms
-    assert.throws(() => validateOrcaArgs(['worktree', 'rm', '--worktree', '--malicious', '--json']), /INVALID_ARGUMENT/);
-    assert.throws(() => validateOrcaArgs(['terminal', 'close', '--terminal', '; rm -rf /', '--tab', '--json']), /INVALID_ARGUMENT/);
   });
 });

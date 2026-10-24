@@ -1,6 +1,6 @@
 {
   "name": "ade",
-  "description": "Standalone agent development environment",
+  "description": "Vade desktop agent development environment",
   "main": "desktop/main.cjs",
   "version": "0.1.0",
   "private": true,
@@ -16,19 +16,27 @@
     "desktop": "npm run build:desktop && electron .",
     "package:desktop": "npm run build:desktop && node scripts/package-desktop.mjs",
     "package:release": "npm run build:desktop && node scripts/package-desktop.mjs --release",
-    "test": "node --import tsx --test src/tests/conversationEvents.test.ts server/http/conversationEvents.test.ts src/tests/dictation.test.ts server/integrations/orca/chat/options.test.ts src/tests/kanban.test.ts src/tests/inbox.test.ts server/services/inbox.test.ts src/tests/github.test.ts src/tests/notifications.test.ts src/tests/workflow.test.ts src/tests/dialogsAndUi.test.ts server/http/api.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/githubAccounts.test.ts server/integrations/orca/utils.test.ts server/integrations/orca/inventory.test.ts server/integrations/orca/graph.test.ts server/integrations/orca/graphWorkers.test.ts server/integrations/orca/nodeDetails.test.ts server/integrations/orca/coordinatorDetails.test.ts server/integrations/orca/actions.test.ts server/integrations/orca/prerequisites.test.ts server/providers/transcripts.test.ts server/services/snapshot.test.ts server/services/progress.test.ts server/services/attachments.test.ts server/integrations/usage.test.ts server/integrations/worktrees.test.ts src/tests/commitGraph.test.ts server/integrations/agents.test.ts server/runtime/localRuntime.test.ts server/runtime/connections.test.ts server/runtime/providerAccounts.test.ts server/runtime/agentHistory.test.ts server/runtime/organization.test.ts server/runtime/providerChatControls.test.ts server/runtime/speech.test.ts"
+    "test": "node --import tsx --test src/tests/conversationEvents.test.ts src/tests/dictation.test.ts src/tests/kanban.test.ts src/tests/inbox.test.ts src/tests/github.test.ts src/tests/notifications.test.ts src/tests/workflow.test.ts src/tests/dialogsAndUi.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/githubAccounts.test.ts server/providers/transcripts.test.ts server/services/progress.test.ts server/services/attachments.test.ts src/tests/commitGraph.test.ts server/runtime/localRuntime.test.ts server/runtime/connections.test.ts server/runtime/providerAccounts.test.ts server/runtime/agentHistory.test.ts server/runtime/organization.test.ts server/runtime/providerChatControls.test.ts server/runtime/speech.test.ts server/providers/transcriptUtils.test.ts"
   },
   "build": {
     "appId": "dev.ade.desktop",
     "productName": "Vade",
-    "publish": { "provider": "github", "owner": "Haojerh", "repo": "ADE", "releaseType": "release" },
+    "icon": "resources/branding/vade.png",
+    "publish": {
+      "provider": "github",
+      "owner": "Haojerh",
+      "repo": "ADE",
+      "releaseType": "release"
+    },
     "directories": {
       "output": "release"
     },
     "files": [
       "desktop/**",
+      "resources/branding/**",
       "build/server.cjs",
       "build/ptyHost.cjs",
+      "build/speechWorker.cjs",
       "build/orchestration/**",
       "dist/**",
       "package.json"
@@ -40,11 +48,25 @@
     ],
     "npmRebuild": false,
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "resources/branding/vade.ico"
     },
-    "nsis": { "oneClick": true, "perMachine": false, "deleteAppDataOnUninstall": false },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "deleteAppDataOnUninstall": false,
+      "installerIcon": "resources/branding/vade.ico",
+      "uninstallerIcon": "resources/branding/vade.ico",
+      "shortcutName": "Vade",
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "uninstallDisplayName": "Vade"
+    },
     "mac": {
-      "target": ["dmg", "zip"]
+      "target": [
+        "dmg",
+        "zip"
+      ]
     },
     "linux": {
       "target": "AppImage"
@@ -75,6 +97,7 @@
     "ws": "^8.22.0"
   },
   "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
@@ -83,7 +106,6 @@
     "electron": "^44.9.3",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2",
-    "exceljs": "^4.4.0",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   },

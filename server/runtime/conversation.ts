@@ -7,9 +7,9 @@ import { databaseProviderActivity, transcriptProviderActivity } from '../provide
 import type { SessionRecord } from './store.js';
 import { validCodexThreadId } from './codexThread.js';
 import { CliError } from '../integrations/cli.js';
-import { hashId, isPathInsideRoots, readBoundedTranscriptLines, readOlderTranscriptLines } from '../integrations/orca/utils.js';
-import { issueStoredCursor, validateStoredCursor } from '../integrations/orca/state.js';
-import { parseCoordinatorTranscriptLine } from '../integrations/orca/nodeDetails.js';
+import { hashId, isPathInsideRoots, readBoundedTranscriptLines, readOlderTranscriptLines } from '../providers/transcriptUtils.js';
+import { issueStoredCursor, validateStoredCursor } from '../providers/conversationCursors.js';
+import { parseCoordinatorTranscriptLine } from '../providers/publicTranscript.js';
 import { parseAntigravityTranscriptLine, readAntigravityModel, readAntigravityToolActivity } from '../providers/antigravity.js';
 import { transcriptSettings, claudeLocalCommandEffort } from '../providers/shared.js';
 import { isOpenCode, verifyOpenCode, withOpenCode } from './openCodeSessions.js';

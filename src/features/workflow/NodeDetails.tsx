@@ -11,13 +11,14 @@ import { ProviderActivity } from './ProviderActivity';
 import { useAgentDraft } from '../../hooks/useAgentDraft';
 import { WORKFLOW_CONFIRMATION_MESSAGE } from '../../../shared/contracts';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
-import { sendNodeMessage } from '../../api/client';
+import { sendNodeMessage, interruptAgent, openChatTerminal, resumeTerminal } from '../../api/client';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
 import { AgentChatControls } from './AgentChatControls';
 import { DictationButton } from './DictationButton';
 import { appendDictation } from './dictation';
 import { HandoffDialog, HandoffNotice } from './HandoffDialog';
+import { readAgentView } from '../../app/agentViewPreference';
 const AgentTerminal = lazy(() => import('./AgentTerminal').then(module => ({ default: module.AgentTerminal })));
 import {
   NodeDetailsHeader,
@@ -72,8 +73,8 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
 }) => {
   const bodyRef = useRef<HTMLDivElement>(null);
   const [showBackToBottom, setShowBackToBottom] = useState(false);
-  const [sessionView, setSessionView] = useState<'chat' | 'terminal'>('terminal');
-  useEffect(() => { setSessionView('terminal'); }, [projectId, selectedNodeId]);
+  const [sessionView, setSessionView] = useState<'chat' | 'terminal'>(readAgentView);
+  useEffect(() => { setSessionView(readAgentView()); }, [projectId, selectedNodeId]);
   useLayoutEffect(() => {
     setShowBackToBottom(false);
     if (details?.node.id !== selectedNodeId || details?.node.kind === 'worktree') return;
@@ -98,6 +99,16 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const handoff = useConfirmationState();
   const chatRequest = useRef<AbortController | null>(null);
   const chatTarget = useRef(''); chatTarget.current = `${projectId}:${selectedNodeId}`;
+  const [chatTerminal,setChatTerminal]=useState<import('../../../shared/contracts').TerminalPage|null>(null);
+  const [terminalError,setTerminalError]=useState<string|null>(null);
+  const [openingTerminal,setOpeningTerminal]=useState(false);
+  useEffect(()=>{
+    setChatTerminal(null);setTerminalError(null);
+    if(!projectId||!selectedNodeId||sessionView!=='chat'||!details?.session?.chat)return;
+    let active=true;setOpeningTerminal(true);
+    void openChatTerminal(projectId,selectedNodeId).then(page=>{if(active){setChatTerminal(page);onSessionChange?.();}}).catch(error=>{if(active)setTerminalError(error instanceof Error?error.message:'Unable to open the agent terminal.');}).finally(()=>{if(active)setOpeningTerminal(false);});
+    return()=>{active=false;};
+  },[projectId,selectedNodeId,sessionView,details?.session?.chat]);
   useEffect(() => {
     setChatSending(false); setChatStatus(null);
     workflowConfirmation.reset();
@@ -144,10 +155,6 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
     }
   };
 
-  if (!selectedNodeId) {
-    return null;
-  }
-
   const isMatchingDetails = Boolean(details?.node && details.node.id === selectedNodeId);
   const baseNode = isMatchingDetails ? details!.node : selectedNode?.id === selectedNodeId ? selectedNode : null;
   const liveLabel = (selectedNode?.id === selectedNodeId && selectedNode.label) || details?.node?.label;
@@ -163,6 +170,20 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const tools = chatToolCallsEnabled ? (selectedNode?.id === selectedNodeId ? selectedNode.toolActivity?.data : undefined) ?? node?.toolActivity?.data ?? [] : [];
 
   const isWorktree = node?.kind === 'worktree';
+  const canInterrupt = Boolean(details?.session?.chat && (selectedNode ?? node)?.state === 'working' && (selectedNode ?? node)?.liveness === 'live' && !chatMessage.trim() && !chatFiles.length);
+  const interrupting = useRef(false);
+  const [interruptRequested,setInterruptRequested]=useState(false);
+  useEffect(()=>{interrupting.current=false;setInterruptRequested(false);},[projectId,selectedNodeId,(selectedNode ?? node)?.state]);
+  const handleInterrupt = async () => {
+    if (!projectId || !node || !canInterrupt || interrupting.current) return;
+    interrupting.current = true; setInterruptRequested(true);setChatSending(true);
+    const owner = chatTarget.current;
+    try { await interruptAgent(projectId,node.id); }
+    catch (error) { if(owner===chatTarget.current) setChatStatus({type:'error',text:error instanceof Error?error.message:'Unable to interrupt. Open Terminal to check the agent.'}); }
+    finally { if(owner===chatTarget.current)setChatSending(false); }
+  };
+  if (!selectedNodeId) return null;
+
   return (
     <>
       <Modal
@@ -248,6 +269,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 )}
 
                 {!isWorktree && details?.session && projectId && <>
+                  {sessionView==='chat'&&(terminalError||chatTerminal&&!chatTerminal.live)&&<div className="panel-alert alert-info" role="status"><p>{terminalError??'The agent terminal is stopped. Resume it to continue this conversation.'}</p>{chatTerminal?.resumable&&<button type="button" className="btn btn-secondary btn-sm" disabled={openingTerminal} onClick={async()=>{const owner=chatTarget.current;setOpeningTerminal(true);try{await resumeTerminal(projectId,node.id);const page=await openChatTerminal(projectId,node.id);if(owner===chatTarget.current){setChatTerminal(page);setTerminalError(null);onSessionChange?.();}}catch(error){if(owner===chatTarget.current)setTerminalError(error instanceof Error?error.message:'Unable to resume the agent.');}finally{if(owner===chatTarget.current)setOpeningTerminal(false);}}}>Resume session</button>}<button type="button" className="btn btn-secondary btn-sm" onClick={()=>setSessionView('terminal')}>Open Terminal</button></div>}
                   {details.session.handoff && <HandoffNotice key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} info={details.session.handoff} onRefresh={onRefresh} />}
                   {(sessionView === 'terminal' || !details.session.chat) && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} provider={node.agentType ?? undefined} onStatusChange={onSessionChange} /></Suspense>}
                 </>}
@@ -302,7 +324,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         className="chatbox-form"
                         onSubmit={(e) => {
                           e.preventDefault();
-                          handleSendMessage();
+                          if(canInterrupt)void handleInterrupt();else void handleSendMessage();
                         }}
                       >
                         <MessageAttachments
@@ -320,10 +342,10 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                               <button
                                 type="submit"
                                 className="btn btn-primary btn-sm btn-chat-send"
-                                aria-label={chatSending ? 'Sending message' : 'Send message'} title="Send message"
-                                disabled={chatSending || dictating || (!chatMessage.trim() && !chatFiles.length)}
+                                aria-label={canInterrupt ? 'Interrupt agent' : chatSending ? 'Sending message' : 'Send message'} title={canInterrupt?'Interrupt agent':'Send message'}
+                                disabled={chatSending || dictating || (canInterrupt&&interruptRequested) || (!canInterrupt && !chatMessage.trim() && !chatFiles.length)}
                               >
-                                {chatSending ? (
+                                {canInterrupt ? <><span aria-hidden="true" className="agent-stop-symbol"/><span className="composer-action-label">{interruptRequested?'Stopping…':'Stop'}</span></> : chatSending ? (
                                   <><Icon name="refresh-cw" size={14} /><span className="composer-action-label">Sending...</span></>
                                 ) : (
                                   <>
