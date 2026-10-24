@@ -38,6 +38,7 @@ export function useDashboardLayoutPrefs(dashboardReady = true) {
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.style.colorScheme = theme;
+    void window.adeDesktop?.setTheme?.(theme).catch(() => { /* Older desktop hosts keep their native chrome. */ });
     try {
       localStorage.setItem('orca-theme', theme);
     } catch {

@@ -7,6 +7,9 @@
 .rail-footer-controls .inbox-trigger { position: relative; }
 .rail-footer-controls .inbox-count { position: absolute; top: -4px; right: -5px; font-size: 9px; min-width: 14px; padding: 0 3px; }
 .dashboard-unified-header > .dashboard-topbar { min-height: 36px; padding: 0 12px; }
+.dashboard-unified-header > .dashboard-topbar .topbar-left-group { align-items:center; gap:8px; }
+.dashboard-unified-header > .dashboard-topbar .active-project-heading { margin:0; line-height:24px; }
+.dashboard-unified-header > .dashboard-topbar .brand-icon { width:24px; height:24px; transform:translateY(-1px); }
 .dashboard-unified-header > .dashboard-topbar .topbar-left-group > svg { width: 18px; height: 18px; }
 .dashboard-unified-header > .dashboard-topbar:has(.topbar-center-group:empty) { height: 36px; }
 .desktop-custom-titlebar .dashboard-unified-header > .dashboard-topbar { min-height: 36px; padding-top: 0; padding-bottom: 0; }

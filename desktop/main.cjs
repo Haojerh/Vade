@@ -46,6 +46,12 @@ else {
       window.setMenuBarVisibility(false);
       window.removeMenu();
       const origin = 'http://127.0.0.1:4317';
+      ipcMain.handle('ade:set-theme', (event, theme) => {
+        if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('Theme changes are only available to Vade');
+        if (theme !== 'dark' && theme !== 'light') throw new Error('Invalid theme');
+        window.setBackgroundColor(theme === 'light' ? '#f7f7f7' : '#181818');
+        if (process.platform === 'win32') window.setTitleBarOverlay({ color: theme === 'light' ? '#ffffff' : '#202020', symbolColor: theme === 'light' ? '#171717' : '#d4d4d4', height:35 });
+      });
       const updater = new DesktopUpdater(app, window, ipcMain, origin);
       let notificationSettings = { enabled: true, sound: true };
       const notifications = new Map();

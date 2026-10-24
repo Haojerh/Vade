@@ -2,6 +2,7 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('adeDesktop', {
   customTitleBar: process.platform === 'win32',
+  setTheme: theme => ipcRenderer.invoke('ade:set-theme', theme),
   updateStatus: () => ipcRenderer.invoke('ade:update-status'),
   checkForUpdates: () => ipcRenderer.invoke('ade:update-check'),
   updateAndRestart: () => ipcRenderer.invoke('ade:update-update'),

@@ -39,9 +39,9 @@ html, body {
   padding: 0 150px 0 14px;
   display: flex;
   align-items: center;
-  background: #202020;
-  color: #a3a3a3;
-  border-bottom: 1px solid #303030;
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-main);
   font-size: 11px;
   letter-spacing: 0.08em;
   user-select: none;
@@ -60,7 +60,7 @@ html, body {
 .desktop-custom-titlebar:has(.dashboard-unified-header) .desktop-titlebar { display: none; }
 .desktop-custom-titlebar .dashboard-unified-header > .dashboard-topbar {
   padding-right: max(154px, calc(100vw - env(titlebar-area-width, calc(100vw - 138px)) + 16px));
-  background: #202020;
+  background: var(--surface-1);
   -webkit-app-region: drag;
 }
 .desktop-custom-titlebar .dashboard-topbar :is(button, input, select, a, .select-wrapper) {

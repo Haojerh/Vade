@@ -4,6 +4,7 @@ declare global {
   interface Window {
     adeDesktop?: {
       customTitleBar: boolean;
+      setTheme: (theme: 'dark' | 'light') => Promise<void>;
       updateStatus: () => Promise<import('../../shared/contracts').DesktopUpdateStatus>;
       checkForUpdates: () => Promise<import('../../shared/contracts').DesktopUpdateStatus>;
       updateAndRestart: () => Promise<import('../../shared/contracts').DesktopUpdateStatus>;

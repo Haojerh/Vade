@@ -1,5 +1,7 @@
 # Desktop updates
 
+Desktop windows use the short title `Vade`. The shared title bar follows the saved appearance preference; a main-frame/origin-restricted IPC accepts only `light` or `dark` and applies fixed matching window/caption colors. Browser content supplies no native colors or window flags.
+
 Vade checks the stable public GitHub Releases feed for `Haojerh/ADE` three seconds after startup and every six hours while open. Settings → Installation / Setup puts the desktop app version and Check for updates first. A newer release creates a persistent in-app notification at the bottom right, above the status bar. Agent notifications stack above its measured height. Closing it dismisses that version across relaunches; the Installation page always retains the update controls.
 
 **Update & restart** authorizes a download and automatic installation/relaunch when it finishes. Checks never download or restart by themselves. Electron-updater validates the release artifact against its manifest; existing platform signature checks remain enabled. Development Electron launches explicitly report that updates require a packaged build. Linux auto-updates require AppImage; macOS requires properly signed release builds. Browser mode cannot install desktop updates.
