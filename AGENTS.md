@@ -3,6 +3,7 @@
 ## Standalone ADE migration
 
 - Desktop `phone.cjs` owns opt-in exact Tailscale HTTPS origin settings through trusted main-frame IPC. Backend `phoneOrigin.ts` validates the same restricted origin; HTTP Host/Origin and terminal origins use the live setting. Disable revokes remote streams, never agent processes or input. Keep loopback binding, no wildcard/public configuration endpoint, and no automatic Tailscale/Funnel setup. See `docs/phone-connection.md`.
+- Packaged speech addon discovery derives the physical `app.asar.unpacked` dependency root from backend-owned `ADE_DIST_DIR`, never the real resources cwd or an adjacent host package. Windows packaging runs the production resolver and native addon API check in the packaged executable before publication.
 - Renderer `terminalTouch.ts` owns bounded finger-to-scroll routing through xterm public APIs. Preserve native Codex alternate-screen mouse modes: fullscreen history belongs to the CLI, while normal-buffer history scrolls locally. Touch gestures never become arrow keys; retain pinch zoom, text selection and disposal cleanup.
 - `terminalSurface.ts` waits for visible, stable modal geometry before xterm initialization. Measure an unpadded inner surface. `terminalViewports.ts` serializes the most recently active view's PTY grid; passive views follow server dimensions without local reflow, and disconnect restores the remaining view. Focus/visibility changes never replay input.
 

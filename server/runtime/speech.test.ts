@@ -8,6 +8,25 @@ import { Readable } from 'node:stream';
 import { LocalSpeech, speechModulePath, validateSpeechAudio } from './speech.js';
 import { speechModels } from './speechCatalog.js';
 
+test('installed speech resolves the unpacked addon independently of resources cwd and refuses outside fallbacks', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vade-packaged-speech-'));
+  const resources = path.join(directory, 'resources'), application = path.join(resources, 'app.asar');
+  const name = process.platform === 'win32' ? `sherpa-onnx-win-${process.arch}` : `sherpa-onnx-${process.platform}-${process.arch}`;
+  const install = (base: string) => {
+    const target = path.join(base, 'node_modules', name); fs.mkdirSync(target, { recursive: true });
+    fs.writeFileSync(path.join(target, 'package.json'), JSON.stringify({ name, main: 'index.js' }));
+    fs.writeFileSync(path.join(target, 'index.js'), 'module.exports = {};'); return path.join(target, 'index.js');
+  };
+  try {
+    install(resources); // A stray adjacent package must not mask an incomplete app.
+    const entry = install(path.join(resources, 'app.asar.unpacked'));
+    assert.equal(speechModulePath(application), entry);
+    assert.ok(!speechModulePath(application)!.includes(`${path.sep}app.asar${path.sep}`));
+    const incomplete = path.join(directory, 'incomplete', 'resources'); install(incomplete);
+    assert.equal(speechModulePath(path.join(incomplete, 'app.asar')), null);
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
 test('local speech accepts only bounded ordered float32 PCM payloads', () => {
   const pcm = Buffer.from(new Float32Array([0, -1, 1, 0.5]).buffer).toString('base64');
   assert.equal(validateSpeechAudio({ sequence: 0, pcm }).length, 16);

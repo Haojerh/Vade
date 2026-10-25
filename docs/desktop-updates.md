@@ -12,6 +12,8 @@ Vade checks the stable public GitHub Releases feed for `Haojerh/ADE` three secon
 
 Packaged backend utility processes use the real Electron resources directory as their working directory. `app.getAppPath()` points inside `app.asar` in an installed build and cannot serve as a native Windows process cwd. Bundled file locations remain explicit absolute paths. Speech and PTY workers must appear in both the packaged file list and ASAR-unpack rules. System Node launches the PTY helper from its real unpacked path; it cannot read Electron's virtual archive paths.
 
+Speech addon discovery uses the application root from `ADE_DIST_DIR` and resolves its platform package directly inside `app.asar.unpacked/node_modules`. It does not search from the resources cwd or fall back to an adjacent host-installed addon. `scripts/verify-desktop-speech.mjs` runs the production resolver and loads the native API using the packaged Windows executable in Node mode, with resources as cwd, before packaging reports success. This validates addon loading and worker presence without downloading models or recording audio.
+
 `npm run package:desktop` keeps the unpacked development build. `npm run package:release` creates an installer and updater metadata without publishing. Windows uses a per-user NSIS installer; macOS produces DMG/ZIP; Linux produces AppImage. Release files are placed in a timestamped directory under `release/`.
 
 Desktop builds render `src/assets/brand/vade.svg` into the packaged app PNG and a multi-resolution Windows ICO through `scripts/build-brand-icons.mjs`. The application, installer, uninstaller, desktop shortcut and Start menu entry use Vade branding. The per-user Windows setup creates both shortcuts and preserves application data on uninstall.

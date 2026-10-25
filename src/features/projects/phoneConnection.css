@@ -5,7 +5,7 @@
 .phone-connection-summary h2 { margin:0; font-size:16px; font-weight:600; }
 .phone-connection-summary p,.phone-connection-step-body>p { margin:6px 0 0; color:var(--text-secondary); font-size:13px; line-height:1.6; }
 .phone-connection-badge { flex-shrink:0; padding:4px 9px; border:1px solid var(--border-main); border-radius:20px; color:var(--text-secondary); font-size:11px; }
-.phone-connection-badge.is-enabled { color:var(--text-primary); background:var(--surface-2); }
+.phone-connection-badge.is-enabled { color:var(--state-completed-text); background:var(--state-completed-bg); border-color:var(--state-completed-border); }
 .phone-connection-step { display:flex; gap:14px; padding:24px; border-top:1px solid var(--border-main); }
 .phone-connection-number { display:grid; place-items:center; flex-shrink:0; width:25px; height:25px; border:1px solid var(--border-main); border-radius:50%; font-size:12px; color:var(--text-secondary); font-variant-numeric:tabular-nums; }
 .phone-connection-step-body { min-width:0; flex:1; }

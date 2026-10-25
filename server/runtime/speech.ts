@@ -11,12 +11,16 @@ import type { LocalSpeechCatalog, SpeechTranscript, SpeechAudioRequest } from '.
 import { CliError } from '../integrations/cli.js';
 import { speechModels } from './speechCatalog.js';
 
-export function speechModulePath(): string | null {
+export function speechModulePath(applicationRoot = process.env.ADE_DIST_DIR ? path.dirname(process.env.ADE_DIST_DIR) : process.cwd()): string | null {
   const name = process.platform === 'win32' ? `sherpa-onnx-win-${process.arch}` : `sherpa-onnx-${process.platform}-${process.arch}`;
   try {
-    const file = createRequire(path.join(process.cwd(), 'package.json')).resolve(name);
-    const unpacked = file.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1');
-    return fs.existsSync(unpacked) ? unpacked : file;
+    // Desktop cwd is the real resources directory, not the application archive.
+    // Resolve from the packaged app's physical unpack directory so the isolated
+    // speech worker can load both the JS entry and its native libraries.
+    const root = applicationRoot.replace(/app\.asar$/, 'app.asar.unpacked');
+    const file = createRequire(path.join(root, 'package.json')).resolve(name);
+    if (root !== applicationRoot && !file.startsWith(path.join(root, 'node_modules', name) + path.sep)) return null;
+    return fs.existsSync(file) ? file : null;
   } catch { return null; }
 }
 const invalid = (message: string): never => { throw new CliError('INVALID_ARGUMENT', message); };
