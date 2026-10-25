@@ -154,6 +154,16 @@ button {
   background: var(--surface-2);
 }
 
+.btn.btn-danger {
+  color: var(--state-failed-text);
+  background: var(--state-failed-bg);
+  border-color: var(--state-failed-border);
+}
+.btn.btn-danger:hover:not(:disabled) {
+  background: var(--state-failed-bg);
+  border-color: var(--state-failed-text);
+}
+
 .btn-sm {
   padding: 4px 8px;
   font-size: 11px;

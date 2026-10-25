@@ -1,0 +1,32 @@
+.phone-connection { border:1px solid var(--border-main); border-radius:14px; background:var(--surface-1); overflow:hidden; }
+.phone-connection-summary { display:flex; align-items:center; gap:14px; padding:24px; }
+.phone-connection-symbol { display:grid; place-items:center; flex-shrink:0; width:44px; height:44px; border:1px solid var(--border-main); border-radius:12px; color:var(--text-secondary); }
+.phone-connection-summary>div { flex:1; min-width:0; }
+.phone-connection-summary h2 { margin:0; font-size:16px; font-weight:600; }
+.phone-connection-summary p,.phone-connection-step-body>p { margin:6px 0 0; color:var(--text-secondary); font-size:13px; line-height:1.6; }
+.phone-connection-badge { flex-shrink:0; padding:4px 9px; border:1px solid var(--border-main); border-radius:20px; color:var(--text-secondary); font-size:11px; }
+.phone-connection-badge.is-enabled { color:var(--text-primary); background:var(--surface-2); }
+.phone-connection-step { display:flex; gap:14px; padding:24px; border-top:1px solid var(--border-main); }
+.phone-connection-number { display:grid; place-items:center; flex-shrink:0; width:25px; height:25px; border:1px solid var(--border-main); border-radius:50%; font-size:12px; color:var(--text-secondary); font-variant-numeric:tabular-nums; }
+.phone-connection-step-body { min-width:0; flex:1; }
+.phone-connection-step-body h3 { margin:2px 0 0; font-size:14px; font-weight:600; }
+.phone-connection-actions { display:flex; flex-wrap:wrap; align-items:center; gap:8px; margin-top:16px; }
+.phone-connection .worktree-field { margin:16px 0 0; gap:7px; }
+.phone-connection .worktree-field input { padding:10px 12px; font-size:13px; }
+.phone-connection-step-body>p.phone-connection-notice { margin-top:12px; font-size:12px; }
+.phone-connection-footnote { margin:0; padding:16px 24px; border-top:1px solid var(--border-main); color:var(--text-secondary); font-size:12px; line-height:1.6; }
+.phone-connection-browser { margin:0; padding:0 24px 24px; color:var(--text-secondary); font-size:13px; }
+.phone-connection-install { display:flex; flex-wrap:wrap; gap:8px 18px; padding:0 24px 20px; font-size:12px; line-height:1.6; color:var(--text-secondary); }
+.phone-connection-install>span { flex-basis:100%; }
+.phone-connection-install a { display:inline-flex; align-items:center; gap:5px; color:var(--focus-ring); text-underline-offset:3px; }
+.phone-connection .panel-alert { margin:0 24px 18px; }
+.phone-connection-terminal { margin-top:16px; border:1px solid var(--border-main); border-radius:10px; overflow:hidden; background:var(--terminal-bg); }
+.phone-connection-terminal-heading { display:flex; align-items:center; justify-content:space-between; padding:8px 12px; background:var(--surface-2); font-size:12px; }
+.phone-connection-terminal-heading>span { display:flex; align-items:center; gap:7px; }
+.phone-connection-terminal>p { margin:0; padding:10px 14px; border-bottom:1px solid var(--border-main); background:var(--surface-1); color:var(--text-secondary); font-size:12px; line-height:1.6; }
+.phone-connection-terminal .agent-terminal { display:block; flex:none; }
+.phone-connection-terminal .agent-terminal-screen { flex:none; height:240px; min-height:0; padding:12px 14px; border-radius:0; }
+.phone-connection-terminal .agent-terminal-footer { margin:0; padding:9px 14px; border-top:1px solid var(--border-main); background:var(--surface-1); }
+.phone-connection-terminal .agent-terminal-footer p { font-size:11px; line-height:1.5; }
+@media(max-width:640px) { .phone-connection-summary { flex-wrap:wrap; }.phone-connection-summary,.phone-connection-step { padding:18px; }.phone-connection-badge { margin-left:58px; }.phone-connection-footnote { padding:14px 18px; } }
+@media(pointer:coarse) { .phone-connection .worktree-field input { font-size:16px; } }

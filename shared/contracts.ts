@@ -666,3 +666,5 @@ export interface WorkspaceFileActionRequest { worktreeId: string; action: 'file'
 export interface WorkspaceFileActionResult { path: string; restoreId?: string }
 export interface WorkspaceFileStat { version: string; directory: boolean }
 export interface SaveWorkspaceFileRequest { worktreeId: string; path: string; text: string; version: string }
+export interface PhoneConnectionSettings { enabled: boolean; origin: string }
+export interface PhoneSetupTerminal { projectId: string; nodeId: string; command: string }

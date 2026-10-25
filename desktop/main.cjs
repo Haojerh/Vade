@@ -1,6 +1,7 @@
 const { app, BrowserWindow, dialog, utilityProcess, shell, ipcMain, Notification } = require('electron');
 const path = require('node:path');
 const { DesktopUpdater } = require('./updater.cjs');
+const { loadPhone, savePhone, detectedPhoneOrigin } = require('./phone.cjs');
 
 let backend;
 let quitting = false;
@@ -13,10 +14,12 @@ else {
     if (window) { if (window.isMinimized()) window.restore(); window.focus(); }
   });
   app.whenReady().then(async () => {
+    const phoneFile = path.join(app.getPath('userData'), 'phone-connection.json');
+    let phone = loadPhone(phoneFile), phoneBusy = false;
     backend = utilityProcess.fork(path.join(__dirname, '../build/server.cjs'), [], {
       // ASAR is a virtual directory; native process startup requires a real cwd.
       cwd: app.isPackaged ? process.resourcesPath : app.getAppPath(),
-      env: { ...process.env, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/ptyHost.cjs'), ADE_SPEECH_WORKER: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/speechWorker.cjs'), ADE_ORCHESTRATION_RESOURCES: path.join(app.getAppPath(), 'build/orchestration') },
+      env: { ...process.env, ADE_PHONE_ENABLED: phone.enabled ? '1' : '0', ADE_PHONE_ORIGIN: phone.origin, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/ptyHost.cjs'), ADE_SPEECH_WORKER: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/speechWorker.cjs'), ADE_ORCHESTRATION_RESOURCES: path.join(app.getAppPath(), 'build/orchestration') },
       stdio: 'pipe', serviceName: 'ADE local runtime',
     });
     backend.stdout?.on('data', data => process.stdout.write(data));
@@ -46,6 +49,55 @@ else {
       window.setMenuBarVisibility(false);
       window.removeMenu();
       const origin = 'http://127.0.0.1:4317';
+      const requireDesktop = event => {
+        if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('Phone connections can only be configured in the desktop app.');
+      };
+      ipcMain.handle('ade:phone-status', event => { requireDesktop(event); return phone; });
+      let phoneSetupBusy = false;
+      const phoneSetupRequest = (type, owner = {}) => new Promise((resolve, reject) => {
+        const requestId = require('node:crypto').randomUUID();
+        const listener = message => { if (message?.type === 'phone-setup-result' && message.requestId === requestId) { cleanup(); message.error ? reject(new Error(message.error)) : resolve(message.result); } };
+        const timer = setTimeout(() => { cleanup(); reject(new Error('The setup terminal did not respond. Inspect the terminal before trying again.')); }, 20000);
+        const cleanup = () => { clearTimeout(timer); backend.off('message', listener); };
+        backend.on('message', listener); backend.postMessage({ type, ...owner, requestId });
+      });
+      ipcMain.handle('ade:phone-setup', async event => {
+        requireDesktop(event);
+        if (phoneSetupBusy) throw new Error('The phone setup terminal is already opening.');
+        phoneSetupBusy = true;
+        try { return await phoneSetupRequest('phone-setup'); } finally { phoneSetupBusy = false; }
+      });
+      ipcMain.handle('ade:phone-setup-close', (event, owner) => {
+        requireDesktop(event);
+        if (!owner || !/^[a-f0-9-]{36}$/i.test(owner.projectId) || !/^[a-f0-9-]{36}$/i.test(owner.nodeId)) throw new Error('Invalid setup terminal.');
+        return phoneSetupRequest('phone-setup-close', { projectId: owner.projectId, nodeId: owner.nodeId });
+      });
+      ipcMain.handle('ade:phone-detect', async event => {
+        requireDesktop(event);
+        const candidate = path.join(process.env.ProgramFiles || 'C:\\Program Files', 'Tailscale', 'tailscale.exe');
+        const executable = process.platform === 'win32' && require('node:fs').existsSync(candidate) ? candidate : 'tailscale';
+        return await new Promise((resolve, reject) => require('node:child_process').execFile(executable, ['serve', 'status', '--json'], { timeout: 5000, maxBuffer: 65536, windowsHide: true }, (error, stdout) => {
+          if (error) { reject(new Error('Could not read Tailscale Serve. Make sure Tailscale is installed and signed in.')); return; }
+          try { resolve(detectedPhoneOrigin(stdout)); } catch { reject(new Error('Tailscale returned an unreadable connection status.')); }
+        }));
+      });
+      ipcMain.handle('ade:phone-save', async (event, value) => {
+        requireDesktop(event);
+        if (phoneBusy) throw new Error('A phone connection change is already in progress.');
+        phoneBusy = true;
+        try {
+          phone = savePhone(phoneFile, value);
+          const requestId = require('node:crypto').randomUUID();
+          await new Promise((resolve, reject) => {
+            const listener = message => { if (message?.type === 'phone-access-applied' && message.requestId === requestId) { cleanup(); resolve(); } };
+            const timer = setTimeout(() => { cleanup(); reject(new Error('The runtime did not confirm the change. Restart Vade to apply the saved setting.')); }, 5000);
+            const cleanup = () => { clearTimeout(timer); backend.off('message', listener); };
+            backend.on('message', listener);
+            backend.postMessage({ type: 'phone-access', ...phone, requestId });
+          });
+          return phone;
+        } finally { phoneBusy = false; }
+      });
       ipcMain.handle('ade:set-theme', (event, theme) => {
         if (event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame || new URL(event.senderFrame.url).origin !== origin) throw new Error('Theme changes are only available to Vade');
         if (theme !== 'dark' && theme !== 'light') throw new Error('Invalid theme');

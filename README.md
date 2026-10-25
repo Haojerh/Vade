@@ -115,3 +115,6 @@ The retired Orca dashboard adapters, transports, collectors and discovery code h
 The MIT-licensed [Orca source](https://github.com/stablyai/orca), snapshots `411b5c024abef11dcc269779377bc7d3aefa897c` and `45ee56e1a54bd032ce5bf7bda0c4bc8c9a02f307`, is a provider integration and terminal rendering reference. ADE uses original runtime code and adopts bounded output delivery, render acknowledgements, accelerated rendering, guarded sends and provider-specific attachment staging. Conversation history uses exact persisted bindings and validated provider transcripts.
 
 ---
+# Phone access
+
+Desktop Settings → **Connect phone** enables opt-in access through your existing Tailscale network. See [phone connection setup](docs/phone-connection.md) for the command, exact HTTPS address and access controls.

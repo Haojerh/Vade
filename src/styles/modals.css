@@ -8,14 +8,14 @@ dialog.node-modal-dialog {
   margin: auto;
   max-width: 720px;
   width: 90vw;
-  max-height: 85vh;
+  max-height: 85dvh;
   box-shadow: var(--shadow-lg);
   overflow: hidden;
   outline: none;
 }
 
 dialog.node-modal-dialog:not(.confirmation-dialog) {
-  min-height: min(480px, 85vh);
+  min-height: min(480px, 85dvh);
 }
 
 dialog.node-modal-dialog.worktree-details-dialog {
@@ -170,7 +170,7 @@ dialog.node-modal-dialog.is-closing::backdrop {
 .modal-dialog-container {
   display: flex;
   flex-direction: column;
-  max-height: 85vh;
+  max-height: 85dvh;
 }
 
 .modal-dialog-header {
@@ -271,6 +271,13 @@ dialog.node-modal-dialog.is-closing::backdrop {
 
 .node-modal-dialog:not(.confirmation-dialog) .modal-dialog-header { position: relative; padding-right: 58px; }
 .node-modal-dialog .modal-header-actions > .btn-close { position: absolute; top: 14px; right: 14px; width: 26px; height: 26px; min-height: 26px; margin: 0; display: grid; place-items: center; z-index: 2; }
+@media (min-width: 601px) {
+  .node-modal-dialog.agent-details-dialog .modal-dialog-header { padding-right:24px; }
+  .agent-details-dialog .modal-name-status-row { min-height:28px; }
+  .agent-details-dialog .modal-header-actions { align-self:flex-start; gap:8px; }
+  .agent-details-dialog .modal-header-actions > button { min-height:28px; height:28px; }
+  .node-modal-dialog.agent-details-dialog .modal-header-actions > .btn-close { position:static; width:28px; height:28px; min-height:28px; }
+}
 @media (max-width: 700px) { .node-modal-dialog .modal-meta-row, .node-modal-dialog .modal-node-id { display:none; } }
 @media (max-width: 600px) {
   dialog.node-modal-dialog:not(.confirmation-dialog) {
@@ -1303,6 +1310,18 @@ dialog.add-worktree-dialog {
 .prereq-local-card .prereq-gate-title { font-size: 20px; margin: 0; }
 .prereq-local-help { border: 1px solid var(--border-main); border-radius: 8px; padding: 16px; }
 .prereq-local-help p { color: var(--text-secondary); margin-top: 8px; }
+.prereq-local-help ol { display:grid; gap:10px; margin:12px 0 0; padding-inline-start:22px; line-height:1.65; }
+.prereq-local-help li { padding-inline-start:3px; }
+.prereq-local-help a { color:var(--focus-ring); text-underline-offset:3px; overflow-wrap:anywhere; }
+.prereq-local-card .prereq-gate-header svg { flex-shrink:0; }
+@media (max-width:600px) {
+  .prereq-gate-overlay { padding:16px; }
+  .prereq-local-card { padding:20px; gap:16px; max-height:calc(100dvh - 32px); }
+  .prereq-local-help { padding:16px; }
+  .prereq-local-card .prereq-gate-title { font-size:19px; line-height:1.35; }
+  .prereq-local-card .prereq-gate-header { gap:10px; }
+  .agent-details-container { max-height:85dvh; }
+}
 dialog.handoff-dialog { gap:20px; overflow-y:auto; }
 dialog.handoff-dialog>* { flex-shrink:0; }
 dialog.handoff-dialog .worktree-dialog-heading, dialog.handoff-dialog .worktree-field, dialog.handoff-dialog .confirmation-dialog-actions, .handoff-location { margin:0; }

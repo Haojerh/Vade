@@ -3,6 +3,7 @@ import { SerializeAddon } from '@xterm/addon-serialize';
 
 /** A bounded terminal screen, not an ANSI-stripped recording of redraw operations. */
 export class TerminalScreen {
+  dimensions(): { cols: number; rows: number } { return { cols: this.terminal.cols, rows: this.terminal.rows }; }
   private serializer = new SerializeAddon();
   private parsedCursor = 0;
   private mouseEncoding = 0;

@@ -2,6 +2,7 @@ import React from 'react';
 
 export type IconName =
   | 'github'
+  | 'phone'
   | 'users' | 'workflow' | 'download' | 'key' | 'puzzle' | 'play' | 'coffee' | 'plug' | 'copy'
   | 'chevron-down'
   | 'chevron-up'
@@ -63,6 +64,7 @@ export const Icon: React.FC<IconProps> = ({
 }) => {
   const renderPaths = () => {
     switch (name) {
+      case 'phone': return <><rect x="6" y="2" width="12" height="20" rx="3" /><path d="M10 5h4M11 19h2" /></>;
       case 'copy':
         return <><rect x="9" y="9" width="13" height="13" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></>;
       case 'coffee':

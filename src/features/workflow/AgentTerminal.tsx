@@ -6,10 +6,14 @@ import type { TerminalClientMessage, TerminalServerMessage } from '../../../shar
 import { markTabClosed, resumeTerminal } from '../../api/client';
 import { isTerminalReply, isTerminalClipboardShortcut } from './terminalInput';
 import { Icon } from '../../components/ui/Icon';
+import { attachTerminalTouch } from './terminalTouch';
+import { whenTerminalSurfaceReady } from './terminalSurface';
 
-export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, streamPath }: { projectId: string; nodeId: string; provider?: string; onStatusChange?: () => void; streamPath?: string }) {
+export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, streamPath, setupLabel = 'Installation' }: { projectId: string; nodeId: string; provider?: string; onStatusChange?: () => void; streamPath?: string; setupLabel?: string }) {
   const statusChange = useRef(onStatusChange); statusChange.current = onStatusChange;
   const host = useRef<HTMLDivElement>(null);
+  const [surfaceReady, setSurfaceReady] = useState(false);
+  useEffect(() => host.current ? whenTerminalSurfaceReady(host.current, () => setSurfaceReady(true)) : undefined, []);
   const [error, setError] = useState<string | null>(null);
   const [live, setLive] = useState<boolean | null>(null);
   const [retry, setRetry] = useState(0);
@@ -29,16 +33,18 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     finally { if (current()) setResuming(false); }
   };
   useEffect(() => {
-    if (!host.current) return;
+    if (!host.current || !surfaceReady) return;
     const rootStyle = getComputedStyle(document.documentElement);
     const terminal = new Terminal({ cursorBlink: true, scrollback: 3000, fontSize: 13,
       fontFamily: 'Consolas, monospace', allowProposedApi: false,
       theme: { background: rootStyle.getPropertyValue('--terminal-bg').trim(), foreground: rootStyle.getPropertyValue('--terminal-fg').trim(), cursor: '#ededed', cursorAccent: '#181818', selectionBackground: '#ffffff33' } });
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current);
-    // Codex mouse reporting captures browser selection and wheel scrolling.
-    // Keep the embedded transcript selectable; keyboard interaction stays native.
-    const mouseMode = provider === 'codex' ? terminal.parser.registerCsiHandler({ prefix: '?', final: 'h' }, params => params.length > 0 && params.every(value => typeof value === 'number' && [1000, 1002, 1003, 1006, 1007, 1015].includes(value))) : null;
+    const disposeTouch = attachTerminalTouch(host.current, terminal);
+    // Fullscreen Codex owns its transcript scrollback. Preserve its observed
+    // mouse modes so wheel/touch input can scroll that native UI. Normal-buffer
+    // history remains local; Shift-drag retains native xterm text selection.
     if (provider === 'codex') terminal.attachCustomWheelEventHandler(event => {
+      if (terminal.buffer.active.type === 'alternate' && terminal.modes.mouseTrackingMode !== 'none') return true;
       event.preventDefault();
       terminal.scrollLines(Math.sign(event.deltaY) * Math.max(1, Math.round(Math.abs(event.deltaY) / (event.deltaMode === 0 ? 24 : 1))));
       return false;
@@ -73,7 +79,8 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
       }
       return !isTerminalClipboardShortcut(event, terminal.hasSelection());
     });
-    try {
+    // DOM text avoids touch-browser WebGL atlas/compositing corruption.
+    if (!window.matchMedia('(any-pointer: coarse)').matches) try {
       const webgl = new WebglAddon(); webgl.onContextLoss(() => webgl.dispose()); terminal.loadAddon(webgl);
     } catch { /* xterm's default renderer remains available when WebGL is unavailable. */ }
     let cursor = 0, active = true, failed = false, initialPage = true, lastLive: boolean | undefined;
@@ -93,15 +100,18 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
       socket.send(JSON.stringify(message));
     };
     setError(null); setLive(null);
-    const fitTerminal = () => {
-      if (!active || !host.current?.clientWidth) return;
-      fit.fit();
-      const cols = Math.min(400, terminal.cols), rows = Math.min(200, terminal.rows), size = `${cols}:${rows}`;
-      if (cols < 20 || rows < 5 || size === sentSize || socket?.readyState !== WebSocket.OPEN) return;
+    const fitTerminal = (claim = false) => {
+      if (!active || document.hidden || !host.current?.clientWidth || !host.current?.clientHeight) return;
+      terminal.resize(terminal.cols, terminal.rows); // Re-measure if first opened while hidden.
+      const dimensions = fit.proposeDimensions();
+      if (!dimensions) return;
+      const cols = Math.min(400, dimensions.cols), rows = Math.min(200, dimensions.rows), size = `${cols}:${rows}`;
+      if (cols < 20 || rows < 5 || (size === sentSize && (!claim || (terminal.cols === cols && terminal.rows === rows))) || socket?.readyState !== WebSocket.OPEN) return;
       try { send({ type: 'resize', cols, rows }); sentSize = size; } catch (error) { fail(error); }
     };
     const input = terminal.onData(data => {
       if (failed || !active || isTerminalReply(data)) return;
+      fitTerminal(true);
       queuedInput += data;
       if (queuedInput.length > 262144) { fail(new Error('Terminal input is too large. Paste smaller sections.')); return; }
       if (inputTimer) return;
@@ -154,14 +164,22 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
       };
       current.onerror = () => { if (active && socket === current) fail(new Error('Terminal connection unavailable. Reconnect to try again.')); };
     };
-    const observer = new ResizeObserver(() => { cancelAnimationFrame(frame); frame = requestAnimationFrame(fitTerminal); }); observer.observe(host.current);
-    fitTerminal(); terminal.focus(); connect();
-    return () => { active = false; window.removeEventListener('ade:session-closed', closedTab); clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); mouseMode?.dispose(); terminal.dispose(); };
-  }, [projectId, nodeId, retry, streamPath, provider]);
+    const observer = new ResizeObserver(() => { cancelAnimationFrame(frame); frame = requestAnimationFrame(() => fitTerminal()); }); observer.observe(host.current);
+    const claimViewport = () => fitTerminal(true);
+    window.addEventListener('focus', claimViewport);
+    document.addEventListener('visibilitychange', claimViewport);
+    host.current.addEventListener('pointerdown', claimViewport, { capture: true });
+    host.current.addEventListener('wheel', claimViewport, { passive: true, capture: true });
+    const surface = host.current;
+    fitTerminal();
+    if (!window.matchMedia('(pointer: coarse)').matches) terminal.focus();
+    connect();
+    return () => { active = false; window.removeEventListener('ade:session-closed', closedTab); window.removeEventListener('focus', claimViewport); document.removeEventListener('visibilitychange', claimViewport); surface.removeEventListener('pointerdown', claimViewport, true); surface.removeEventListener('wheel', claimViewport, true); clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); disposeTouch(); terminal.dispose(); };
+  }, [projectId, nodeId, retry, streamPath, provider, surfaceReady]);
   return <section className="agent-terminal" aria-label="Agent terminal">
     {error && <div className="panel-alert alert-error" role="alert">{error} <button className="btn btn-secondary btn-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button><span> Inspect the terminal before repeating input.</span></div>}
-    <div ref={host} className="agent-terminal-screen" />
-    <div className="agent-terminal-footer"><p className="text-xs text-muted" role="status">{streamPath ? live === false ? 'Installation terminal stopped. Use Install or Update to open a new one.' : 'Installation terminal · press Enter to run the staged command.' : resuming ? restartable ? 'Opening a fresh shell…' : 'Resuming the same conversation…' : live === false ? restartable ? 'Shell stopped. Reopen in the same folder. Previous commands will not be replayed.' : resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native terminal · authentication and permission prompts appear here.'}</p>
+    <div className="agent-terminal-screen"><div ref={host} className="agent-terminal-viewport" /></div>
+    <div className="agent-terminal-footer"><p className="text-xs text-muted" role="status">{streamPath ? live === false ? `${setupLabel} terminal stopped. Reopen setup to start a new one.` : `${setupLabel} terminal · press Enter to run the staged command.` : resuming ? restartable ? 'Opening a fresh shell…' : 'Resuming the same conversation…' : live === false ? restartable ? 'Shell stopped. Reopen in the same folder. Previous commands will not be replayed.' : resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native terminal · authentication and permission prompts appear here.'}</p>
     {live === false && (resumable || restartable) && !resuming && <button type="button" className="btn btn-secondary" onClick={() => void resume()}><Icon name={restartable ? 'terminal' : 'play'} size={14} />{restartable ? 'Reopen terminal' : 'Resume session'}</button>}</div>
   </section>;
 }

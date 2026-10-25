@@ -16,6 +16,7 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
   onRecheck,
   isChecking,
 }) => {
+  const remote = typeof window !== 'undefined' && !window.adeDesktop && !['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname);
 
   // If loading initially with no data yet, show loading splash
   if (loading && !prerequisites) {
@@ -25,7 +26,7 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
           <div className="prereq-spinner" aria-hidden="true" />
           <h2 className="prereq-loading-title">Connecting to Vade…</h2>
           <p className="prereq-loading-desc">
-            Checking the local backend and development tools.
+            {remote ? 'Contacting the Vade app on your laptop.' : 'Checking the Vade backend and local tools.'}
           </p>
         </div>
       </div>
@@ -39,9 +40,9 @@ export const PrerequisitesGate: React.FC<PrerequisitesGateProps> = ({
 
   if (!prerequisites || prerequisites.runtime === 'ade') return <div className="prereq-gate-overlay">
     <div className="prereq-gate-card prereq-local-card" role="alert">
-      <div className="prereq-gate-header"><Icon name="terminal" size={24} /><h1 className="prereq-gate-title">Connect to your workspace</h1></div>
-      <p>Vade could not connect to the local backend or a required tool.</p>
-      <div className="prereq-local-help"><strong>Get connected</strong><p>In the desktop app, reopen Vade. For the web app, start the backend with <code>npm start</code> in your Vade folder.</p><p>Make sure Git is installed and available on PATH.</p></div>
+      <div className="prereq-gate-header"><Icon name={remote ? 'phone' : 'terminal'} size={24} /><h1 className="prereq-gate-title">{remote ? 'Reconnect to your laptop' : 'Connect to your workspace'}</h1></div>
+      <p>{remote ? 'This browser could not reach a ready Vade workspace on your laptop.' : 'Vade could not reach its backend, or a required local tool needs attention.'}</p>
+      <div className="prereq-local-help"><strong>{remote ? 'Check the connection' : 'Get connected'}</strong>{remote ? <ol><li>On your laptop, open Vade and keep the laptop awake.</li><li>Connect Tailscale on both devices to the same Tailscale network.</li><li>In the desktop app, open <strong>Settings → Connect phone</strong>. Finish setup and enable phone access.</li><li>Copy the saved phone link from Vade and open it in this browser, then try again.</li></ol> : <><p>If you use the desktop app, open or restart Vade. If you run Vade from source, run <code>npm run build</code>, then <code>npm start</code> in its folder.</p><p>Install Git on the computer running Vade and make sure it is available on PATH.</p></>}{remote && <p>Setup commands run on your laptop. Your phone only needs Tailscale and a browser. <a href="https://tailscale.com/docs/install" target="_blank" rel="noopener noreferrer">Tailscale installation guide</a></p>}</div>
       {prerequisites?.issues?.map(issue => <p className="text-muted text-xs" key={issue}>{issue}</p>)}
       <div><button className="btn btn-primary" onClick={onRecheck} disabled={isChecking}><RefreshIcon busy={isChecking} />{isChecking ? 'Checking...' : 'Try again'}</button></div>
     </div>

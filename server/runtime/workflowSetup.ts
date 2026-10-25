@@ -15,7 +15,7 @@ export class WorkflowSetup {
   private sessions?: AdeSessions;
   private owner?: { projectId: string; nodeId: string };
   private preparing = false;
-  constructor(readonly store: AdeStore) { this.directory = path.join(store.directory, 'orchestration'); }
+  constructor(readonly store: AdeStore, readonly purpose: 'orchestration' | 'phone' = 'orchestration') { this.directory = path.join(store.directory, purpose === 'phone' ? 'phone-connection' : 'orchestration'); }
   source(name: string): string { return path.resolve(process.env.ADE_ORCHESTRATION_RESOURCES ?? 'resources/orchestration', name); }
   file(name: string): string { return path.join(this.directory, name); }
   status(): WorkflowSetupStatus {
@@ -44,19 +44,20 @@ export class WorkflowSetup {
     if (this.preparing) throw new CliError('RATE_LIMITED', 'An installation terminal is already opening');
     this.preparing = true;
     try {
-      const node = executableOnPath('node'); if (!node) throw new CliError('CLI_MISSING', 'Install Node.js and restart Vade before opening the installation terminal.');
+      const node = executableOnPath(this.purpose === 'phone' ? 'tailscale' : 'node'); if (!node) throw new CliError('CLI_MISSING', this.purpose === 'phone' ? 'Tailscale was not found. Install Tailscale on this laptop, sign in, then restart Vade.' : 'Install Node.js and restart Vade before opening the installation terminal.');
       this.closeTerminal();
       const bundle = this.file('bundle'); fs.mkdirSync(bundle, { recursive: true, mode: 0o700 });
-      for (const name of ['vade.cjs', 'SKILL.md', 'cli-SKILL.md', 'install.cjs']) fs.writeFileSync(path.join(bundle, name), fs.readFileSync(this.source(name)), { mode: 0o600 });
+      if (this.purpose === 'orchestration') for (const name of ['vade.cjs', 'SKILL.md', 'cli-SKILL.md', 'install.cjs']) fs.writeFileSync(path.join(bundle, name), fs.readFileSync(this.source(name)), { mode: 0o600 });
       this.terminalStore ??= new AdeStore(this.file('terminal'));
       this.sessions ??= new AdeSessions(this.terminalStore);
       this.terminalStore.db.exec('DELETE FROM sessions; DELETE FROM titles;');
-      const project = this.terminalStore.register(bundle, 'Orchestration setup', 'folder');
+      const title = this.purpose === 'phone' ? 'Phone connection setup' : 'Orchestration setup';
+      const project = this.terminalStore.register(bundle, title, 'folder');
       const shell = process.platform === 'win32' ? 'powershell' as const : 'bash' as const;
-      const record = await this.sessions.launch(project.id, 'setup', bundle, 'terminal', 'Orchestration setup', shell);
+      const record = await this.sessions.launch(project.id, 'setup', bundle, 'terminal', title, shell);
       this.owner = { projectId: project.id, nodeId: record.id };
       const quote = (value: string) => shell === 'powershell' ? `'${value.replaceAll("'", "''")}'` : `'${value.replaceAll("'", "'\\''")}'`;
-      const command = `${shell === 'powershell' ? '& ' : ''}${quote(node)} ${quote(path.join(bundle, 'install.cjs'))} --data-dir ${quote(this.store.directory)}`;
+      const command = this.purpose === 'phone' ? `${shell === 'powershell' ? '& ' : ''}${quote(node)} serve --bg http://127.0.0.1:4317` : `${shell === 'powershell' ? '& ' : ''}${quote(node)} ${quote(path.join(bundle, 'install.cjs'))} --data-dir ${quote(this.store.directory)}`;
       if (/[\x00-\x1f\x7f]/.test(command)) throw new CliError('INVALID_ARGUMENT', 'Installation paths must not contain terminal control characters');
       // Wait for shell output before staging once. Enter always belongs to the user.
       let ready = false;

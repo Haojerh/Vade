@@ -148,7 +148,7 @@ export const App: React.FC = () => {
         orchestrationSkill: false,
         orcaCliSkill: false,
         ready: false,
-        issues: ['Prerequisites check failed to connect to local server.'],
+        issues: ['Could not reach the Vade backend at this address.'],
       });
     } finally {
       prerequisitesRequestRef.current = false;

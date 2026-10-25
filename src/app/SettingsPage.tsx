@@ -1,4 +1,5 @@
 import React, { useLayoutEffect, useRef, useState } from 'react';
+import { PhoneConnectionSettings } from '../features/projects/PhoneConnectionSettings';
 import type { ProjectSelectorProps } from '../features/projects/ProjectSelector';
 import { Icon } from '../components/ui/Icon';
 import { ConnectionSettings } from '../features/usage/ConnectionSettings';
@@ -24,6 +25,7 @@ type SettingsPageProps = Pick<ProjectSelectorProps, 'theme' | 'onToggleTheme' | 
 
 const sections = [
   { id: 'general', label: 'General', description: 'Make Vade comfortable for the way you work.' },
+  { id: 'phone', label: 'Connect phone', description: 'Access your running desktop workspace privately through Tailscale.' },
   { id: 'voice', label: 'Voice dictation', description: 'Choose how speech becomes text in your Chat draft.' },
   { id: 'agents', label: 'Agents', description: 'Choose your default agent and permission modes.' },
   { id: 'workflow', label: 'Workspace', description: 'Control what appears in your project workspace.' },
@@ -81,13 +83,13 @@ export const SettingsPage: React.FC<SettingsPageProps> = props => {
       <button className="settings-back" onClick={props.onBack}><Icon name="chevron-left" size={16} /><span>Back to app</span></button>
       <div className="settings-search"><Icon name="search" size={16} /><input type="search" aria-label="Search settings" placeholder="Search settings" value={search} onChange={event => setSearch(event.target.value)} /></div>
       <nav ref={navigation} aria-label="Settings sections" data-indicator-ready={indicatorReady}><span className="settings-nav-indicator" aria-hidden="true" style={indicator} />{sections.map(section => <a key={section.id} href={`#/settings/${section.id}`} aria-current={!query && section.id === current.id ? 'page' : undefined} onClick={() => setSearch('')}>
-        <Icon name={section.id === 'general' ? 'settings' : section.id === 'voice' ? 'mic' : section.id === 'agents' ? 'users' : section.id === 'workflow' ? 'sidebar-left' : section.id === 'organization' ? 'workflow' : section.id === 'setup' ? 'download' : section.id === 'integrations' ? 'git-branch' : 'key'} size={17} />{section.label}
+        <Icon name={section.id === 'phone' ? 'phone' : section.id === 'general' ? 'settings' : section.id === 'voice' ? 'mic' : section.id === 'agents' ? 'users' : section.id === 'workflow' ? 'sidebar-left' : section.id === 'organization' ? 'workflow' : section.id === 'setup' ? 'download' : section.id === 'integrations' ? 'git-branch' : 'key'} size={17} />{section.label}
       </a>)}</nav>
     </aside>
     <main className="settings-content">
       <div className="settings-content-inner" key={query ? 'search' : current.id}>
         <header><h1>{query ? 'Search results' : current.label}</h1><p>{query ? `Settings matching “${search.trim()}”` : current.description}</p></header>
-        {!query && current.id === 'organization' ? <OrganizationBuilder /> : !query && current.id === 'setup' ? <WorkflowSetup /> : !query && current.id === 'agents' ? <AgentSettings /> : !query && (current.id === 'integrations' || current.id === 'accounts') ? <ConnectionSettings key={current.id} kind={current.id} /> : <section className="settings-preferences" aria-label={query ? 'Matching settings' : `${current.label} preferences`}>
+        {!query && current.id === 'phone' ? <PhoneConnectionSettings /> : !query && current.id === 'organization' ? <OrganizationBuilder /> : !query && current.id === 'setup' ? <WorkflowSetup /> : !query && current.id === 'agents' ? <AgentSettings /> : !query && (current.id === 'integrations' || current.id === 'accounts') ? <ConnectionSettings key={current.id} kind={current.id} /> : <section className="settings-preferences" aria-label={query ? 'Matching settings' : `${current.label} preferences`}>
           {showAppearance && <div className="settings-page-row"><div><h2>Appearance</h2><p>Choose your preferred color theme.</p></div><button className="btn btn-secondary" onClick={props.onToggleTheme} aria-label={`Toggle theme, current theme is ${props.theme}`}><Icon name={props.theme === 'dark' ? 'sun' : 'moon'} size={16} />{props.theme === 'dark' ? 'Dark' : 'Light'}</button></div>}
           {showAwake && <ComputerAwakeSetting />}
           {showAgentView && <label className="settings-page-row settings-dropdown-row"><div><span className="settings-page-label">Agent default view</span><p>Choose what opens first when entering an agent overlay.</p></div><Select aria-label="Agent default view" value={agentView} onChange={event=>{const value=event.target.value as AgentView;setAgentView(value);writeAgentView(value);}}><option value="chat">Chat UI first</option><option value="terminal">Terminal first</option></Select></label>}

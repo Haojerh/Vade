@@ -4,6 +4,11 @@ declare global {
   interface Window {
     adeDesktop?: {
       customTitleBar: boolean;
+      phoneStatus: () => Promise<import('../../shared/contracts').PhoneConnectionSettings>;
+      setupPhone: () => Promise<import('../../shared/contracts').PhoneSetupTerminal>;
+      closePhoneSetup: (owner: { projectId: string; nodeId: string }) => Promise<void>;
+      detectPhone: () => Promise<string | null>;
+      savePhone: (value: import('../../shared/contracts').PhoneConnectionSettings) => Promise<import('../../shared/contracts').PhoneConnectionSettings>;
       setTheme: (theme: 'dark' | 'light') => Promise<void>;
       updateStatus: () => Promise<import('../../shared/contracts').DesktopUpdateStatus>;
       checkForUpdates: () => Promise<import('../../shared/contracts').DesktopUpdateStatus>;

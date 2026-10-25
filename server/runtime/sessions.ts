@@ -604,7 +604,7 @@ export class AdeSessions {
     }
     const offset = reset ? 0 : cursor - session.start;
     const data = session.buffer.slice(offset, offset + 65536);
-    return { data, cursor: session.start + offset + data.length, reset, live: session.live, exitCode: session.exitCode, resumable, restartable, recoverable: restartable };
+    return { data, cursor: session.start + offset + data.length, reset, live: session.live, exitCode: session.exitCode, resumable, restartable, recoverable: restartable, ...session.screen?.dimensions() };
   }
 
   preview(projectId: string, id: string): { command: string | null; output: string | null } {
@@ -819,7 +819,8 @@ export class AdeSessions {
     if (!Number.isInteger(cols) || !Number.isInteger(rows) || cols < 20 || cols > 400 || rows < 5 || rows > 200) throw new CliError('INVALID_ARGUMENT', 'Invalid terminal dimensions');
     const session = this.live.get(id);
     session?.screen?.resize(cols, rows);
-    return session?.live ? this.command(session, { type: 'resize', cols, rows }) : Promise.resolve();
+    const resized = session?.live ? this.command(session, { type: 'resize', cols, rows }) : Promise.resolve();
+    return resized.then(() => { this.changed(id); });
   }
 
   private command(session: LiveSession, message: object): Promise<void> {

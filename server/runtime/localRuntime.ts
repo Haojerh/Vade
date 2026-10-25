@@ -18,6 +18,7 @@ import { WorkspaceFiles } from './workspaceFiles.js';
 import { WorkspaceActions } from './workspaceActions.js';
 import { SourceControl } from './sourceControl.js';
 import { SessionHandoffs } from './sessionHandoff.js';
+import { WorkflowSetup } from './workflowSetup.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
   const now = new Date().toISOString();
@@ -36,6 +37,7 @@ export class LocalRuntime {
   readonly ports: Ports;
   readonly history: AgentHistory;
   readonly organization: OrganizationRuntime;
+  readonly phoneSetup: WorkflowSetup;
   readonly speech: LocalSpeech;
   readonly files: WorkspaceFiles;
   readonly fileActions: WorkspaceActions;
@@ -60,6 +62,7 @@ export class LocalRuntime {
     this.ports = new Ports(store, this.sessions, this.resources);
     this.awake = new ComputerAwake(store, () => this.sessions.processGroups().some(group => this.sessions.status(group.projectId, group.id).data?.state === 'working'));
     this.organization = new OrganizationRuntime(store, this.git, () => this.sessions);
+    this.phoneSetup = new WorkflowSetup(store, 'phone');
     this.handoffs = new SessionHandoffs(store, this.git, this.sessions, this.conversations, this.organization);
     this.sessions.setCliEnvironment(record => this.organization.cliEnvironment(record));
   }
@@ -133,6 +136,7 @@ export class LocalRuntime {
     for (const close of this.streams) close();
     this.accounts.close();
     this.organization.close();
+    this.phoneSetup.close();
     this.sessions.close();
     this.store.close();
   }
