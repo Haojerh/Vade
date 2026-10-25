@@ -203,10 +203,20 @@ export class LocalConnections {
       this.codeBuddyAccount = account;
       this.invalidate();
     }
-    if (this.pending) return this.pending;
+    if (this.pending) return this.usageResponse(this.pending,this.revision);
     if (!force && this.cached && this.now() < this.expires) return Promise.resolve(this.cached);
-    const pending = this.collect(this.revision).finally(() => { if (this.pending === pending) this.pending = undefined; });
-    return this.pending = pending;
+    const revision=this.revision;
+    const pending = this.collect(revision).finally(() => { if (this.pending === pending) this.pending = undefined; });
+    this.pending=pending;
+    return this.usageResponse(pending,revision);
+  }
+
+  private async usageResponse(pending:Promise<Section<UsageData>>,revision:number):Promise<Section<UsageData>>{
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    try{const result=await Promise.race([pending,new Promise<null>(resolve=>{timer=setTimeout(()=>resolve(null),800);})]);
+      if(revision!==this.revision)return this.usage();
+      return result??this.cached!;
+    }finally{clearTimeout(timer);}
   }
 
   private meta(availability: 'ready' | 'unavailable') {
@@ -217,9 +227,16 @@ export class LocalConnections {
   private async collect(revision: number): Promise<Section<UsageData>> {
     const previousSnapshot = this.cached;
     const codeBuddyAccount = this.codeBuddyAccount;
+    const selected=definitions.filter(d => ['codex', 'claude', 'antigravity', 'opencode', 'codebuddy'].includes(d.id));
+    const completed=new Map<string,ProviderUsage>();
+    const publish=()=>{if(revision!==this.revision)return;const providers=selected.flatMap(def=>{const current=completed.get(def.id);if(current)return[current];const previous=previousSnapshot?.data?.providers.find(provider=>provider.provider===def.id);return previous?[{...previous,meta:{...previous.meta,stale:true}}]:[];});
+      this.cached={data:{providers,pendingProviders:selected.filter(def=>!completed.has(def.id)).map(def=>def.id)},meta:{...this.meta(providers.some(provider=>provider.meta.availability==='ready')?'ready':'unavailable'),partial:true,stale:providers.some(provider=>provider.meta.stale)}};
+    };
+    publish();
     const [codex, claude] = await this.credentials();
-    const providers = await Promise.all(definitions.filter(d => ['codex', 'claude', 'antigravity', 'opencode', 'codebuddy'].includes(d.id)).map(async def => {
+    const providers = await Promise.all(selected.map(async def => {
       const previous = previousSnapshot?.data?.providers.find(p => p.provider === def.id);
+      const read=async()=>{
       try {
         let windows: UsageWindow[] = [];
         if (def.id === 'codex') {
@@ -267,6 +284,8 @@ export class LocalConnections {
           issue: { code: 'RUNTIME_UNAVAILABLE' as const, message: def.id === 'codebuddy' ? 'Credits require a readable native international personal sign-in. Enterprise, API-key and protected credentials are unsupported. View usage at https://www.codebuddy.ai/profile/plans-usage.' : def.id === 'opencode' ? error instanceof UsageRequestError && error.status === 403 ? 'This key has no OpenCode Go subscription.' : error instanceof UsageRequestError && error.status === 401 ? 'OpenCode rejected the selected API key. Reconnect OpenCode Go in the native CLI.' : 'Connect an OpenCode Go API key using the sign-in command in AI Providers, then re-check. Other provider keys do not expose Go subscription usage.' : 'Quota could not be read. Check the native CLI sign-in and retry. API-key accounts and OS-keychain-only credentials may not expose subscription quotas.', retryable: true },
         } } satisfies ProviderUsage;
       }
+      };
+      const provider=await read();completed.set(def.id,provider);publish();return provider;
     }));
     const hasData = providers.some(p => p.meta.availability === 'ready');
     const result: Section<UsageData> = { data: { providers }, meta: { ...this.meta(hasData ? 'ready' : 'unavailable'), partial: providers.some(p => p.meta.availability !== 'ready'), stale: providers.some(p => p.meta.stale) } };

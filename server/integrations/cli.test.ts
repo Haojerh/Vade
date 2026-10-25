@@ -1,4 +1,8 @@
-import { test, describe } from 'node:test';
+import { test, describe, mock } from 'node:test';
+import childProcess from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { PassThrough } from 'node:stream';
+import { syncBuiltinESMExports } from 'node:module';
 import assert from 'node:assert/strict';
 import {
   runGit,
@@ -9,6 +13,19 @@ import {
   defaultCommandRunner,
 } from './cli.js';
 import { validateGhEndpoint } from './cliValidators.js';
+
+test('command deadlines settle even when inherited streams never close',{timeout:1500}, async()=>{
+  const child=Object.assign(new EventEmitter(),{stdout:new PassThrough(),stderr:new PassThrough(),exitCode:null,signalCode:null,kill:()=>true});
+  const spawn=mock.method(childProcess,'spawn',()=>child as unknown as childProcess.ChildProcess);syncBuiltinESMExports();
+  try{await assert.rejects(defaultCommandRunner(process.execPath,['-e',''],{timeoutMs:40}),error=>error instanceof CliError&&error.issue.code==='CLI_TIMEOUT');}
+  finally{spawn.mock.restore();syncBuiltinESMExports();child.stdout.destroy();child.stderr.destroy();}
+});
+
+test('waiting for a command execution slot respects the caller deadline',async()=>{
+  const active=Array.from({length:3},()=>defaultCommandRunner(process.execPath,['-e','setTimeout(()=>{},450)'],{timeoutMs:3000}));
+  try{await assert.rejects(defaultCommandRunner(process.execPath,['-e',''],{timeoutMs:50}),error=>error instanceof CliError&&error.issue.code==='CLI_TIMEOUT');}
+  finally{await Promise.allSettled(active);}
+});
 
 describe('server/cli', () => {
   test('replacement environment does not restore inherited startup variables', async () => {

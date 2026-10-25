@@ -66,6 +66,7 @@ export interface ProviderUsage {
 
 export interface UsageData {
   providers: ProviderUsage[];
+  pendingProviders?: string[];
 }
 
 export interface LocalConnection {

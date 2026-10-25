@@ -62,18 +62,25 @@ export function UsagePanel() {
   const popoverRef = useRef<HTMLDivElement>(null);
   const popoverId = useId();
   const request = useRef<AbortController | null>(null);
+  const requestRefresh=useRef<(force?:boolean)=>void>(()=>{});
   const refresh = useCallback(async (force = false) => {
     request.current?.abort(); const abort = new AbortController(); request.current = abort;
     setLoading(true);
-    try { const next = await fetchUsage(abort.signal, force); if (!abort.signal.aborted) { setSection(next); setError(null); window.dispatchEvent(new Event('ade:usage-updated')); } }
-    catch (err) { if (!abort.signal.aborted) setError(err instanceof Error ? err.message : 'Usage is unavailable'); }
+    try { const next = await fetchUsage(abort.signal, force); if (!abort.signal.aborted) { setSection(next); setError(null); window.dispatchEvent(new Event('ade:usage-updated')); return Boolean(next.data?.pendingProviders?.length); } }
+    catch (err) { if (!abort.signal.aborted) setError(err instanceof Error && err.name==='TimeoutError'?'Usage request timed out. Retry to check again.':err instanceof Error ? err.message : 'Usage is unavailable'); }
     finally { if (!abort.signal.aborted) setLoading(false); }
+    return false;
   }, []);
   useEffect(() => {
-    void refresh(); const timer = setInterval(() => { if (!document.hidden) void refresh(); }, 60000);
-    const accountChanged = () => { setSection(null); detail.reset(); void refresh(); };
+    let disposed=false,generation=0,timer:ReturnType<typeof setTimeout>|undefined;
+    const read=async(force=false)=>{const current=++generation;clearTimeout(timer);if(disposed||document.hidden)return;const pending=await refresh(force);if(!disposed&&current===generation&&!document.hidden)timer=setTimeout(()=>void read(),pending?1000:60000);};
+    requestRefresh.current=force=>void read(force);
+    void read();
+    const accountChanged = () => { setSection(null); detail.reset(); void read(); };
+    const visibility=()=>{clearTimeout(timer);generation++;if(document.hidden){request.current?.abort();setLoading(false);}else void read();};
+    document.addEventListener('visibilitychange',visibility);
     window.addEventListener('ade:usage-account-change', accountChanged);
-    return () => { clearInterval(timer); request.current?.abort(); window.removeEventListener('ade:usage-account-change', accountChanged); };
+    return () => { disposed=true;clearTimeout(timer);request.current?.abort();document.removeEventListener('visibilitychange',visibility);window.removeEventListener('ade:usage-account-change', accountChanged); };
   }, [refresh]);
   useEffect(() => { if (!open) detail.reset(); }, [open, detail.reset]);
   useLayoutEffect(() => {
@@ -118,19 +125,21 @@ export function UsagePanel() {
   }, [mode]);
   useEffect(() => () => modeAnimation.current?.cancel(), []);
   const issue = error || section?.meta.issue?.message;
+  const pendingProviders=section?.data?.pendingProviders??[];
+  const reading=loading||pendingProviders.length>0;
   const setDisplay = (next: 'detailed' | 'compact', event: MouseEvent) => {
     if (mode === next) return;
     const motion = event.detail !== 0 && !window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     animateMode.current = motion; setModeMotion(motion); setMode(next); detail.close();
     try { localStorage.setItem('ade-usage-display', next); } catch { /* Display still works without storage. */ }
   };
-  const refreshButton = <button type="button" className="btn-icon usage-refresh" onClick={() => void refresh(true)} disabled={loading} aria-busy={loading} aria-label="Refresh provider usage" title="Refresh provider usage"><RefreshIcon busy={loading} size={14} /></button>;
+  const refreshButton = <button type="button" className="btn-icon usage-refresh" onClick={() => requestRefresh.current(true)} disabled={loading} aria-busy={reading} aria-label="Refresh provider usage" title="Refresh provider usage"><RefreshIcon busy={reading} size={14} /></button>;
   return <section className="rail-usage" aria-label="Provider usage">
     <div className="usage-status-row">
       <button ref={triggerRef} type="button" className="usage-status-trigger" aria-haspopup="dialog" aria-label="Show usage details" aria-expanded={open && !closing} aria-controls={open ? popoverId : undefined} onClick={toggle}>
         {available.length ? [...available].sort((a, b) => Number(b.provider === 'codex') - Number(a.provider === 'codex')).map(provider => <span key={provider.provider} className="usage-status-provider" title={`${provider.label}${provider.meta.stale ? ' · stale' : ''}`}>
           <ProviderIcon provider={provider.provider} size={16} />{primaryWindow(provider) && <Track window={primaryWindow(provider)!} />}<InlineSummary provider={provider} />{(error || provider.meta.stale) && <span className="usage-stale">*</span>}
-        </span>) : <span>{loading ? 'Reading usage…' : 'Usage unavailable'}</span>}
+        </span>) : <span>{reading ? 'Reading usage…' : 'Usage unavailable'}</span>}
       </button>{refreshButton}
     </div>
     <Popover isOpen={open} isClosing={closing} onClose={close} triggerRef={triggerRef} contentRef={popoverRef} portal focusOnOpen id={popoverId} className="usage-popover usage-menu" aria-label="Usage details" onMouseLeave={detail.close} style={{ left: position.left, bottom: position.bottom, width: position.width, maxHeight: position.maxHeight }}>
@@ -141,7 +150,7 @@ export function UsagePanel() {
         <button type="button" aria-pressed={mode === 'compact'} onClick={event => setDisplay('compact', event)}>Compact</button>
       </div>
       {issue && <p role="status" className="usage-note">{issue}{section?.data ? ' · Showing last known usage.' : ''}</p>}
-      {loading && !section && <p role="status" className="usage-note">Reading provider usage…</p>}
+      {reading && <p role="status" className="usage-note">{pendingProviders.length?`Checking ${pendingProviders.length} provider${pendingProviders.length===1?'':'s'}…`:'Reading provider usage…'}</p>}
       <div className="usage-provider-list" ref={listRef}>
         {available.map(provider => {
           const primary = primaryWindow(provider)!;
@@ -152,8 +161,8 @@ export function UsagePanel() {
             </div>
           </button>;
         })}
-        {unavailable.map(p => <div className="usage-unavailable-row" key={p.provider}><ProviderIcon provider={p.provider} size={16} /><span>{p.label}</span><span className="usage-note">Unavailable</span></div>)}
-        {!loading && !available.length && <p className="usage-note">Connect a native provider sign-in in account settings to read quotas.</p>}
+        {unavailable.map(p => <div className="usage-unavailable-row" key={p.provider}><ProviderIcon provider={p.provider} size={16} /><span>{p.label}</span><span className="usage-note">{pendingProviders.includes(p.provider)?'Checking…':'Unavailable'}</span></div>)}
+        {!reading && !available.length && <p className="usage-note">Connect a native provider sign-in in account settings to read quotas.</p>}
       </div>
       <a className="usage-manage-accounts" href="#/settings/accounts" onClick={close}>Manage Accounts…<Icon name="chevron-right" size={14} /></a>
       {selected && <div ref={detailRef} className={`usage-deep-panel ${detail.closing ? 'is-closing' : ''}`} data-motion={detailMotion} role="region" aria-hidden={detail.closing || undefined} aria-label={`${selected.label} detailed usage`} style={{ left: detailPosition.left, top: detailPosition.top, maxHeight: detailPosition.maxHeight }}><div className="usage-deep-card"><ProviderUsageDetails provider={selected} /></div></div>}

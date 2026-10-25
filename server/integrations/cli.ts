@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import path from 'node:path';
 import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { Issue, ErrorCode } from '../../shared/contracts.js';
@@ -40,27 +41,26 @@ export type CommandRunner = (
 // Global concurrency limiter (max 3 concurrent CLI spawns)
 class ConcurrencyLimiter {
   private active = 0;
-  private queue: (() => void)[] = [];
+  private queue: {grant:()=>void}[] = [];
 
   constructor(private readonly maxConcurrency: number = 3) {}
 
-  async acquire(): Promise<void> {
+  async acquire(timeoutMs:number): Promise<void> {
     if (this.active < this.maxConcurrency) {
       this.active++;
       return;
     }
-    await new Promise<void>((resolve) => {
-      this.queue.push(resolve);
+    await new Promise<void>((resolve,reject) => {
+      const entry={grant:()=>{clearTimeout(timer);resolve();}};
+      const timer=setTimeout(()=>{const index=this.queue.indexOf(entry);if(index>=0)this.queue.splice(index,1);reject(new CliError('CLI_TIMEOUT','Command timed out waiting for an execution slot',true));},timeoutMs);
+      this.queue.push(entry);
     });
-    this.active++;
   }
 
   release(): void {
-    this.active = Math.max(0, this.active - 1);
     const next = this.queue.shift();
-    if (next) {
-      next();
-    }
+    if (next) next.grant();
+    else this.active = Math.max(0, this.active - 1);
   }
 }
 
@@ -91,12 +91,15 @@ export const defaultCommandRunner: CommandRunner = async (
   const maxStdout = options.maxStdout ?? 4 * 1024 * 1024; // 4 MiB
   const maxStderr = options.maxStderr ?? 16 * 1024; // 16 KiB
 
-  await limiter.acquire();
+  const deadline=Date.now()+timeoutMs;
+  await limiter.acquire(timeoutMs);
   try {
     return await new Promise<CommandResult>((resolve, reject) => {
       let stdout = '';
       let stderr = '';
       let timedOut = false;
+      let settled=false;
+      const finish=(error?:Error,result?:CommandResult)=>{if(settled)return;settled=true;clearTimeout(timer);if(error)reject(error);else resolve(result!);};
 
       const child = spawn(executable, args, {
         cwd: options.cwd,
@@ -107,13 +110,17 @@ export const defaultCommandRunner: CommandRunner = async (
 
       const timer = setTimeout(() => {
         timedOut = true;
+        finish(new CliError('CLI_TIMEOUT',`Command timed out after ${timeoutMs}ms`,true));
+        // A descendant can keep inherited pipes open after its parent exits.
+        // Settle on the deadline independently of the eventual close event.
+        if(process.platform==='win32'&&child.pid&&child.exitCode===null&&child.signalCode===null){
+          const killer=spawn(path.join(process.env.SystemRoot||'C:\\Windows','System32','taskkill.exe'),['/PID',String(child.pid),'/T','/F'],{windowsHide:true,stdio:'ignore'});
+          const stop=setTimeout(()=>killer.kill(),1500);stop.unref();killer.once('error',()=>clearTimeout(stop));killer.once('exit',()=>clearTimeout(stop));killer.unref();
+        }
         child.kill('SIGTERM');
-        setTimeout(() => {
-          if (!child.killed) {
-            child.kill('SIGKILL');
-          }
-        }, 1000);
-      }, timeoutMs);
+        const force=setTimeout(()=>{if(child.exitCode===null&&child.signalCode===null)child.kill('SIGKILL');},1000);force.unref();
+        child.stdout?.destroy();child.stderr?.destroy();
+      }, Math.max(1,deadline-Date.now()));
 
       child.stdout?.on('data', (chunk: Buffer) => {
         if (stdout.length + chunk.length <= maxStdout) {
@@ -134,18 +141,18 @@ export const defaultCommandRunner: CommandRunner = async (
       child.on('error', (err: any) => {
         clearTimeout(timer);
         if (err.code === 'ENOENT') {
-          reject(new CliError('CLI_MISSING', `Executable '${executable}' not found`, false));
+          finish(new CliError('CLI_MISSING', `Executable '${executable}' not found`, false));
         } else {
-          reject(new CliError('CLI_FAILED', `Failed to execute '${executable}': ${err.message}`, false));
+          finish(new CliError('CLI_FAILED', `Failed to execute '${executable}': ${err.message}`, false));
         }
       });
 
       child.on('close', (code) => {
         clearTimeout(timer);
         if (timedOut) {
-          reject(new CliError('CLI_TIMEOUT', `Command timed out after ${timeoutMs}ms`, true));
+          finish(new CliError('CLI_TIMEOUT', `Command timed out after ${timeoutMs}ms`, true));
         } else {
-          resolve({
+          finish(undefined,{
             stdout,
             stderr,
             exitCode: code ?? 0,

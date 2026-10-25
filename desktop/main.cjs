@@ -16,7 +16,7 @@ else {
     backend = utilityProcess.fork(path.join(__dirname, '../build/server.cjs'), [], {
       // ASAR is a virtual directory; native process startup requires a real cwd.
       cwd: app.isPackaged ? process.resourcesPath : app.getAppPath(),
-      env: { ...process.env, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.getAppPath(), 'build/ptyHost.cjs'), ADE_SPEECH_WORKER: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/speechWorker.cjs'), ADE_ORCHESTRATION_RESOURCES: path.join(app.getAppPath(), 'build/orchestration') },
+      env: { ...process.env, ADE_DIST_DIR: path.join(app.getAppPath(), 'dist'), ADE_PTY_HOST: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/ptyHost.cjs'), ADE_SPEECH_WORKER: path.join(app.isPackaged ? path.join(process.resourcesPath, 'app.asar.unpacked') : app.getAppPath(), 'build/speechWorker.cjs'), ADE_ORCHESTRATION_RESOURCES: path.join(app.getAppPath(), 'build/orchestration') },
       stdio: 'pipe', serviceName: 'ADE local runtime',
     });
     backend.stdout?.on('data', data => process.stdout.write(data));

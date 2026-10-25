@@ -120,7 +120,7 @@ export async function fetchInbox(signal?: AbortSignal): Promise<Section<InboxDat
 
 export async function fetchUsage(signal?: AbortSignal, refresh = false): Promise<Section<UsageData>> {
   return handleResponse<Section<UsageData>>(await fetch(refresh ? '/api/usage?refresh=1' : '/api/usage', {
-    headers: { Accept: 'application/json' }, cache: 'no-store', signal,
+    headers: { Accept: 'application/json' }, cache: 'no-store', signal:signal?AbortSignal.any([signal,AbortSignal.timeout(10000)]):AbortSignal.timeout(10000),
   }));
 }
 

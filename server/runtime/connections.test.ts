@@ -1,7 +1,19 @@
-import { test } from 'node:test';
+import { test,mock } from 'node:test';
+import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { agyQuota, claudeQuota, codexQuota, LocalConnections, quotaWindow } from './connections.js';
 import type { CommandRunner } from '../integrations/cli.js';
+
+test('a slow native provider does not hide ready usage and concurrent polls share its probe',async()=>{
+  let finish!:(value:{stdout:string;stderr:string;exitCode:number})=>void,probes=0;
+  const service=new LocalConnections(async(_exe,args)=>{probes++;return args[0]==='--version'?{stdout:'1.1.11',stderr:'',exitCode:0}:new Promise(resolve=>{finish=resolve;});},{credentials:async()=>[{tokens:{access_token:'private-token'}},null],resolve:provider=>provider==='antigravity'?{executable:'agy',args:[]}:null,request:async()=>({rate_limit:{primary_window:{used_percent:17}}})});
+  const [first,second]=await Promise.all([service.usage(),service.usage()]);
+  assert.equal(first.data?.providers.find(provider=>provider.provider==='codex')?.windows[0].usedPercent,17);
+  assert.deepEqual(first.data?.pendingProviders,['antigravity']);assert.equal(second.data?.pendingProviders?.length,1);assert.equal(probes,2);
+  finish({stdout:JSON.stringify({command:{name:'usage',data:{groups:[{name:'Pool',buckets:[{remaining_fraction:.5}]}]}}}),stderr:'',exitCode:0});
+  await new Promise(resolve=>setImmediate(resolve));
+  const complete=await service.usage();assert.equal(complete.data?.pendingProviders?.length??0,0);assert.equal(complete.data?.providers.find(provider=>provider.provider==='antigravity')?.windows[0].usedPercent,50);assert.equal(probes,2);
+});
 
 test('integrations returns immediately while GitHub auth is pending and avoids provider credential reads', async () => {
   let finish!: (result: { exitCode: number; stdout: string; stderr: string }) => void;
@@ -50,6 +62,8 @@ test('quota parsers preserve zero, distinguish unknown from zero, and use struct
 });
 
 test('native quota reads deduplicate, preserve last good observations on errors, and never serialize credentials', async () => {
+  const files=mock.method(fs,'open',async()=>{throw new Error('No unrelated native credential files in this fixture');});
+  try{
   let now = 1900000000000, calls = 0, fail = false;
   const service = new LocalConnections(async () => { throw new Error('not installed'); }, {
     credentials: async () => [{ tokens: { access_token: 'private-token', account_id: 'private-account' } }, null], resolve: () => null, now: () => now,
@@ -72,6 +86,7 @@ test('native quota reads deduplicate, preserve last good observations on errors,
   assert.equal(stale.data?.providers[0].windows[0].usedPercent, 23);
   assert.equal(stale.data?.providers[0].meta.observedAt, a.data?.providers[0].meta.observedAt);
   assert.ok(!JSON.stringify(stale).includes('private-'));
+  }finally{files.mock.restore();}
 });
 
 test('Antigravity usage probe gates old CLI versions and disables the background updater', async () => {
