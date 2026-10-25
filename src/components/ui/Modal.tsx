@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { lockModalScroll } from './modalScrollLock';
 
 interface ModalProps extends Omit<React.DialogHTMLAttributes<HTMLDialogElement>, 'open' | 'onClose'> {
   isOpen: boolean;
@@ -17,10 +18,12 @@ export function Modal({ isOpen, isClosing = false, busy = false, nonModal = fals
     if (!dialog) return;
     const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!dialog.open) { if (nonModal) dialog.show(); else dialog.showModal(); }
+    const releaseScroll = nonModal ? () => {} : lockModalScroll(dialog);
     return () => {
       if (dialog.open) dialog.close();
-      if (opener?.isConnected && !opener.closest('dialog:not([open])')) opener.focus();
-      else document.querySelector<HTMLElement>('.dashboard-topbar button, .dashboard-topbar select')?.focus();
+      releaseScroll();
+      if (opener?.isConnected && !opener.closest('dialog:not([open])')) opener.focus({ preventScroll: true });
+      else document.querySelector<HTMLElement>('.dashboard-topbar button, .dashboard-topbar select')?.focus({ preventScroll: true });
     };
   }, [isOpen, nonModal]);
   if (!isOpen) return null;

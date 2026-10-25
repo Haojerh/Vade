@@ -45,13 +45,15 @@ export function createDictationSession(recognition: SpeechRecognizer, callbacks:
   onInterim(text: string): void;
   onError(message: string): void;
   onEnd(): void;
+  onNotice?(message: string): void;
 }) {
   const delivered = new Set<number>();
-  let disposed = false;
+  let disposed = false, started = false, ended = false, stopping = false;
+  let notice: ReturnType<typeof setTimeout> | undefined;
   recognition.continuous = true;
   recognition.interimResults = true;
   recognition.onresult = (event) => {
-    if (disposed) return;
+    if (disposed || ended) return;
     const final: string[] = [];
     const interim: string[] = [];
     for (let i = 0; i < event.results.length; i++) {
@@ -63,18 +65,25 @@ export function createDictationSession(recognition: SpeechRecognizer, callbacks:
     }
     if (final.length) callbacks.onText(final.join(' '));
     callbacks.onInterim(interim.join(' '));
+    if (final.length || interim.length) { clearTimeout(notice); callbacks.onNotice?.(''); }
   };
   recognition.onerror = ({ error }) => {
-    if (!disposed && error !== 'aborted') callbacks.onError(dictationError(error));
+    if (disposed || ended) return;
+    ended = true;
+    clearTimeout(notice);
+    if (error === 'aborted') callbacks.onEnd();
+    else callbacks.onError(dictationError(error));
   };
-  recognition.onend = () => { if (!disposed) callbacks.onEnd(); };
+  recognition.onend = () => { if (!disposed && !ended) { ended = true; clearTimeout(notice); callbacks.onEnd(); } };
   return {
-    start: () => recognition.start(),
-    stop: () => recognition.stop(),
+    start: () => { if (disposed || started) return; started = true; try { recognition.start(); if (!ended && !disposed) notice = setTimeout(() => { if (!disposed && !ended) callbacks.onNotice?.('No speech results yet. If you are speaking, stop and try Local recognition in Voice dictation settings.'); }, 15000); } catch (error) { ended = true; throw error; } },
+    stop: () => { if (disposed || ended || stopping || !started) return; stopping = true; recognition.stop(); },
     dispose: () => {
+      if (disposed) return;
       disposed = true;
+      clearTimeout(notice);
       recognition.onresult = recognition.onerror = recognition.onend = null;
-      recognition.abort();
+      if (started && !ended) { ended = true; try { recognition.abort(); } catch { /* Already released by the browser. */ } }
     },
   };
 }

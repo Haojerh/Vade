@@ -17,17 +17,25 @@ export function DictationButton({ disabled, onText, onActiveChange,iconOnly=fals
   const [stopping, setStopping] = useState(false);
   const [interim, setInterim] = useState('');
   const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
   const sessionRef = useRef<ReturnType<typeof createDictationSession> | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const generation = useRef(0), stoppingRef = useRef(false);
   const callbacks = useRef({ onText, onActiveChange });
   callbacks.current = { onText, onActiveChange };
-  const finish = () => {
+  const finish = (owner?: number) => {
+    if (owner !== undefined && owner !== generation.current) return;
+    generation.current++;
+    held.current = false;
     clearTimeout(timerRef.current);
-    sessionRef.current?.dispose();
+    const previous = sessionRef.current;
     sessionRef.current = null;
+    stoppingRef.current = false;
+    previous?.dispose();
     setActive(false);
     setStopping(false);
     setInterim('');
+    setNotice('');
     callbacks.current.onActiveChange(false);
   };
   useEffect(() => {
@@ -36,45 +44,49 @@ export function DictationButton({ disabled, onText, onActiveChange,iconOnly=fals
     return () => {
       document.removeEventListener('visibilitychange', hidden);
       clearTimeout(timerRef.current);
+      generation.current++;
       sessionRef.current?.dispose();
+      sessionRef.current = null;
       callbacks.current.onActiveChange(false);
     };
   }, []);
   useEffect(() => { if (disabled || !preferences.enabled) finish(); }, [disabled, preferences.enabled]);
-  const stop = () => {
-    if (!sessionRef.current || stopping) return;
+  const stop = (owner = generation.current) => {
+    if (owner !== generation.current || !sessionRef.current || stoppingRef.current) return;
+    stoppingRef.current = true;
     setStopping(true);
     clearTimeout(timerRef.current);
-    timerRef.current = setTimeout(() => { setError('Dictation took too long to finish. Try a smaller local model.'); finish(); }, preferences.engine === 'local' ? 65000 : 2500);
-    sessionRef.current.stop();
+    timerRef.current = setTimeout(() => { if (owner !== generation.current) return; setError(preferences.engine === 'local' ? 'Dictation took too long to finish. Try a smaller local model.' : 'The browser speech service did not finish. Try again or choose Local recognition in Voice dictation settings.'); finish(owner); }, preferences.engine === 'local' ? 65000 : 10000);
+    try { sessionRef.current.stop(); } catch { setError('Dictation could not stop cleanly. Try again.'); finish(owner); }
   };
   const toggle = () => {
-    if (disabled || !preferences.enabled || stopping) return;
-    if (active) { stop(); return; }
+    if (disabled || !preferences.enabled || stoppingRef.current) return;
+    if (sessionRef.current) { stop(); return; }
     setError('');
+    const owner = ++generation.current;
+    const current = () => owner === generation.current && Boolean(sessionRef.current);
+    const events = {
+      onText: (text: string) => { if (current()) callbacks.current.onText(text); },
+      onInterim: (text: string) => { if (current()) setInterim(text); },
+      onError: (message: string) => { if (current()) { setError(message); finish(owner); } },
+      onEnd: () => finish(owner),
+      onNotice: (message: string) => { if (current()) setNotice(message); },
+    };
     if (preferences.engine === 'local') {
-      sessionRef.current = createLocalDictationSession(preferences, {
-        onText: text => callbacks.current.onText(text), onInterim: setInterim,
-        onError: message => { setError(message); finish(); }, onEnd: finish,
-      });
+      sessionRef.current = createLocalDictationSession(preferences, events);
       setActive(true); callbacks.current.onActiveChange(true);
-      sessionRef.current.start(); timerRef.current = setTimeout(stop, 60000); return;
+      sessionRef.current.start(); if (current()) timerRef.current = setTimeout(() => stop(owner), 60000); return;
     }
     const support = dictationSupport(window as unknown as SpeechWindow);
     if (!support.Recognition) { setError(support.reason!); return; }
     try {
       const recognition = new support.Recognition();
       recognition.lang = navigator.language || 'en-US';
-      sessionRef.current = createDictationSession(recognition, {
-        onText: (text) => callbacks.current.onText(text),
-        onInterim: setInterim,
-        onError: (message) => { setError(message); finish(); },
-        onEnd: finish,
-      });
+      sessionRef.current = createDictationSession(recognition, events);
       setActive(true);
       callbacks.current.onActiveChange(true);
       sessionRef.current.start();
-      timerRef.current = setTimeout(stop, 60000);
+      if (current()) timerRef.current = setTimeout(() => stop(owner), 60000);
     } catch {
       finish();
       setError('Dictation could not start. Check microphone access and try again.');
@@ -103,11 +115,11 @@ export function DictationButton({ disabled, onText, onActiveChange,iconOnly=fals
     <button ref={buttonRef} type="button" className={`btn btn-sm ${active ? 'btn-danger' : 'btn-secondary'}`}
       disabled={disabled || stopping} onClick={toggle} aria-pressed={active}
       aria-label={active ? 'Stop dictation' : 'Start dictation'}
-      title={`${preferences.engine === 'local' ? 'Local dictation — audio stays on this machine.' : 'Browser dictation — audio may be processed by your browser’s speech service.'} Ctrl+E to dictate. Text is added to your draft; it is never sent automatically.`}>
+      title={`${preferences.engine === 'local' ? 'Local dictation — audio is processed by the computer running Vade.' : 'Browser dictation — audio may be processed by your browser’s speech service.'} Ctrl+E to dictate. Text is added to your draft; it is never sent automatically.`}>
       <Icon name="mic" size={iconOnly?18:14} />{!iconOnly&&<span className="composer-action-label">{stopping ? 'Finishing…' : active ? 'Stop' : 'Dictate'}</span>}
     </button>
     {(active || error) && <span role="status" className={`dictation-status text-xs ${error ? 'text-danger' : 'text-muted'}`}>
-      {error || interim || (stopping ? 'Finishing dictation…' : preferences.engine === 'local' ? 'Listening locally…' : 'Listening… Speak in your browser language.')}
+      {error || interim || notice || (stopping ? 'Finishing dictation…' : preferences.engine === 'local' ? 'Listening locally…' : 'Listening… Speak in your browser language.')}
     </span>}
   </div>;
 }

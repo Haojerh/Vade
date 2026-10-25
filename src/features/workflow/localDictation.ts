@@ -28,11 +28,13 @@ export function createLocalDictationSession(preferences: VoicePreferences, callb
   let pending: number[] = [];
   let flushed: (() => void) | undefined;
   const releaseMic = () => {
-    if (processor) processor.port.onmessage = null;
-    source?.disconnect(); processor?.disconnect(); gain?.disconnect();
-    stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); void context?.close().catch(() => {});
+    const current = { source, processor, gain, stream, context };
+    source = processor = gain = stream = context = undefined;
+    if (current.processor) current.processor.port.onmessage = null;
+    current.source?.disconnect(); current.processor?.disconnect(); current.gain?.disconnect();
+    current.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); void current.context?.close().catch(() => {});
   };
-  const cancel = () => { if (sessionId) { const id = sessionId; sessionId = undefined; void speechRequest(`sessions/${id}/cancel`, {}).catch(() => {}); } };
+  const cancel = async () => { if (sessionId) { const id = sessionId; sessionId = undefined; await speechRequest(`sessions/${id}/cancel`, {}).catch(() => {}); } };
   const deliver = (result: SpeechTranscript) => {
     if (disposed) return;
     if (result.text) callbacks.onText(result.text);
@@ -59,16 +61,19 @@ export function createLocalDictationSession(preferences: VoicePreferences, callb
       started = (async () => {
         if (!preferences.modelId) throw new Error('Select and download a local speech model in Settings → Voice dictation.');
         if (!navigator.mediaDevices?.getUserMedia) throw new Error('Microphone access requires localhost or HTTPS.');
+        // Resume while this start still belongs to the mic-button gesture.
+        context = new AudioContext();
+        const resumed = context.resume();
+        void resumed.catch(() => {});
         // Request microphone access from this explicit recording action only.
         stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, ...(preferences.deviceId !== 'default' ? { deviceId: { exact: preferences.deviceId } } : {}) } });
-        if (disposed) { releaseMic(); return; }
+        if (disposed || stopping) { releaseMic(); return; }
         stream.getAudioTracks().forEach(track => { track.onended = () => fail(new Error('The microphone disconnected. Check the selected input device.')); });
-        context = new AudioContext();
         await context.audioWorklet.addModule('/audio/dictation-capture.js');
-        if (disposed) { releaseMic(); return; }
+        if (disposed || stopping) { releaseMic(); return; }
         const result = await speechRequest<StartSpeechResponse>('sessions', { modelId: preferences.modelId });
         sessionId = result.sessionId;
-        if (disposed) { cancel(); releaseMic(); return; }
+        if (disposed || stopping) { releaseMic(); await cancel(); return; }
         const resample = pcmResampler(context.sampleRate);
         source = context.createMediaStreamSource(stream);
         processor = new AudioWorkletNode(context, 'ade-dictation-capture');
@@ -81,12 +86,13 @@ export function createLocalDictationSession(preferences: VoicePreferences, callb
           while (pending.length >= 4000) enqueue(new Float32Array(pending.splice(0, 4000)));
         };
         source.connect(processor); processor.connect(gain); gain.connect(context.destination);
-        await context.resume();
+        await resumed;
       })().catch(fail);
     },
     stop() {
       if (stopping || disposed) return;
       stopping = true;
+      if (!processor && stream) { const capture = stream; stream = undefined; capture.getTracks().forEach(track => { track.onended = null; track.stop(); }); }
       void started.then(async () => {
         if (processor && !disposed) await new Promise<void>((resolve, reject) => {
           const timeout = setTimeout(() => reject(new Error('Microphone capture did not finish. Start dictation again.')), 1000);
@@ -94,7 +100,8 @@ export function createLocalDictationSession(preferences: VoicePreferences, callb
           processor!.port.postMessage('flush');
         });
         releaseMic();
-        if (disposed || !sessionId) return;
+        if (disposed) return;
+        if (!sessionId) { callbacks.onEnd(); return; }
         enqueue(new Float32Array(pending)); pending = [];
         await chain;
         if (disposed || !sessionId) return;
