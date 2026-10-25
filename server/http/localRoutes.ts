@@ -83,7 +83,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       return;
     }
     if (pathname === '/api/speech/models') { requireMethod('GET'); queryKeys(); sendJson(200, runtime.speech.catalog()); return; }
-    const speechModel = pathname.match(/^\/api\/speech\/models\/([a-z0-9-]+)\/(download|cancel)$/);
+    const speechModel = pathname.match(/^\/api\/speech\/models\/([a-z0-9.-]{1,100})\/(download|cancel)$/);
     if (speechModel) {
       requireMethod('POST'); queryKeys(); await body<{}>([]);
       if (speechModel[2] === 'download') runtime.speech.download(speechModel[1]); else runtime.speech.cancelDownload(speechModel[1]);
