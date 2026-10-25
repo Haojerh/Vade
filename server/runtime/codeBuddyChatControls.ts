@@ -3,6 +3,7 @@ import type { AgentChatModel, AgentChatOptions, SetAgentChatOptionRequest } from
 import { CliError } from '../integrations/cli.js';
 import { resolveAgent } from './sessions.js';
 import type { ChatControlIO } from './chatControlTypes.js';
+import { codeBuddyEffortAcknowledgement } from '../providers/codeBuddySettings.js';
 
 const controls = { model: true, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false };
 const safe = /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}$/;
@@ -58,8 +59,10 @@ export class CodeBuddyChatControls {
       await io.write('\x1b'); await io.waitFor(value => !/Esc to cancel/.test(value)); return options;
     }
     const lines = screen.split('\n');
-    const labels = lines.find(line => /^\s*(?:low|medium|high|xhigh|max)(?:\s+(?:low|medium|high|xhigh|max))*(?:\s+ultracode)?\s*$/.test(line));
-    const values = labels?.match(/\b(?:low|medium|high|xhigh|max)\b/g) ?? [];
+    const heading = lines.findIndex(line => /^\s*Effort\s*$/.test(line));
+    const footer = lines.findIndex((line, index) => index > heading && /Esc to cancel/.test(line));
+    const labels = lines.slice(heading + 1, footer).filter(line => /^\s*(?:minimal|low|medium|high|xhigh|max|ultracode)(?:\s+(?:minimal|low|medium|high|xhigh|max|ultracode))*\s*$/.test(line));
+    const values = [...new Set(labels.flatMap(line => line.match(/\b(?:minimal|low|medium|high|xhigh|max|ultracode)\b/g) ?? []))];
     await io.write('\x1b'); await io.waitFor(value => !/Esc to cancel/.test(value));
     if (this.efforts.size >= 200) this.efforts.delete(this.efforts.keys().next().value!);
     this.efforts.set(sessionKey, { model: options.current.model, values });
@@ -90,7 +93,7 @@ export class CodeBuddyChatControls {
       const fresh = io.output().slice(start);
       const acknowledgements = [`Switched model to ${targetName}.`, `Switched this session to ${targetName}.`, `Switched this session to ${targetName}, but the global default could not be saved.`];
       return request.key === 'model' ? fresh.split(/\r?\n/).some(line => acknowledgements.includes(line.trim()))
-        : [`Model reasoning effort set to \`${request.value}\`.`, `Model reasoning effort set to ${request.value}.`].some(message => fresh.includes(message));
+        : codeBuddyEffortAcknowledgement(fresh) === request.value;
     });
     const result: AgentChatOptions = { ...options, current: { ...options.current, [request.key]: request.value, ...(request.key === 'model' ? { effort: undefined } : {}) } };
     if (request.key === 'model') {

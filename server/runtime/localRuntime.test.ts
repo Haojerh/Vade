@@ -321,6 +321,10 @@ test('Chat sends text and validated attachments to all three owned terminals wit
       const project = await f.runtime.git.register(f.repo), tree = (await f.runtime.git.worktrees(project))[0];
       const record = await sessions.launch(project.id, tree.id, tree.path, provider);
       await until(() => sessions.page(project.id, record.id).data.includes('READY'));
+      state = 'working';
+      await assert.rejects(sessions.send(project.id, record.id, { message: 'queued task', requireIdle: true }), /empty, idle/);
+      assert.equal(captured(), '');
+      state = 'idle';
       const attachments = [{ name: '../notes.txt', mimeType: 'text/plain', dataBase64: Buffer.from('attachment fixture').toString('base64') },
         { name: 'pixel.png', mimeType: 'image/png', dataBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aX2kAAAAASUVORK5CYII=' }];
       await assert.rejects(sessions.send(project.id, record.id, { message: 'bad\x1b[201~\r' }), /control codes/);

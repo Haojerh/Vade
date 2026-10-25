@@ -6,6 +6,9 @@
 /* 1. Theme Variables */
 :root,
 :root[data-theme="dark"] {
+  /* Native terminal colors stay dark in both application themes. */
+  --terminal-bg: #181818;
+  --terminal-fg: #ededed;
   --canvas-bg: #181818;
   --surface-1: #202020;
   --surface-2: #262626;

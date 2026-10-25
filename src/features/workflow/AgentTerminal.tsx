@@ -33,7 +33,7 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     const rootStyle = getComputedStyle(document.documentElement);
     const terminal = new Terminal({ cursorBlink: true, scrollback: 3000, fontSize: 13,
       fontFamily: 'Consolas, monospace', allowProposedApi: false,
-      theme: { background: rootStyle.getPropertyValue('--canvas-bg').trim(), foreground: rootStyle.getPropertyValue('--text-main').trim() } });
+      theme: { background: rootStyle.getPropertyValue('--terminal-bg').trim(), foreground: rootStyle.getPropertyValue('--terminal-fg').trim(), cursor: '#ededed', cursorAccent: '#181818', selectionBackground: '#ffffff33' } });
     const fit = new FitAddon(); terminal.loadAddon(fit); terminal.open(host.current);
     // Codex mouse reporting captures browser selection and wheel scrolling.
     // Keep the embedded transcript selectable; keyboard interaction stays native.

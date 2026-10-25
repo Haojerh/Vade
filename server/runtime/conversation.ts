@@ -12,38 +12,54 @@ import { issueStoredCursor, validateStoredCursor } from '../providers/conversati
 import { parseCoordinatorTranscriptLine } from '../providers/publicTranscript.js';
 import { parseAntigravityTranscriptLine, readAntigravityModel, readAntigravityToolActivity } from '../providers/antigravity.js';
 import { transcriptSettings, claudeLocalCommandEffort } from '../providers/shared.js';
+import { codeBuddyEffortAcknowledgement } from '../providers/codeBuddySettings.js';
 import { isOpenCode, verifyOpenCode, withOpenCode } from './openCodeSessions.js';
 import { readOpenCodePage, readOpenCodeModel } from '../providers/opencode.js';
 import { readOpenCodeV2Page, readOpenCodeV2Model, openCodeV2Tools } from '../providers/openCodeV2.js';
 import { databaseToolActivity, mergeToolActivity, transcriptToolActivity } from '../providers/toolActivity.js';
 
 /** Exact-session local command records supply settings without entering public chat. */
-export function codeBuddyRecordedSettings(lines: string[], record: SessionRecord): { model?: string; effort?: string | null } {
-  const aliases = new Map<string, string>();
-  const evidence: Array<{ model?: string; effort?: string; output: string }> = [];
+export function codeBuddyRecordedSettings(lines: string[], record: SessionRecord): { model?: string | null; effort?: string | null } {
+  const aliases = new Map<string, Set<string>>();
+  const evidence: Array<{ model?: string; effort?: string; commandModel?: string; output: string }> = [];
   for (const line of lines) {
     try {
       const row = JSON.parse(line);
       if (row.sessionId !== record.providerThreadId || typeof row.cwd !== 'string' || ![record.cwd, record.sourceCwd].some(cwd => cwd && path.relative(path.resolve(cwd), path.resolve(row.cwd)) === '')) continue;
       const output = row.type === 'message' && row.role === 'user' && row.providerData?.skipRun === true && Array.isArray(row.content)
         ? row.content.flatMap((part: any) => part?.type === 'input_text' && typeof part.text === 'string' && part.text.startsWith('<local-command-stdout>') && part.text.endsWith('</local-command-stdout>') ? [part.text.slice(22, -23)] : []).join('\n') : '';
-      for (const match of output.matchAll(/^\s*-\s+(.+?)\s+\(([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})\)(?:\s+← current)?\s*$/gm)) aliases.set(match[1], match[2]);
-      evidence.push({ model: row.providerData?.skipRun === true ? undefined : row.providerData?.model, effort: row.providerData?.skipRun === true ? undefined : row.providerData?.effort, output });
+      for (const match of output.matchAll(/^\s*-\s+(.+?)\s+\(([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})\)(?:\s+← current)?\s*$/gm)) {
+        const ids = aliases.get(match[1]) ?? new Set<string>(); ids.add(match[2]); aliases.set(match[1], ids);
+      }
+      for (const match of output.matchAll(/^\s*-\s+([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})(?:\s+← current)?\s*$/gm)) {
+        const ids = aliases.get(match[1]) ?? new Set<string>(); ids.add(match[1]); aliases.set(match[1], ids);
+      }
+      const commandModel = row.type === 'message' && row.role === 'user' && row.providerData?.skipRun === true && Array.isArray(row.content)
+        ? row.content.flatMap((part: any) => part?.type === 'input_text' && typeof part.text === 'string' && /^<command-name>\/?model<\/command-name>/.test(part.text)
+          ? [part.text.match(/<command-args>([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})<\/command-args>/)?.[1]] : []).find(Boolean) : undefined;
+      evidence.push({ model: row.providerData?.skipRun === true ? undefined : row.providerData?.model, effort: row.providerData?.skipRun === true ? undefined : row.providerData?.effort, commandModel, output });
     } catch { /* Ignore incomplete or foreign records. */ }
   }
-  const result: { model?: string; effort?: string | null } = {};
+  const result: { model?: string | null; effort?: string | null } = {};
+  let requestedModel: string | undefined;
+  let ultracode = false;
   for (const row of evidence) {
+    if (row.commandModel) requestedModel = row.commandModel;
     if (typeof row.model === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}$/.test(row.model)) {
-      if (row.model !== result.model) result.effort = null;
+      if (row.model !== result.model && !ultracode) result.effort = null;
       result.model = row.model;
-      if (typeof row.effort === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(row.effort)) result.effort = row.effort;
+      if (!ultracode && typeof row.effort === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(row.effort)) result.effort = row.effort;
     }
-    const current = row.output.match(/^\s*-\s+.+?\s+\(([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})\)\s+← current\s*$/m)?.[1];
+    const current = row.output.match(/^\s*-\s+.+?\s+\(([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})\)\s+← current\s*$/m)?.[1]
+      ?? row.output.match(/^\s*-\s+([a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199})\s+← current\s*$/m)?.[1];
     const switched = row.output.match(/^Switched (?:model|this session) to (.+?)(?:\.|, but the global default could not be saved\.)\s*$/m)?.[1];
-    const model = current ?? (switched ? aliases.get(switched) : undefined);
-    if (model) { if (model !== result.model) result.effort = null; result.model = model; }
-    const effort = row.output.match(/Model reasoning effort set to `?([a-zA-Z0-9_-]{1,80})`?\./)?.[1];
-    if (effort) result.effort = effort;
+    const ids = switched ? aliases.get(switched) : undefined;
+    const model = current ?? (ids?.has(requestedModel ?? '') ? requestedModel : ids?.size === 1 ? [...ids][0] : undefined);
+    if (model) { if (model !== result.model && !ultracode) result.effort = null; result.model = model; }
+    else if (switched && ids && ids.size > 1) { result.model = null; if (!ultracode) result.effort = null; }
+    if (switched || current || /^(?:Error:|Failed to switch)/m.test(row.output)) requestedModel = undefined;
+    const effort = codeBuddyEffortAcknowledgement(row.output);
+    if (effort) { ultracode = effort === 'ultracode'; result.effort = effort; }
   }
   return result;
 }
@@ -262,7 +278,13 @@ export class AdeConversations {
         const data = transcriptProviderActivity(record.provider, id, events.lines);
         result.providerActivity = { data, meta: { availability: data.length ? 'ready' : 'empty', attemptedAt: now, observedAt: now, partial: true, stale: false, issue: null } };
         if (record.provider === 'codebuddy') {
-          const records = await readOlderTranscriptLines(file, fs.statSync(file).size, 200, 512 * 1024, false, () => true);
+          const records = await readOlderTranscriptLines(file, fs.statSync(file).size, 200, 4 * 1024 * 1024, false, line => {
+            try {
+              const row = JSON.parse(line);
+              return Boolean(row.providerData?.model || row.providerData?.effort || row.providerData?.skipRun === true && Array.isArray(row.content)
+                && row.content.some((part: any) => part?.type === 'input_text' && typeof part.text === 'string' && /^(?:<command-name>\/?model<\/command-name>|<local-command-stdout>)/.test(part.text)));
+            } catch { return false; }
+          });
           Object.assign(result, codeBuddyRecordedSettings(records.lines, record));
         }
       }

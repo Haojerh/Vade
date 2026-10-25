@@ -10,6 +10,8 @@ import { TerminalScreen } from './terminalScreen.js';
 import { codeBuddyRecordedSettings } from './conversation.js';
 import type { SessionRecord } from './store.js';
 import { AdeSessions } from './sessions.js';
+import { CodeBuddyChatControls } from './codeBuddyChatControls.js';
+import { codeBuddyEffortAcknowledgement } from '../providers/codeBuddySettings.js';
 
 test('CodeBuddy sends from an empty native prompt with unknown lifecycle status and refuses waiting or drafts', async () => {
   const terminal = new TerminalScreen(() => {}, () => {});
@@ -18,10 +20,21 @@ test('CodeBuddy sends from an empty native prompt with unknown lifecycle status 
   const live = { live: true, screen: terminal, inputRevision: 0 };
   let state = 'unknown'; const writes: string[] = [];
   Object.assign(sessions, { live: new Map([['node', live]]), sending: new Set(), store: { directory: process.cwd() }, require: () => record,
-    status: () => ({ meta: { availability: state === 'unknown' ? 'unavailable' : 'ready' }, data: { state } }), command: async (_: unknown, message: { data: string }) => { writes.push(message.data); } });
+    status: () => ({ meta: { availability: state === 'unknown' ? 'unavailable' : 'ready' }, data: { state } }), command: async (_: unknown, message: { data: string }) => {
+      writes.push(message.data);
+      if (message.data.startsWith('\x1b[200~')) {
+        // Native paste processing can finish after the old fixed 300 ms delay.
+        setTimeout(() => { terminal.write('\x1b[2J\x1b[H> hello\x1b[999m'); }, 450);
+      }
+      if (message.data === '\r') {
+        assert.ok(terminal.codeBuddyComposerHasText('hello'), 'Enter must follow the rendered paste');
+        terminal.write('\x1b[2J\x1b[H> \x1b[999m\r\n? for shortcuts');
+      }
+    } });
   try {
     terminal.write('\x1b[2J\x1b[H> \x1b[999m\r\n? for shortcuts'); await terminal.settled();
-    await sessions.send('project', 'node', { message: 'hello' });
+    sessions.store.sessions = () => [];
+    await sessions.send('project', 'node', { message: 'hello', requireIdle: true });
     assert.deepEqual(writes, ['\x1b[200~hello\x1b[201~', '\r']);
     writes.length = 0; state = 'waiting';
     await assert.rejects(sessions.send('project', 'node', { message: 'hello' }), /needs input/);
@@ -32,12 +45,94 @@ test('CodeBuddy sends from an empty native prompt with unknown lifecycle status 
   } finally { terminal.dispose(); }
 });
 
+test('CodeBuddy unconfirmed submission sends Enter only once and never reports success', async t => {
+  const terminal = new TerminalScreen(() => {}, () => {});
+  const sessions = Object.create(AdeSessions.prototype) as any;
+  const live = { live: true, screen: terminal, inputRevision: 0 };
+  const writes: string[] = [];
+  let clock = 0;
+  t.mock.method(Date, 'now', () => clock += 6000);
+  Object.assign(sessions, { live: new Map([['node', live]]), sending: new Set(), store: { directory: process.cwd() }, require: () => ({ provider: 'codebuddy' }),
+    status: () => ({ meta: { availability: 'unavailable' }, data: { state: 'unknown' } }),
+    command: async (_: unknown, message: { data: string }) => {
+      writes.push(message.data);
+      if (message.data.startsWith('\x1b[200~')) terminal.write('\x1b[2J\x1b[H> hello\x1b[999m');
+    } });
+  try {
+    terminal.write('\x1b[2J\x1b[H> \x1b[999m\r\n? for shortcuts'); await terminal.settled();
+    await assert.rejects(sessions.send('project', 'node', { message: 'hello' }), /Delivery may be partial/);
+    assert.equal(writes.filter(value => value === '\r').length, 1);
+    assert.equal(writes.filter(value => value.startsWith('\x1b[200~')).length, 1);
+  } finally { terminal.dispose(); }
+});
+
 test('CodeBuddy command evidence restores model and effort across view and runtime remounts', () => {
   const record = { providerThreadId: 'exact-session', cwd: process.cwd() } as SessionRecord;
   const row = (output: string, sessionId = record.providerThreadId) => JSON.stringify({ type: 'message', role: 'user', sessionId, cwd: record.cwd, providerData: { skipRun: true, model: 'hy3' }, content: [{ type: 'input_text', text: `<local-command-stdout>${output}</local-command-stdout>` }] });
   const lines = [row('Available models:\n - Hy3 (hy3) ← current\n - Deepseek-V4.1-Flash (deepseek-v4.1-flash)\nTo switch model: /model'), row('Switched model to Deepseek-V4.1-Flash.'), row('Model reasoning effort set to high.'), row('Switched model to Hy3.', 'foreign-session')];
   assert.deepEqual(codeBuddyRecordedSettings(lines, record), { model: 'deepseek-v4.1-flash', effort: 'high' });
   assert.equal(codeBuddyRecordedSettings([...lines, row('Model reasoning effort set to medium.')], record).effort, 'medium');
+});
+
+test('CodeBuddy duplicate display names retain exact model IDs rather than mapping to the last alias', () => {
+  const record = { providerThreadId: 'exact-session', cwd: process.cwd() } as SessionRecord;
+  const normal = 'deepseek-v4.1-flash', regional = `${normal}-sg`;
+  const row = (text: string, skipRun = true, sessionId = record.providerThreadId) => JSON.stringify({ type: 'message', role: 'user', sessionId, cwd: record.cwd,
+    providerData: { skipRun }, content: [{ type: 'input_text', text }] });
+  const output = (text: string) => row(`<local-command-stdout>${text}</local-command-stdout>`);
+  const catalog = output(`Available models:\n - Deepseek-V4.1-Flash (${normal})\n - Deepseek-V4.1-Flash (${regional})\nTo switch model: /model`);
+  for (const id of [normal, regional]) {
+    const command = row(`<command-name>/model</command-name><command-args>${id}</command-args>`);
+    assert.equal(codeBuddyRecordedSettings([catalog, command, output('Switched model to Deepseek-V4.1-Flash.')], record).model, id);
+  }
+  assert.equal(codeBuddyRecordedSettings([catalog, output('Switched model to Deepseek-V4.1-Flash.')], record).model, null);
+  assert.equal(codeBuddyRecordedSettings([catalog, row(`<command-name>/model</command-name><command-args>${normal}</command-args>`, true, 'foreign'), output('Switched model to Deepseek-V4.1-Flash.')], record).model, null);
+  assert.equal(codeBuddyRecordedSettings([catalog, row(`<command-name>/model</command-name><command-args>${normal}</command-args>`, false), output('Switched model to Deepseek-V4.1-Flash.')], record).model, null);
+  assert.equal(codeBuddyRecordedSettings([catalog, output(`Available models:\n - Deepseek-V4.1-Flash (${normal}) ← current\n - Deepseek-V4.1-Flash (${regional})`)], record).model, normal);
+});
+
+test('CodeBuddy Ultracode is restored from exact native acknowledgements and survives ordinary model effort metadata', () => {
+  const record = { providerThreadId: 'exact-session', cwd: process.cwd() } as SessionRecord;
+  const row = (text: string) => JSON.stringify({ type: 'message', role: 'user', sessionId: record.providerThreadId, cwd: record.cwd,
+    providerData: { skipRun: true }, content: [{ type: 'input_text', text: `<local-command-stdout>${text}</local-command-stdout>` }] });
+  const enabled = '<system-reminder data-role="ultra_effort_enter">\n**ultracode mode enabled.**\n</system-reminder>';
+  const disabled = '<system-reminder data-role="ultra_effort_exit">\n**ultracode mode disabled** (was `ultracode`, now `high`).\n</system-reminder>';
+  const observed = JSON.stringify({ sessionId: record.providerThreadId, cwd: record.cwd, providerData: { model: 'hy3', effort: 'high' } });
+  assert.equal(codeBuddyRecordedSettings([row(enabled), observed], record).effort, 'ultracode');
+  assert.equal(codeBuddyRecordedSettings([row(enabled), observed, row(disabled)], record).effort, 'high');
+  assert.equal(codeBuddyEffortAcknowledgement('`workflowEffortLevel` is already `ultracode`. No change.'), 'ultracode');
+  assert.equal(codeBuddyEffortAcknowledgement('`/effort ultracode` is unavailable: Dynamic Workflows are disabled in this environment.'), undefined);
+  assert.equal(codeBuddyEffortAcknowledgement('Some output mentions ultracode mode enabled.'), undefined);
+});
+
+test('CodeBuddy exposes only native advertised Ultracode and confirms its distinct enter and exit messages', async () => {
+  const controls = new CodeBuddyChatControls();
+  const options: AgentChatOptions = { provider: 'codebuddy', transport: 'terminal', models: [{ id: 'hy3', label: 'Hy3', efforts: [] }], current: { model: 'hy3' },
+    controls: { model: true, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: true } };
+  let screen = '>', output = '', input = '', advertise = true, acknowledge = true;
+  const io: ChatControlIO = {
+    screen: () => screen, output: () => output,
+    write: async text => {
+      if (text === '\x1b') { screen = '>'; return; }
+      if (text !== '\r') { input += text; return; }
+      if (input === '/effort') screen = `Effort\n low medium high${advertise ? ' ultracode' : ''}\nEsc to cancel`;
+      if (input === '/effort ultracode' && acknowledge) output += '<system-reminder data-role="ultra_effort_enter">\n**ultracode mode enabled.**\n</system-reminder>';
+      if (input === '/effort high') output += '<system-reminder data-role="ultra_effort_exit">\n**ultracode mode disabled** (was `ultracode`, now `high`).\n</system-reminder>';
+      input = '';
+    },
+    waitFor: async predicate => { assert.ok(predicate(screen), 'fresh native acknowledgement required'); return screen; },
+  };
+  const discovered = await controls.inspectEfforts(options, io, 'launch');
+  assert.deepEqual(discovered.models[0].efforts.map(choice => choice.value), ['low', 'medium', 'high', 'ultracode']);
+  const enabled = await controls.apply(discovered, { key: 'effort', value: 'ultracode' }, io, 'launch');
+  assert.equal(enabled.current.effort, 'ultracode');
+  assert.equal((await controls.apply(enabled, { key: 'effort', value: 'high' }, io, 'launch')).current.effort, 'high');
+  acknowledge = false;
+  await assert.rejects(controls.apply(discovered, { key: 'effort', value: 'ultracode' }, io, 'launch'), /fresh native acknowledgement/);
+  advertise = false;
+  const ordinary = await controls.inspectEfforts(options, io, 'different-launch');
+  assert.ok(!ordinary.models[0].efforts.some(choice => choice.value === 'ultracode'));
+  await assert.rejects(controls.apply(ordinary, { key: 'effort', value: 'ultracode' }, io, 'different-launch'), /advertised/);
 });
 
 test('terminal checkpoints preserve more than 100 lines of command history', async () => {
@@ -86,6 +181,37 @@ test('CodeBuddy uses its logical caret and accepts dim recommendations but rejec
     terminal.write('\x1b[1;1H\x1b[2K> \x1b[999mExplore typed draft\r\n? for shortcuts');
     await terminal.settled();
     assert.equal(terminal.composerEmpty(false, true), false);
+  } finally { terminal.dispose(); }
+});
+
+test('CodeBuddy Windows recommendation remains empty without an SGR caret and after resize', async () => {
+  const terminal = new TerminalScreen(() => {}, () => {});
+  const recommendation = '\x1b[2J\x1b[H> P\x1b[2mick up ADE runtime exploration\x1b[0m\x1b[1;85H\x1b[2m↵ send\x1b[0m\r\n? for shortcuts  ← for agents\x1b[1;3H';
+  try {
+    terminal.write(recommendation); await terminal.settled();
+    assert.equal(terminal.composerEmpty(false, true), true);
+    assert.equal(terminal.codeBuddyPromptReady(), true);
+    terminal.resize(120, 40);
+    terminal.write(recommendation); await terminal.settled();
+    assert.equal(terminal.composerEmpty(false, true), true);
+    assert.equal(terminal.codeBuddyComposerHasText('exploration'), false);
+    terminal.write('\x1b[1;4H'); await terminal.settled();
+    assert.equal(terminal.composerEmpty(false, true), false, 'caret after a typed character cannot be a placeholder');
+    terminal.write('\x1b[2J\x1b[H> P'); await terminal.settled();
+    assert.equal(terminal.composerEmpty(false, true), false);
+  } finally { terminal.dispose(); }
+});
+
+test('CodeBuddy pasted draft evidence supports native capsules and rejects mismatching or historical text', async () => {
+  const terminal = new TerminalScreen(() => {}, () => {});
+  try {
+    terminal.write('\x1b[2J\x1b[H> [Pasted text #3: 3 lines]'); await terminal.settled();
+    assert.equal(terminal.codeBuddyComposerHasText('Please implement this task: Test\n\ntest'), true);
+    assert.equal(terminal.codeBuddyComposerHasText('one line'), false);
+    terminal.write('\r\n? for shortcuts'); await terminal.settled();
+    assert.equal(terminal.codeBuddyComposerHasText('Please implement this task: Test\n\ntest'), false);
+    terminal.write('\x1b[2J\x1b[H> Please implement this task: Test\r\n\r\n  test'); await terminal.settled();
+    assert.equal(terminal.codeBuddyComposerHasText('Please implement this task: Test\n\ntest'), true);
   } finally { terminal.dispose(); }
 });
 

@@ -19,12 +19,26 @@ export async function readBoard(): Promise<KanbanCard[]> {
   } finally { db.close(); }
 }
 export async function writeBoard(cards: KanbanCard[]): Promise<void> {
+  await updateBoard(() => cards);
+}
+
+/** Atomic read/modify/write keeps independent windows from overwriting each other's cards. */
+export async function updateBoard(update: (cards: KanbanCard[]) => KanbanCard[]): Promise<KanbanCard[]> {
   const db = await database();
   try {
-    await new Promise<void>((resolve, reject) => {
+    return await new Promise<KanbanCard[]>((resolve, reject) => {
       const tx = db.transaction('board', 'readwrite');
-      tx.objectStore('board').put(cards, 'cards');
-      tx.oncomplete = () => resolve();
+      let next: KanbanCard[];
+      const request = tx.objectStore('board').get('cards');
+      request.onsuccess = () => {
+        try {
+          const previous: KanbanCard[] = request.result || [];
+          next = update(previous);
+          if (next.length !== previous.length || next.some((card, index) => card !== previous[index])) tx.objectStore('board').put(next, 'cards');
+        }
+        catch (error) { tx.abort(); reject(error); }
+      };
+      tx.oncomplete = () => resolve(next);
       tx.onerror = () => reject(tx.error);
       tx.onabort = () => reject(tx.error);
     });

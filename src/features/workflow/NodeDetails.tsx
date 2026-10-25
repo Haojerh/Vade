@@ -5,6 +5,7 @@ import { Modal } from '../../components/ui/Modal';
 import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { Node, NodeDetails as NodeDetailsType } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
+import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { ConversationHistory } from './ConversationHistory';
 import { ConversationToolCall } from './ConversationToolCall';
 import { ProviderActivity } from './ProviderActivity';
@@ -190,7 +191,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
         isOpen={Boolean(selectedNodeId)}
         isClosing={isClosing}
         onClose={handleClose}
-        className={isWorktree ? 'worktree-details-dialog' : !activeVisibleSections.conversation ? 'composer-only-dialog' : ''}
+        className={isWorktree ? 'worktree-details-dialog' : `agent-details-dialog${!activeVisibleSections.conversation ? ' composer-only-dialog' : ''}`}
         aria-labelledby="dialog-node-title"
         aria-describedby="dialog-node-desc"
       >
@@ -328,6 +329,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         }}
                       >
                         <MessageAttachments
+                          iconOnly
                           files={chatFiles}
                           onChange={setChatFiles}
                           disabled={chatSending}
@@ -337,7 +339,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                                 {attachButton}
                               </div>
                               {projectId && <AgentChatControls projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} model={node.model} effort={node.effort} disabled={chatSending || isClosing || ['working', 'waiting', 'blocked'].includes(node.state)} />}
-                              <DictationButton key={`dictation:${projectId}:${node.id}:${selectedRunId ?? ''}`} disabled={chatSending || isClosing}
+                              <DictationButton iconOnly key={`dictation:${projectId}:${node.id}:${selectedRunId ?? ''}`} disabled={chatSending || isClosing}
                                 onText={(text) => setChatMessage((draft) => appendDictation(draft, text))} onActiveChange={setDictating} />
                               <button
                                 type="submit"
@@ -345,21 +347,16 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                                 aria-label={canInterrupt ? 'Interrupt agent' : chatSending ? 'Sending message' : 'Send message'} title={canInterrupt?'Interrupt agent':'Send message'}
                                 disabled={chatSending || dictating || (canInterrupt&&interruptRequested) || (!canInterrupt && !chatMessage.trim() && !chatFiles.length)}
                               >
-                                {canInterrupt ? <><span aria-hidden="true" className="agent-stop-symbol"/><span className="composer-action-label">{interruptRequested?'Stopping…':'Stop'}</span></> : chatSending ? (
-                                  <><Icon name="refresh-cw" size={14} /><span className="composer-action-label">Sending...</span></>
-                                ) : (
-                                  <>
-                                    <Icon name="send" size={14} />
-                                    <span className="composer-action-label">Send</span>
-                                  </>
-                                )}
+                                {canInterrupt ? <span aria-hidden="true" className="agent-stop-symbol"/> : chatSending ? <RefreshIcon busy size={18}/> : <Icon name="arrow-up" size={19}/>}
                               </button>
                             </div>
                           )}
                         >
                           <textarea
                             className="chatbox-textarea"
-                            placeholder={`Message ${node.label}... (Enter to send, Shift+Enter for new line)`}
+                            placeholder={`Message ${node.label}…`}
+                            aria-label={`Message ${node.label}`}
+                            title="Enter to send, Shift+Enter for a new line"
                             value={chatMessage}
                             onChange={(e) => setChatMessage(e.target.value)}
                             onKeyDown={(e) => {

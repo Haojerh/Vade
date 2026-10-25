@@ -15,6 +15,7 @@ import type { TerminalShell } from '../../shared/contracts';
 import { TERMINAL_SHELL_OPTIONS, readTerminalShell, writeTerminalShell } from './terminalShellPreference';
 import { setEditorAutosave, useEditorAutosave } from '../features/explorer/editorPreferences';
 import { readAgentView, writeAgentView, type AgentView } from './agentViewPreference';
+import { setAutomaticKanban, useAutomaticKanban } from '../features/kanban/kanbanPreferences';
 
 type SettingsPageProps = Pick<ProjectSelectorProps, 'theme' | 'onToggleTheme' | 'cardStateColors' | 'onToggleCardStateColors'
   | 'orchestrationSeparated' | 'onToggleOrchestrationSeparated' | 'commitGraphEnabled' | 'onToggleCommitGraph'
@@ -36,9 +37,11 @@ export const SettingsPage: React.FC<SettingsPageProps> = props => {
   const [search, setSearch] = useState('');
   const [terminalShell, setTerminalShell] = useState<TerminalShell>(readTerminalShell);
   const autosave = useEditorAutosave();
+  const automaticKanban = useAutomaticKanban();
   const [agentView,setAgentView] = useState<AgentView>(readAgentView);
   const current = sections.find(section => section.id === props.section) ?? sections[0];
   const options = [
+    { section: 'workflow', label: 'Automatic Kanban', description: 'Send queued tasks to their assigned agent when it is available, while Vade is open. Tasks can also start a new session in a selected worktree. Turning off pauses queued tasks.', checked: automaticKanban, change: setAutomaticKanban },
     { section: 'general', label: 'Editor autosave', description: 'Save workspace files after a short pause and when leaving the editor. When off, save with Ctrl/Cmd+S.', checked: autosave, change: setEditorAutosave },
     { section: 'workflow', label: 'Live tool nodes', description: 'Show observed tool calls near their agent.', checked: props.toolActivityEnabled ?? true, change: props.onToggleToolActivity },
     { section: 'workflow', label: 'Tool calls in chat', description: 'Show observed tool calls, such as edits and commands, in the agent chat history.', checked: props.chatToolCallsEnabled ?? true, change: props.onToggleChatToolCalls },

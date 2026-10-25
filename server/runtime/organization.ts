@@ -100,8 +100,13 @@ export class OrganizationRuntime {
     if (adhoc && this.config().enabled) invalid(WORKFLOW_CONFIRMATION_MESSAGE);
     const config = adhoc ?? this.config();
     // Worker/coordinator messages must not accidentally create nested workflows.
-    const active = this.runs().find(run => !terminal(run) && (run.orchestratorId === sessionId || run.steps.some(step => step.sessionId === sessionId)));
-    if (active) invalid(`This agent belongs to workflow ${active.id.slice(0, 8)} (${active.state}). Use its question controls or Terminal, or cancel that run in Settings → Workflow runs before submitting another task.`);
+    const active = this.runs(projectId).find(run => !terminal(run) && (run.orchestratorId === sessionId || run.steps.some(step => step.sessionId === sessionId)));
+    if (active) {
+      if (adhoc) invalid(`This agent already belongs to workflow ${active.id.slice(0, 8)} (${active.state}). Finish or cancel it before starting another workflow.`);
+      if (this.locks.has(sessionId)) throw new CliError('RATE_LIMITED', 'This workflow is starting. Wait for its initial assignment before sending a follow-up.');
+      this.sessions.require(projectId, sessionId);
+      return this.sessions.send(projectId, sessionId, request);
+    }
     if (!config.enabled) return this.sessions.send(projectId, sessionId, request);
     // Ended workflow members remain ordinary agent conversations. Continuing
     // their chat must not wrap each message in another workflow assignment.

@@ -3,13 +3,48 @@ import assert from 'node:assert/strict';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Node } from '../../shared/contracts';
-import { assignmentProblem, buildCardPrompt, createCardId, observeCard, observeCardResults, type KanbanCard } from '../features/kanban/kanban';
+import { assignmentProblem, automaticAssignmentProblem, buildCardPrompt, claimQueuedLaunch, createCardId, observeCard, observeCardResults, queuedCards, queuePosition, type KanbanCard } from '../features/kanban/kanban';
 import { KanbanBoard } from '../features/kanban/KanbanBoard';
 import { KanbanTaskDetails } from '../features/kanban/KanbanTaskDetails';
 
 const node = { id: 'agent', kind: 'agent', label: 'Codex', state: 'idle', stale: false, liveness: 'live' } as Node;
 const todo: KanbanCard = { id: 'card', projectId: 'project', title: 'Implement feature', prompt: 'Do the work', files: [], status: 'todo', createdAt: '2026-10-20T00:00:00Z' };
 const pending: KanbanCard = { ...todo, status: 'pending', assignment: { nodeId: node.id, label: node.label, runId: null, sentAt: todo.createdAt, sawWorking: false } };
+
+test('automatic queue orders tasks per target and excludes uncertain deliveries and finished work', () => {
+  const target = { kind: 'existing', nodeId: node.id, label: node.label } as const;
+  const first = { ...todo, id: 'first', target };
+  const second = { ...todo, id: 'second', target, createdAt: '2026-10-21T00:00:00Z' };
+  const other = { ...todo, id: 'other', target: { ...target, nodeId: 'other' } };
+  const rows = [second, { ...first, id: 'uncertain', error: 'Check delivery' }, pending, other, first];
+  assert.deepEqual(queuedCards(rows).map(card => card.id), ['first', 'other', 'second']);
+  assert.equal(queuePosition(second, rows), 2);
+  assert.equal(queuePosition(other, rows), 1);
+});
+
+test('new-session launch claims survive restoration and cannot be claimed twice or after unqueue', () => {
+  const queued: KanbanCard = { ...todo, target: { kind: 'new', worktreeNodeId: 'tree', worktreeLabel: 'Main', agentId: 'codex', agentLabel: 'Codex', command: 'codex' } };
+  const claimed = claimQueuedLaunch(queued, '2026-10-25T00:00:00Z');
+  assert.notEqual(claimed, queued);
+  const restored: KanbanCard = JSON.parse(JSON.stringify(claimed));
+  assert.equal(claimQueuedLaunch(restored, '2026-10-25T00:01:00Z'), restored);
+  for (const card of [{ ...queued, target: undefined }, { ...queued, error: 'Launch uncertain' }, { ...queued, status: 'pending' as const }])
+    assert.equal(claimQueuedLaunch(card, '2026-10-25T00:01:00Z'), card);
+});
+
+test('automatic dispatch requires an empty observed prompt and respects agent and checkout occupancy', () => {
+  const ready = { ...node, worktreeId: 'tree', chatReady: true };
+  assert.equal(automaticAssignmentProblem(todo, ready, [], [ready]), null);
+  assert.ok(automaticAssignmentProblem(todo, { ...ready, chatReady: false }, [], [ready]));
+  assert.ok(automaticAssignmentProblem(todo, { ...ready, state: 'working' }, [], [ready]));
+  assert.ok(automaticAssignmentProblem(todo, { ...ready, stale: true }, [], [ready]));
+  assert.ok(automaticAssignmentProblem(todo, ready, [pending], [ready]));
+  const other = { ...ready, id: 'other', state: 'working' as const };
+  assert.ok(automaticAssignmentProblem(todo, ready, [], [ready, other]));
+  assert.equal(automaticAssignmentProblem(todo, ready, [], [ready, { ...other, worktreeId: 'different' }]), null);
+  assert.ok(automaticAssignmentProblem(todo, ready, [{ ...pending, id: 'other-task', assignment: { ...pending.assignment!, nodeId: 'other' } }], [ready, { ...other, state: 'idle' }]));
+  assert.equal(automaticAssignmentProblem(todo, { ...ready, state: 'unknown' }, [], [ready]), null);
+});
 
 test('preparing a composer draft keeps task status unchanged and distinguishes failed-task fixes', () => {
   assert.equal(buildCardPrompt(todo), 'Please implement this task: Implement feature\n\nDo the work');

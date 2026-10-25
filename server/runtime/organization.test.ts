@@ -9,7 +9,7 @@ import { promisify } from 'node:util';
 import type { AddressInfo } from 'node:net';
 import { createServer } from '../http/api.js';
 import type { LocalRuntime } from './localRuntime.js';
-import type { OrganizationConfig } from '../../shared/contracts.js';
+import type { OrganizationConfig, SendMessageRequest } from '../../shared/contracts.js';
 import { AdeStore, type SessionRecord } from './store.js';
 import { AdeGit } from './git.js';
 import type { AdeSessions } from './sessions.js';
@@ -25,10 +25,11 @@ function fixture(gitProject = false) {
   if (gitProject) { git('init'); git('config', 'user.name', 'Fixture'); git('config', 'user.email', 'fixture@example.test'); fs.writeFileSync(path.join(repo, 'initial.txt'), 'initial'); git('add', '.'); git('commit', '-m', 'initial'); }
   const store = new AdeStore(path.join(directory, 'data')), project = store.register(repo, 'Fixture', gitProject ? 'git' : 'folder'), adeGit = new AdeGit(store);
   const sent: { id: string; message: string }[] = [], live = new Set<string>(), stopped: string[] = [];
+  const sendCalls: { projectId: string; id: string; request: SendMessageRequest; internalWorkflow?: boolean }[] = [];
   let sendError: Error | null = null;
   const sessions = {
     require: (projectId: string, id: string) => { const value = store.sessions(projectId).find(row => row.id === id && !row.closed); if (!value) throw new Error('No session'); return value; },
-    send: async (_projectId: string, id: string, request: { message: string }) => { if (sendError) throw sendError; sent.push({ id, message: request.message }); return { ok: true as const, message: 'sent' }; },
+    send: async (projectId: string, id: string, request: SendMessageRequest, internalWorkflow?: boolean) => { sendCalls.push({ projectId, id, request, internalWorkflow }); if (sendError) throw sendError; sent.push({ id, message: request.message }); return { ok: true as const, message: 'sent' }; },
     page: (_projectId: string, id: string) => ({ live: live.has(id) }),
     status: () => ({ data: { state: 'idle' } }),
     messagePromptReady: () => true,
@@ -51,7 +52,7 @@ function fixture(gitProject = false) {
     const identity = JSON.parse(fs.readFileSync(runtime.setup.file(`identities/${sessionId}.json`), 'utf8'));
     return runtime.control(identity.token, { action, runId: identity.runId, sessionId, ...data }) as Promise<any>;
   }
-  return { directory, repo, store, project, adeGit, runtime, sent, stopped, start, call, live, setSendError: (error: Error | null) => { sendError = error; }, close: () => { runtime.close(); store.close(); fs.rmSync(directory, { recursive: true, force: true }); } };
+  return { directory, repo, store, project, adeGit, runtime, sent, sendCalls, stopped, start, call, live, setSendError: (error: Error | null) => { sendError = error; }, close: () => { runtime.close(); store.close(); fs.rmSync(directory, { recursive: true, force: true }); } };
 }
 
 test('workflow configuration rejects cycles, malformed nodes and extra command fields', () => {
@@ -104,6 +105,10 @@ test('session CLI defines an ad hoc team without enabling or using the saved gra
     await call('dispatch', { nodeId: 'frontend', task: 'Implement frontend' });
     const worker = f.store.sessions(f.project.id).find(row => row.id !== record.id)!;
     assert.equal(worker.provider, 'kilo'); assert.equal(worker.workflowLaunch?.model, 'catalog/model');
+    const activeTeam = f.runtime.runs();
+    await f.runtime.send(f.project.id, record.id, { message: 'Coordinate with the existing team.' });
+    await f.runtime.send(f.project.id, worker.id, { message: 'Keep this task accessible.' });
+    assert.deepEqual(f.runtime.runs(), activeTeam);
     await assert.rejects(call('dispatch', { nodeId: 'backend', task: 'Implement backend' }), /one worker/);
     await f.runtime.cancel(started.run.id);
     assert.equal((await call('context')).role, 'agent');
@@ -119,6 +124,39 @@ test('session CLI defines an ad hoc team without enabling or using the saved gra
   } finally { f.close(); }
 });
 
+test('active workflow coordinators and workers receive ordinary follow-ups without changing the run', async () => {
+  const f = fixture();
+  try {
+    const { record, run } = await f.start();
+    await f.call(record.id, 'plan', { nodes: ['implement'], reason: 'Implement this task', streams: [] });
+    await f.call(record.id, 'dispatch', { nodeId: 'implement', task: 'Implement this task' });
+    const worker = f.runtime.runs()[0].steps.find(step => step.nodeId === 'implement')!.sessionId!;
+    const before = f.runtime.runs();
+    const locks = (f.runtime as any).locks as Set<string>;
+    locks.add(record.id);
+    await assert.rejects(f.runtime.send(f.project.id, record.id, { message: 'Too early' }), /initial assignment/);
+    locks.delete(record.id);
+    const request = { message: 'Please keep the existing API compatible.', attachments: [{ name: 'notes.txt', mimeType: 'text/plain', dataBase64: 'bm90ZXM=' }] };
+    await f.runtime.send(f.project.id, record.id, request);
+    assert.deepEqual(f.sendCalls.at(-1), { projectId: f.project.id, id: record.id, request, internalWorkflow: undefined });
+    await f.runtime.send(f.project.id, worker, { message: 'Also check the empty state.', workflowConfirmed: true });
+    assert.equal(f.sendCalls.at(-1)!.id, worker);
+    assert.equal(f.sendCalls.at(-1)!.internalWorkflow, undefined);
+    assert.deepEqual(f.runtime.runs(), before);
+    await assert.rejects(f.runtime.send(f.project.id, 'another-session', { message: 'Start something else' }), /Workflow enabled, confirm/);
+    const attempts = f.sendCalls.length;
+    f.setSendError(new Error('Delivery not confirmed; inspect Terminal'));
+    await assert.rejects(f.runtime.send(f.project.id, worker, { message: 'A follow-up sent once' }), /Delivery not confirmed/);
+    assert.equal(f.sendCalls.length, attempts + 1);
+    assert.deepEqual(f.runtime.runs(), before);
+    f.setSendError(null);
+    await f.runtime.configure({ ...config(), enabled: false });
+    await f.runtime.send(f.project.id, record.id, { message: 'Continue the current run.' });
+    assert.deepEqual(f.runtime.runs(), before);
+    assert.equal(f.runtime.runs()[0].id, run.id);
+  } finally { f.close(); }
+});
+
 test('cancelled and failed workflow members continue ordinary chat without creating nested runs', async () => {
   for (const outcome of ['cancelled', 'failed'] as const) {
     const f = fixture();
@@ -127,7 +165,8 @@ test('cancelled and failed workflow members continue ordinary chat without creat
       await f.call(record.id, 'plan', { nodes: ['implement'], reason: 'Implement this task', streams: [] });
       await f.call(record.id, 'dispatch', { nodeId: 'implement', task: 'Implement this task' });
       const worker = f.runtime.runs().find(value => value.id === run.id)!.steps.find(step => step.nodeId === 'implement')!.sessionId!;
-      await assert.rejects(f.runtime.send(f.project.id, record.id, { message: 'ordinary' }), /belongs to workflow/);
+      await f.runtime.send(f.project.id, record.id, { message: 'ordinary follow-up' });
+      assert.equal(f.sent.at(-1)!.message, 'ordinary follow-up');
       if (outcome === 'cancelled') await f.runtime.cancel(run.id);
       else {
         await f.call(worker, 'result', { outcome: 'failed', summary: 'Explicit worker failure' });

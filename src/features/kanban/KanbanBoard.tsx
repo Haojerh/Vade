@@ -5,7 +5,9 @@ import { DialogActions, DialogError } from '../../components/ui/DialogActions';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from '../workflow/MessageAttachments';
-import { KANBAN_DRAG_TYPE, type CardStatus, type KanbanCard } from './kanban';
+import { KANBAN_DRAG_TYPE, queuePosition, type CardStatus, type KanbanCard, type KanbanTarget } from './kanban';
+import { KanbanAssignmentFields } from './KanbanAssignmentFields';
+import { ListOrdered } from 'lucide-react';
 import type { useKanban } from './useKanban';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 import { KanbanTaskDetails } from './KanbanTaskDetails';
@@ -26,6 +28,8 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
   const [files, setFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState('manual');
+  const [target, setTarget] = useState<KanbanTarget>();
   const draggingCard = useRef(false);
   const cards = board.cards.filter(card => card.projectId === projectId);
   const columns: { status: CardStatus; label: string }[] = [
@@ -35,16 +39,16 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
   const add = async () => {
     if (!projectId || !title.trim() || !prompt.trim()) return;
     setBusy(true); setError(null);
-    try { await board.add(projectId, title.trim(), prompt.trim(), files); create.close(); }
+    try { await board.add(projectId, title.trim(), prompt.trim(), files, board.automatic ? target : undefined); create.close(); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not save task.'); }
     finally { setBusy(false); }
   };
-  const openCreate = () => { setTitle(''); setPrompt(''); setFiles([]); setError(null); create.open(); };
+  const openCreate = () => { setTitle(''); setPrompt(''); setFiles([]); setMode('manual'); setTarget(undefined); setError(null); create.open(); };
   return <section className="kanban-board" aria-label="Project Kanban board">
     <header className="kanban-toolbar">
       <div className="kanban-heading">
         <strong>Kanban <span className="kanban-total-count" aria-label={`${cards.length} tasks`}>{cards.length}</span></strong>
-        <span className="kanban-hint text-xs text-muted">Drag To-do or Failed cards onto an agent</span>
+        <span className="kanban-hint text-xs text-muted">{board.automatic ? 'Assigned tasks start when their agent is available' : 'Drag To-do or Failed cards onto an agent'}</span>
       </div>
       <div className="kanban-actions">
         <button className="btn btn-secondary btn-xs" disabled={!projectId || !board.ready} onClick={openCreate}><Icon name="plus" size={12} />Add task</button>
@@ -52,6 +56,7 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
         <OverlayCloseButton onClick={onClose} aria-label="Close Kanban board" />
       </div>
     </header>
+    <p className="kanban-automation-note">Automatic Kanban is {board.automatic ? `on · ${cards.filter(card => card.status === 'todo' && card.target).length} queued` : 'off'}. <a href="#/settings/workflow" onClick={onClose}>Open Settings</a></p>
     {board.error && <div className="kanban-error" role="alert">{board.error}<button className="btn-close" onClick={board.dismissError} aria-label="Dismiss board error"><Icon name="close" size={14} /></button></div>}
     {!board.ready ? <p className="text-muted">Loading board…</p> : !projectId ? <p className="text-muted">Select a project to add tasks.</p> : <div className="kanban-columns">
       {columns.map(column => <section className={`kanban-column kanban-${column.status}`} key={column.status} aria-label={column.label}>
@@ -78,6 +83,7 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
             onDragEnd={() => onDragStateChange?.(false)}>
             <div className="kanban-card-heading"><strong>{card.title}</strong><button type="button" className="btn-close kanban-card-remove" title="Remove task" aria-label={`Remove task ${card.title}`} onClick={() => { setDeleteError(null); remove.open(card); }}><Icon name="close" size={13} /></button></div>
             <p className="kanban-card-prompt" title={card.prompt}>{card.prompt}</p>
+            {card.status === 'todo' && card.target && <div className="kanban-queue-label"><ListOrdered size={13}/><span>{card.error || (card.target.kind === 'new' && card.launchAttemptedAt) ? 'Needs review' : board.automatic ? `Queued #${queuePosition(card, cards)}` : 'Queue paused'} · {card.target.kind === 'existing' ? card.target.label : `${card.target.agentLabel} · ${card.target.worktreeLabel}`}</span></div>}
             {(card.assignment || card.files.length>0) && <div className="kanban-card-footer">
             {card.files.length>0&&<span className="kanban-card-attachments" title={`${card.files.length} attached ${card.files.length===1?'file':'files'}`}><Icon name="paperclip" size={12}/><span>{card.files.length}</span></span>}
             {card.assignment && <div className="kanban-assignment">
@@ -92,15 +98,17 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
       </section>)}
     </div>}
     <KanbanTaskDetails card={cards.find(card => card.id === taskDetails.data) ?? null} isOpen={taskDetails.present} isClosing={taskDetails.closing} onClose={taskDetails.close}
+      onUnqueue={board.unqueue}
       onOpenAgent={card => { taskDetails.close(); onOpenAgent(card); }} />
     <Modal isOpen={create.present} isClosing={create.closing} busy={busy} onClose={create.close} className="kanban-create-dialog" aria-labelledby="kanban-create-title">
       <header className="modal-dialog-header"><h2 id="kanban-create-title">New task</h2><OverlayCloseButton onClick={create.close} disabled={busy} aria-label="Close new task" /></header>
       <div className="modal-dialog-body">
         <label className="worktree-field">Title<input value={title} onChange={event => setTitle(event.target.value)} placeholder="e.g. Fix mobile navigation layout" maxLength={240} autoFocus disabled={busy} /></label>
         <MessageAttachments files={files} onChange={setFiles} disabled={busy}><label className="worktree-field">Prompt<textarea value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={20000} rows={5} disabled={busy} placeholder="Describe what the agent should implement…" /></label></MessageAttachments>
+        {board.automatic && create.present && projectId && <KanbanAssignmentFields key={projectId} projectId={projectId} mode={mode} onModeChange={setMode} onChange={setTarget} disabled={busy}/>}
         <DialogError error={error} />
-        <DialogActions onCancel={create.close} onConfirm={add} busy={busy} disabled={!title.trim() || !prompt.trim()} confirmLabel="Add to To-do" busyLabel="Saving…" />
       </div>
+      <DialogActions onCancel={create.close} onConfirm={add} busy={busy} disabled={!title.trim() || !prompt.trim() || Boolean(board.automatic && mode !== 'manual' && !target)} confirmLabel={board.automatic && mode !== 'manual' ? 'Queue task' : 'Add to To-do'} busyLabel="Saving…" />
     </Modal>
     <ConfirmationDialog isOpen={remove.present} isClosing={remove.closing} title="Remove this task?"
       description={<>Remove <strong>{remove.data?.title}</strong> and its attachments from the board? This does not stop an agent already executing the task.</>}

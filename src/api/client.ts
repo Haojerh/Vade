@@ -386,6 +386,7 @@ export async function sendNodeMessage(
   signal?: AbortSignal,
   files: File[] = [],
   workflowConfirmed = false,
+  requireIdle = false,
 ): Promise<{ ok: boolean; message?: string }> {
   const attachments = await Promise.all(files.map(async (file) => ({
     name: file.name,
@@ -405,7 +406,7 @@ export async function sendNodeMessage(
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify({ message, ...(attachments.length ? { attachments } : {}), ...(workflowConfirmed ? { workflowConfirmed: true } : {}) }),
+      body: JSON.stringify({ message, ...(attachments.length ? { attachments } : {}), ...(workflowConfirmed ? { workflowConfirmed: true } : {}), ...(requireIdle ? { requireIdle: true } : {}) }),
       signal,
     },
   );

@@ -3,6 +3,7 @@ import type { ConversationMessage, ConversationPage, ToolActivity } from '../../
 import { fetchNodeDetails } from '../../api/client';
 import { MessageMarkdown } from './MessageMarkdown';
 import { ConversationToolCall } from './ConversationToolCall';
+import { ResponseActions,UserMessageMeta } from './ResponseActions';
 
 export function conversationTimeline(messages: ConversationMessage[], tools: ToolActivity[], limited: boolean) {
   const first = messages.find(message => message.at)?.at;
@@ -100,19 +101,26 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
       {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     </div>}
     <div className="conversation-thread" role="log" aria-label="Conversation turns" aria-live="off">
-      {conversationTimeline(messages, tools, Boolean(cursor)).map(item => {
-        if (item.tool) return <ConversationToolCall key={item.id} tool={item.tool} />;
+      {conversationTimeline(messages, tools, Boolean(cursor)).map((item, index, timeline) => {
+        if (item.tool) {
+          if (timeline[index - 1]?.tool) return null;
+          const group: ToolActivity[] = [];
+          for (let next = index; next < timeline.length && timeline[next].tool; next++) group.push(timeline[next].tool!);
+          return <div className="conversation-tool-group" key={item.id} aria-label="Tool activity">
+            {group.map(tool => <ConversationToolCall key={tool.id} tool={tool} />)}
+          </div>;
+        }
         const message = item.message;
         if (!message) return null;
-        return <div key={message.id} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
+        return <div key={message.id} role="article" aria-label={message.role==='agent'?'Agent response':'Your message'} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
         <div className={`chat-bubble ${message.role === 'agent' ? 'bubble-agent' : 'bubble-user'}`}>
-          <div className="chat-bubble-header"><span className="bubble-role font-semibold text-xs">{message.role === 'agent' ? 'Agent' : 'User'}</span>
-            <time className="bubble-time font-mono text-xs text-muted" dateTime={message.at ?? undefined}>{message.at ? new Date(message.at).toLocaleString() : ''}</time></div>
-          <div className={`chat-bubble-text message-markdown ${message.text.length > 800 && !expanded.has(message.id) ? 'message-collapsed' : ''}`}><MessageMarkdown text={message.text} /></div>
-          {message.text.length > 800 && <button type="button" className="btn-read-more" aria-expanded={expanded.has(message.id)} onClick={() => setExpanded(current => {
+          <div className={`chat-bubble-text message-markdown ${message.role==='user'&&message.text.length > 800 && !expanded.has(message.id) ? 'message-collapsed' : ''}`}><MessageMarkdown text={message.text} /></div>
+          {message.role==='user'&&message.text.length > 800 && <button type="button" className="btn-read-more" aria-expanded={expanded.has(message.id)} onClick={() => setExpanded(current => {
             const next = new Set(current); if (next.has(message.id)) next.delete(message.id); else next.add(message.id); return next;
           })}>{expanded.has(message.id) ? 'Read Less' : 'Read More'}</button>}
         </div>
+        {message.role==='user'&&<UserMessageMeta message={message}/>}
+        {message.role==='agent'&&<ResponseActions message={message}/>}
       </div>;
       })}
     </div>

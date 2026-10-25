@@ -408,7 +408,8 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       if (runtime.store.sessions(projectId).some(session => !session.closed && session.worktreeId === nodeId)) throw new CliError('INVALID_ARGUMENT', 'Close this worktree’s agent sessions before deleting it');
       await runtime.git.remove(project, nodeId);
     } else if (action === 'message') {
-      const request = await body<SendMessageRequest>(['message', 'attachments', 'workflowConfirmed'], 29 * 1024 * 1024);
+      const request = await body<SendMessageRequest>(['message', 'attachments', 'workflowConfirmed', 'requireIdle'], 29 * 1024 * 1024);
+      if (request.requireIdle !== undefined && typeof request.requireIdle !== 'boolean') throw new CliError('INVALID_ARGUMENT', 'Invalid idle requirement');
       if (request.workflowConfirmed !== undefined && typeof request.workflowConfirmed !== 'boolean') throw new CliError('INVALID_ARGUMENT', 'Invalid workflow confirmation');
       sendJson(200, await runtime.organization.send(projectId, nodeId, request)); return;
     }

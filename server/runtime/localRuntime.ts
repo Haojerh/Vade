@@ -84,6 +84,7 @@ export class LocalRuntime {
         const workflow = workflows.find(run => run.orchestratorId === record.id || run.steps.some(step => step.sessionId === record.id));
         nodes.push({ ...base(record.id, this.store.title(record.id, record.title)), kind: record.provider === 'terminal' ? 'terminal' : 'agent', worktreeId: record.worktreeId,
           ...metadata, path: record.cwd, agentType: record.provider, liveness: terminal.live ? 'live' : 'exited', outputAvailable: true, chatAvailable: record.provider !== 'terminal',
+          chatReady: this.sessions.handoffPromptReady(projectId, record.id),
           state: status.meta.availability === 'ready' && status.data ? status.data.state : 'unknown', rawState: status.data?.event ?? null,
           agentStatus: status, lastActivityAt: status.meta.observedAt,
           ...(workflow ? { workflow: { runId: workflow.id, role: workflow.orchestratorId === record.id ? 'orchestrator' as const : 'worker' as const, stepState: workflow.steps.find(step => step.sessionId === record.id)?.state } } : {}) });

@@ -23,9 +23,10 @@ export function AttachmentPreview({ file }: { file: File }) {
   return url ? <img className="message-attachment-preview" src={url} alt="" /> : null;
 }
 
-export function MessageAttachments({ files, onChange, disabled, children, renderControls }: {
+export function MessageAttachments({ files, onChange, disabled, children, renderControls, iconOnly=false }: {
   files: File[]; onChange: (files: File[]) => void; disabled: boolean; children: React.ReactNode;
   renderControls?: (attachButton: React.ReactNode) => React.ReactNode;
+  iconOnly?:boolean;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -36,9 +37,9 @@ export function MessageAttachments({ files, onChange, disabled, children, render
     setError(problem);
     if (!problem) onChange(next);
   };
-  const attachButton = <button type="button" className="btn btn-secondary btn-xs" aria-label="Attach files" title="Attach files" disabled={disabled} onClick={() => input.current?.click()}>
-    <Icon name="paperclip" size={12} />
-    <span className="composer-action-label">Attach</span>
+  const attachButton = <button type="button" className={`btn btn-secondary btn-xs ${iconOnly?'composer-attach-icon':''}`} aria-label="Attach files" title="Attach files" disabled={disabled} onClick={() => input.current?.click()}>
+    <Icon name={iconOnly?'plus':'paperclip'} size={iconOnly?18:12} />
+    {!iconOnly&&<span className="composer-action-label">Attach</span>}
   </button>;
   return (
     <div className="message-attachments"

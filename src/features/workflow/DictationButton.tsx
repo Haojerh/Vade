@@ -4,10 +4,11 @@ import { createDictationSession, dictationSupport, type SpeechWindow } from './d
 import { createLocalDictationSession } from './localDictation';
 import { useVoicePreferences } from './voicePreferences';
 
-export function DictationButton({ disabled, onText, onActiveChange }: {
+export function DictationButton({ disabled, onText, onActiveChange,iconOnly=false }: {
   disabled: boolean;
   onText(text: string): void;
   onActiveChange(active: boolean): void;
+  iconOnly?:boolean;
 }) {
   const preferences = useVoicePreferences();
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -103,7 +104,7 @@ export function DictationButton({ disabled, onText, onActiveChange }: {
       disabled={disabled || stopping} onClick={toggle} aria-pressed={active}
       aria-label={active ? 'Stop dictation' : 'Start dictation'}
       title={`${preferences.engine === 'local' ? 'Local dictation — audio stays on this machine.' : 'Browser dictation — audio may be processed by your browser’s speech service.'} Ctrl+E to dictate. Text is added to your draft; it is never sent automatically.`}>
-      <Icon name="mic" size={14} /><span className="composer-action-label">{stopping ? 'Finishing…' : active ? 'Stop' : 'Dictate'}</span>
+      <Icon name="mic" size={iconOnly?18:14} />{!iconOnly&&<span className="composer-action-label">{stopping ? 'Finishing…' : active ? 'Stop' : 'Dictate'}</span>}
     </button>
     {(active || error) && <span role="status" className={`dictation-status text-xs ${error ? 'text-danger' : 'text-muted'}`}>
       {error || interim || (stopping ? 'Finishing dictation…' : preferences.engine === 'local' ? 'Listening locally…' : 'Listening… Speak in your browser language.')}

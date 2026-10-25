@@ -741,7 +741,7 @@ export class AdeSessions {
     const inputRevision = session?.inputRevision;
     await session?.screen?.settled();
     if (session?.inputRevision !== inputRevision) throw new CliError('RATE_LIMITED', 'Terminal input changed while reading its prompt. Review it before sending.');
-    if (requireEmpty && !this.handoffPromptReady(projectId, id)) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty, idle agent prompt before sending the handoff');
+    if ((requireEmpty || request.requireIdle) && !this.handoffPromptReady(projectId, id)) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty, idle agent prompt before sending this task');
     // Antigravity hides shortcuts in a nonempty composer. Preserve initial readiness
     // only within this locked send, while every write still checks fresh status/liveness.
     const initialNativeReady = record.provider === 'antigravity' && antigravityPromptReady(session?.screen?.text() ?? session?.buffer ?? '');
@@ -755,6 +755,10 @@ export class AdeSessions {
       if (!session?.live || this.live.get(id) !== session) throw new CliError('RUNTIME_UNAVAILABLE', 'This session is stopped. Open Terminal to resume it before sending.');
       if (!openCodeReady) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal and finish native setup before sending.');
       const status = this.status(projectId, id);
+      if (request.requireIdle && status.data?.state === 'working') throw new CliError('RUNTIME_UNAVAILABLE', 'The agent started working. This queued task was not submitted.');
+      if (request.requireIdle && this.store.sessions(projectId).some(other => other.id !== id && !other.closed && other.worktreeId === record.worktreeId
+        && this.live.get(other.id)?.live && (this.sending.has(other.id) || ['working', 'waiting', 'blocked'].includes(this.status(projectId, other.id).data?.state ?? ''))))
+        throw new CliError('RUNTIME_UNAVAILABLE', 'Another agent is using this worktree. This queued task was not submitted.');
       if (['waiting', 'blocked'].includes(status.data?.state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent needs input. Answer its question or approval controls in Chat, or use Terminal for native setup.');
       const nativeReady = (!status.data || status.data.state === 'unknown') && (initialNativeReady || initialCodeBuddyReady);
       if (!nativeReady && (status.meta.availability !== 'ready' || !['idle', 'working', 'completed', 'failed', 'interrupted'].includes(status.data?.state ?? ''))) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent input prompt is not ready yet. Open Terminal to finish setup, then try again.');
@@ -774,11 +778,33 @@ export class AdeSessions {
       const references = files.filter(file => !usesNativeFileAttachment(record.provider, file)).map(attachmentReference);
       const prompt = [...references, request.message.trim() || 'Please review the attached files.'].join('\n');
       await write(`\x1b[200~${prompt.replace(/\r\n?/g, '\n')}\x1b[201~`);
-      await new Promise(resolve => setTimeout(resolve, 300));
+      if (record.provider === 'codebuddy') {
+        const deadline = Date.now() + 5000;
+        for (;;) {
+          await session!.screen?.settled(); writable();
+          if (session!.screen?.codeBuddyComposerHasText(prompt)) break;
+          if (Date.now() >= deadline) throw new CliError('CLI_TIMEOUT', 'CodeBuddy has not rendered the pasted message. Inspect Terminal before submitting; no Enter was sent.');
+          await new Promise(resolve => setTimeout(resolve, 40));
+        }
+      } else await new Promise(resolve => setTimeout(resolve, 300));
       writable();
       if (submit) {
+        const beforeSubmit = record.provider === 'codebuddy' ? this.status(projectId, id).meta.observedAt : undefined;
         if (session!.resumeTurnObserved === false) session!.resumePromptSubmitted = true;
         await this.command(session!, { type: 'input', data: '\r' });
+        if (record.provider === 'codebuddy') {
+          const deadline = Date.now() + 5000;
+          for (;;) {
+            await session!.screen?.settled();
+            if (!session!.live || this.live.get(id) !== session) throw new CliError('RUNTIME_UNAVAILABLE', 'CodeBuddy stopped before confirming submission.');
+            const observed = this.status(projectId, id);
+            const freshActivity = observed.meta.availability === 'ready' && !observed.meta.stale && observed.meta.observedAt
+              && observed.meta.observedAt !== beforeSubmit && ['working', 'waiting', 'blocked', 'completed', 'failed', 'interrupted'].includes(observed.data?.state ?? '');
+            if (freshActivity || session!.screen?.composerEmpty(false, true)) break;
+            if (Date.now() >= deadline) throw new CliError('CLI_TIMEOUT', 'CodeBuddy has not confirmed submission. Inspect Terminal; Enter was sent once and will not be retried.');
+            await new Promise(resolve => setTimeout(resolve, 40));
+          }
+        }
       }
       session!.draftInput = !submit;
       return { ok: true, message: submit ? 'Submitted to the agent terminal' : 'Staged in the agent terminal. Press Enter to submit.' };

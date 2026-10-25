@@ -109,8 +109,9 @@ export class TerminalScreen {
     // CodeBuddy's empty focused input draws an undimmed first placeholder
     // character (inverse off Windows) followed by dim text. Actual drafts
     // retain undimmed text, so every remaining cell must still pass below.
-    const codeBuddyPlaceholder = codebuddy && this.nativeCaret?.row === row
-      && this.nativeCaret.column <= placeholderStart + 1
+    const caret = this.nativeCaret ?? { row: buffer.baseY + buffer.cursorY, column: buffer.cursorX };
+    const codeBuddyPlaceholder = codebuddy && caret.row === row
+      && caret.column === placeholderStart
       && Boolean(line.getCell(placeholderStart + 1)?.isDim());
     for (let column = marker[0].length; column < line.length; column++) {
       const cell = line.getCell(column);
@@ -118,6 +119,27 @@ export class TerminalScreen {
       if (cell?.getChars().trim() && !cell.isDim()) return false;
     }
     return true;
+  }
+  /** A rendered pasted draft, not a dim recommendation or an old transcript row. */
+  codeBuddyComposerHasText(expected: string): boolean {
+    if (this.composerEmpty(false, true)) return false;
+    const buffer = this.terminal.buffer.active;
+    const caret = this.nativeCaret ?? { row: buffer.baseY + buffer.cursorY, column: buffer.cursorX };
+    if (caret.row < buffer.baseY || caret.row >= buffer.baseY + this.terminal.rows || caret.column < 2) return false;
+    const line = buffer.getLine(caret.row);
+    if (!line) return false;
+    const normalized = expected.replace(/\r\n?/g, '\n').replace(/\n+$/, '');
+    const tail = normalized.split('\n').at(-1)?.split('\t').at(-1)?.trimEnd();
+    const suffix = tail?.slice(-Math.min(48, this.terminal.cols - 4));
+    const rendered = line.translateToString(false, 0, caret.column).trimEnd();
+    // Native CodeBuddy replaces large/multiline pastes with this exact capsule.
+    const capsule = rendered.match(/\[Pasted text #\d+: (\d+) lines\]$/);
+    const compressed = capsule && Number(capsule[1]) === Math.max(1, normalized.split('\n').length);
+    if (!compressed && (!suffix || !rendered.endsWith(suffix))) return false;
+    for (let row = caret.row; row >= Math.max(buffer.baseY, caret.row - 50); row--) {
+      if (/^\s*>/.test(buffer.getLine(row)?.translateToString(true) ?? '')) return true;
+    }
+    return false;
   }
   text(): string | null {
     const buffer = this.terminal.buffer.active;

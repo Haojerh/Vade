@@ -140,6 +140,8 @@ export interface Node {
   preview: string | null;
   outputAvailable: boolean;
   chatAvailable?: boolean;
+  /** Observed empty native prompt; automatic queue dispatch revalidates before input. */
+  chatReady?: boolean;
   workflow?: { runId: string; role: 'orchestrator' | 'worker'; stepState?: WorkflowStep['state'] };
   model?: string | null;
   effort?: string | null;
@@ -370,6 +372,8 @@ export interface HealthResponse {
 
 export interface SendMessageRequest {
   message: string;
+  /** Queue dispatch must never append to a draft or submit while the agent is busy. */
+  requireIdle?: boolean;
   attachments?: MessageAttachment[];
   workflowConfirmed?: boolean;
 }
