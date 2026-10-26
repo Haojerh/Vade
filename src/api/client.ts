@@ -117,6 +117,12 @@ export async function fetchInbox(signal?: AbortSignal): Promise<Section<InboxDat
     headers: { Accept: 'application/json' }, signal,
   }));
 }
+export async function fetchNotificationStates(scopes: string[]): Promise<{ states: Record<string, import('../../shared/contracts').NotificationState> }> {
+  return handleResponse(await fetch('/api/notifications/state?' + new URLSearchParams({ scopes: JSON.stringify(scopes) }), { cache: 'no-store', signal: AbortSignal.timeout(10000) }));
+}
+export async function updateNotificationState(request: import('../../shared/contracts').UpdateNotificationStateRequest): Promise<import('../../shared/contracts').NotificationState> {
+  return handleResponse(await fetch('/api/notifications/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request), signal: AbortSignal.timeout(10000) }));
+}
 
 export async function fetchUsage(signal?: AbortSignal, refresh = false): Promise<Section<UsageData>> {
   return handleResponse<Section<UsageData>>(await fetch(refresh ? '/api/usage?refresh=1' : '/api/usage', {
@@ -306,11 +312,12 @@ export function subscribeConversationEvents(
   onConversation: (section: Section<ConversationPage>) => void,
   onConnection: (connected: boolean) => void,
   onReset: () => void,
+  savedCursor?: { current: string | null },
 ): () => void {
   let source: EventSource | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let closed = false;
-  let cursor: string | null = null;
+  let cursor: string | null = savedCursor?.current ?? null;
   const connect = () => {
     if (closed || document.hidden) return;
     const query = new URLSearchParams();
@@ -322,13 +329,13 @@ export function subscribeConversationEvents(
       if (closed) return;
       try {
         const section = JSON.parse((event as MessageEvent).data) as Section<ConversationPage>;
-        if (section.data?.nextCursor) cursor = section.data.nextCursor;
+        if (section.data?.nextCursor) { cursor = section.data.nextCursor; if (savedCursor) savedCursor.current = cursor; }
         onConversation(section);
       } catch { /* A malformed event never replaces the loaded history. */ }
     });
     source.addEventListener('stream-reset', () => {
       source?.close();
-      cursor = null;
+      cursor = null; if (savedCursor) savedCursor.current = null;
       if (!closed) { onReset(); timer = setTimeout(connect, 2000); }
     });
     source.onerror = () => {
@@ -351,32 +358,28 @@ export function subscribeProjectEvents(
   runId: string | null,
   onSnapshot: (snap: DashboardSnapshot) => void,
   onError: (err: Event) => void,
+  keepAliveWhenHidden = false,
 ): () => void {
   const query = runId ? `?runId=${encodeURIComponent(runId)}` : '';
   const url = `/api/projects/${encodeURIComponent(projectId)}/events${query}`;
-  const es = new EventSource(url);
-
-  const snapshotHandler = (e: MessageEvent) => {
-    try {
-      const snap = JSON.parse(e.data) as DashboardSnapshot;
-      onSnapshot(withoutClosedTabs(snap));
-    } catch (err) {
-      console.error('Failed to parse snapshot SSE event:', err);
-    }
-  };
-
-  es.addEventListener('snapshot', snapshotHandler);
-  es.addEventListener('message', snapshotHandler);
-
-  es.onerror = (e) => {
-    onError(e);
-  };
-
-  return () => {
-    es.removeEventListener('snapshot', snapshotHandler);
-    es.removeEventListener('message', snapshotHandler);
-    es.close();
-  };
+    let source: EventSource | null = null, closed = false;
+    const visibility = () => {
+      if (!closed && keepAliveWhenHidden && source) return;
+      source?.close(); source = null;
+      if (closed || (document.hidden && !keepAliveWhenHidden)) return;
+      const current = new EventSource(url); source = current;
+      const snapshotHandler = (e: MessageEvent) => {
+        if (closed || source !== current || (document.hidden && !keepAliveWhenHidden)) return;
+        try { onSnapshot(withoutClosedTabs(JSON.parse(e.data) as DashboardSnapshot)); }
+        catch (err) { console.error('Failed to parse snapshot SSE event:', err); }
+      };
+      current.addEventListener('snapshot', snapshotHandler);
+      current.addEventListener('message', snapshotHandler);
+      current.onerror = event => { if (!closed && source === current && (!document.hidden || keepAliveWhenHidden)) onError(event); };
+    };
+    document.addEventListener('visibilitychange', visibility);
+    visibility();
+    return () => { closed = true; source?.close(); source = null; document.removeEventListener('visibilitychange', visibility); };
 }
 
 export async function sendNodeMessage(

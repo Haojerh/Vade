@@ -4,6 +4,7 @@ import { fetchNodeDetails } from '../../api/client';
 import { MessageMarkdown } from './MessageMarkdown';
 import { ConversationToolCall } from './ConversationToolCall';
 import { ResponseActions,UserMessageMeta } from './ResponseActions';
+import { useHistoryRendering } from '../../hooks/useHistoryRendering';
 
 export function conversationTimeline(messages: ConversationMessage[], tools: ToolActivity[], limited: boolean) {
   const first = messages.find(message => message.at)?.at;
@@ -41,6 +42,8 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
   const request = useRef<AbortController | null>(null);
   const anchor = useRef<{ height: number; top: number } | null>(null);
   const resetScroll = useRef(true);
+  const history = useRef<HTMLDivElement>(null);
+  useHistoryRendering(history, messages.length + tools.length > 80);
 
   useLayoutEffect(() => {
     request.current?.abort(); request.current = null;
@@ -95,7 +98,7 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
     return () => element.removeEventListener('scroll', scroll);
   }, [scrollContainerRef, error, loadOlder]);
 
-  return <div className="conversation-history-content" aria-label="Conversation history">
+  return <div ref={history} className="conversation-history-content" aria-label="Conversation history">
     {(cursor || error) && <div className="conversation-history-pagination">
       {cursor && <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { void loadOlder(); }}>{busy ? 'Loading…' : error ? 'Retry loading older messages' : 'Load more'}</button>}
       {error && <p role="alert" className="text-xs text-danger">{error}</p>}
@@ -114,7 +117,7 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
         if (!message) return null;
         return <div key={message.id} role="article" aria-label={message.role==='agent'?'Agent response':'Your message'} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
         <div className={`chat-bubble ${message.role === 'agent' ? 'bubble-agent' : 'bubble-user'}`}>
-          <div className={`chat-bubble-text message-markdown ${message.role==='user'&&message.text.length > 800 && !expanded.has(message.id) ? 'message-collapsed' : ''}`}><MessageMarkdown text={message.text} /></div>
+          <div data-history-row className={`chat-bubble-text message-markdown ${message.role==='user'&&message.text.length > 800 && !expanded.has(message.id) ? 'message-collapsed' : ''}`}><MessageMarkdown text={message.text} /></div>
           {message.role==='user'&&message.text.length > 800 && <button type="button" className="btn-read-more" aria-expanded={expanded.has(message.id)} onClick={() => setExpanded(current => {
             const next = new Set(current); if (next.has(message.id)) next.delete(message.id); else next.add(message.id); return next;
           })}>{expanded.has(message.id) ? 'Read Less' : 'Read More'}</button>}

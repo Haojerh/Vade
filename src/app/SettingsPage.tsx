@@ -1,16 +1,16 @@
-import React, { useLayoutEffect, useRef, useState } from 'react';
-import { PhoneConnectionSettings } from '../features/projects/PhoneConnectionSettings';
+import React, { Suspense, lazy, useLayoutEffect, useRef, useState } from 'react';
+const PhoneConnectionSettings = lazy(() => import('../features/projects/PhoneConnectionSettings').then(module => ({ default: module.PhoneConnectionSettings })));
 import type { ProjectSelectorProps } from '../features/projects/ProjectSelector';
 import { Icon } from '../components/ui/Icon';
-import { ConnectionSettings } from '../features/usage/ConnectionSettings';
-import { AgentSettings } from '../features/projects/AgentSettings';
-import { OrganizationBuilder } from '../features/organization/OrganizationBuilder';
-import { WorkflowSetup } from '../features/organization/WorkflowSetup';
+const ConnectionSettings = lazy(() => import('../features/usage/ConnectionSettings').then(module => ({ default: module.ConnectionSettings })));
+const AgentSettings = lazy(() => import('../features/projects/AgentSettings').then(module => ({ default: module.AgentSettings })));
+const OrganizationBuilder = lazy(() => import('../features/organization/OrganizationBuilder').then(module => ({ default: module.OrganizationBuilder })));
+const WorkflowSetup = lazy(() => import('../features/organization/WorkflowSetup').then(module => ({ default: module.WorkflowSetup })));
 import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
 import { ComputerAwakeSetting } from './SystemControls';
 import { AgentNotificationSettings } from '../features/inbox/agentNotifications';
-import { VoiceDictationSettings } from '../features/workflow/VoiceDictationSettings';
+const VoiceDictationSettings = lazy(() => import('../features/workflow/VoiceDictationSettings').then(module => ({ default: module.VoiceDictationSettings })));
 import { Select } from '../components/ui/Select';
 import type { TerminalShell } from '../../shared/contracts';
 import { TERMINAL_SHELL_OPTIONS, readTerminalShell, writeTerminalShell } from './terminalShellPreference';
@@ -87,7 +87,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = props => {
       </a>)}</nav>
     </aside>
     <main className="settings-content">
-      <div className="settings-content-inner" key={query ? 'search' : current.id}>
+      <div className="settings-content-inner" key={query ? 'search' : current.id}><Suspense fallback={<p role="status">Loading settings…</p>}>
         <header><h1>{query ? 'Search results' : current.label}</h1><p>{query ? `Settings matching “${search.trim()}”` : current.description}</p></header>
         {!query && current.id === 'phone' ? <PhoneConnectionSettings /> : !query && current.id === 'organization' ? <OrganizationBuilder /> : !query && current.id === 'setup' ? <WorkflowSetup /> : !query && current.id === 'agents' ? <AgentSettings /> : !query && (current.id === 'integrations' || current.id === 'accounts') ? <ConnectionSettings key={current.id} kind={current.id} /> : <section className="settings-preferences" aria-label={query ? 'Matching settings' : `${current.label} preferences`}>
           {showAppearance && <div className="settings-page-row"><div><h2>Appearance</h2><p>Choose your preferred color theme.</p></div><button className="btn btn-secondary" onClick={props.onToggleTheme} aria-label={`Toggle theme, current theme is ${props.theme}`}><Icon name={props.theme === 'dark' ? 'sun' : 'moon'} size={16} />{props.theme === 'dark' ? 'Dark' : 'Light'}</button></div>}
@@ -99,7 +99,7 @@ export const SettingsPage: React.FC<SettingsPageProps> = props => {
           {filtered.map(option => <label className="settings-page-row" key={option.label}><div><span className="settings-page-label">{option.label}</span><p>{option.description}</p></div><input type="checkbox" role="switch" checked={option.checked} onChange={event => option.change?.(event.target.checked)} disabled={!option.change} /></label>)}
           {!showAppearance && !showTerminal && !showAgentView && !showAwake && !showNotifications && !showVoice && !filtered.length && <p className="settings-no-results">No settings found. Try another search.</p>}
         </section>}
-      </div>
+      </Suspense></div>
     </main>
   </div><StatusBar /></div>;
 };

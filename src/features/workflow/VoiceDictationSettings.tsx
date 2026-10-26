@@ -32,6 +32,7 @@ export function VoiceDictationSettings() {
     if (!downloading) return;
     const controller = new AbortController();
     const timer = setInterval(() => {
+      if (document.hidden) return;
       void speechRequest<LocalSpeechCatalog>('models', undefined, controller.signal).then(value => { if (!controller.signal.aborted) setCatalog(value); })
         .catch(reason => { if (!controller.signal.aborted) setError(reason.message); });
     }, 1000);

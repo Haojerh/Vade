@@ -506,7 +506,7 @@ export interface AgentCatalogResponse {
   available: AgentCatalogEntry[];
   defaultAgentId?: string | null;
 }
-/** Bounded cross-project observations; handling is browser-local. */
+/** Bounded cross-project observations; handling is shared by the local backend. */
 export interface InboxItem {
   id: Id;
   nodeId: Id | null;
@@ -521,6 +521,15 @@ export interface InboxItem {
 }
 
 export interface InboxData { items: InboxItem[] }
+export interface NotificationState {
+  initialized: boolean; revision: number;
+  seenIds: string[]; unreadIds: string[]; readIds: string[]; clearedIds: string[];
+}
+export interface UpdateNotificationStateRequest {
+  scope: string; action: 'observe' | 'acknowledge' | 'clear' | 'import';
+  ids?: string[]; baseline?: boolean;
+  legacy?: { seenIds?: string[]; unreadIds?: string[]; readIds?: string[]; clearedIds?: string[] };
+}
 
 export type RegisterProjectRequest =
   | { mode?: 'existing'; path: string; name?: string }

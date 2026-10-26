@@ -1,9 +1,10 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { acknowledgeGitHubItem, observeGitHubItems, readUnreadHistory, saveUnreadHistory, type UnreadHistory } from './githubUnread';
+import { observeGitHubItems, readUnreadHistory } from './githubUnread';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { Icon } from '../../components/ui/Icon';
 import { useGitHubPagination } from './useGitHubPagination';
 import { useCommitGraph } from './useCommitGraph';
+import { changeNotifications, retryNotifications, useSharedNotifications } from '../notifications/useSharedNotifications';
 import {
   CommitsTabPane,
   PullRequestsTabPane,
@@ -35,6 +36,7 @@ interface GitHubPanelProps {
 }
 
 const REPOSITORY_QUERY: GitHubQuery = { scope: 'general' };
+export const githubNotificationScope = (key: string) => `github:${key}`;
 
 export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   projectId,
@@ -63,53 +65,54 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const graphUnread = graph.unread.size;
   const [prFilter, setPrFilter] = useState<'all' | 'open' | 'closed'>('all');
   const [issueFilter, setIssueFilter] = useState<'all' | 'open' | 'closed'>('all');
-  const history = useRef(new Map<string, UnreadHistory>());
-  const [observedUnread, setUnread] = useState<Record<GitHubTabKey, Set<string>>>({ commits: new Set(), prs: new Set(), issues: new Set() });
-  const unread = { ...observedUnread, commits: new Set([...observedUnread.commits].filter(sha => !graph.readIds.has(sha))) };
   const repositoryKey = `${projectId}::${data?.repository?.url ?? ''}`;
   const scopeKey = `${data?.scope.kind}::${data?.scope.nodeId}::${data?.scope.branch}`;
   const keys = { commits: `${repositoryKey}::commits::${scopeKey}`, prs: `${repositoryKey}::prs::${scopeKey}`, issues: `${repositoryKey}::issues` };
+  const notificationsEnabled = !!data?.repository;
+  const currentItems: Record<GitHubTabKey, string[]> = {
+    commits: data?.commits.data?.map(item => item.sha) ?? [],
+    prs: data?.pullRequests.data?.map(item => String(item.number)) ?? [],
+    issues: data?.issues.data?.map(item => String(item.number)) ?? [],
+  };
+  const commitsNotifications = useSharedNotifications(notificationsEnabled && !projectId ? githubNotificationScope(keys.commits) : null,
+    () => { const history = observeGitHubItems(readUnreadHistory(keys.commits), currentItems.commits); return history && { seenIds: [...history.seen], unreadIds: [...history.unread] }; },
+    [keys.commits, currentItems.commits.join('\0')]);
+  const prNotifications = useSharedNotifications(notificationsEnabled ? githubNotificationScope(keys.prs) : null,
+    () => { const history = observeGitHubItems(readUnreadHistory(keys.prs), currentItems.prs); return history && { seenIds: [...history.seen], unreadIds: [...history.unread] }; },
+    [keys.prs, currentItems.prs.join('\0')]);
+  const issueNotifications = useSharedNotifications(notificationsEnabled ? githubNotificationScope(keys.issues) : null,
+    () => { const history = observeGitHubItems(readUnreadHistory(keys.issues), currentItems.issues); return history && { seenIds: [...history.seen], unreadIds: [...history.unread] }; },
+    [keys.issues, currentItems.issues.join('\0')]);
+  const notificationIssue = commitsNotifications.error ?? prNotifications.error ?? issueNotifications.error ?? graph.notificationError;
+  const unread = {
+    commits: new Set(commitsNotifications.state?.unreadIds ?? []),
+    prs: new Set(prNotifications.state?.unreadIds ?? []),
+    issues: new Set(issueNotifications.state?.unreadIds ?? []),
+  };
 
   useEffect(() => {
-    const next = { commits: new Set<string>(), prs: new Set<string>(), issues: new Set<string>() };
-    if (data?.repository) {
-      const sections = { commits: data.commits, prs: data.pullRequests, issues: data.issues };
-      for (const tab of ['commits', 'prs', 'issues'] as const) {
-        const section = sections[tab];
-        let stored = history.current.get(keys[tab]) ?? readUnreadHistory(keys[tab]);
-        if (stored) history.current.set(keys[tab], stored);
-        if (!section.meta.stale && !section.meta.issue && ['ready', 'empty'].includes(section.meta.availability) && section.data) {
-          const ids = tab === 'commits' ? data.commits.data?.map((item) => item.sha) ?? [] :
-            tab === 'prs' ? data.pullRequests.data?.map((item) => String(item.number)) ?? [] :
-              data.issues.data?.map((item) => String(item.number)) ?? [];
-          stored = observeGitHubItems(stored, ids);
-          history.current.set(keys[tab], stored);
-          saveUnreadHistory(keys[tab], stored);
-        }
-        next[tab] = stored?.unread ?? new Set();
-      }
+    if (!data?.repository) return;
+    if (!projectId && data.commits.data && !data.commits.meta.stale && !data.commits.meta.issue && ['ready', 'empty'].includes(data.commits.meta.availability)) {
+      void changeNotifications({ scope: githubNotificationScope(keys.commits), action: 'observe', ids: data.commits.data.map(item => item.sha) });
     }
-    setUnread(next);
-  }, [data, projectId]);
+    if (data.pullRequests.data && !data.pullRequests.meta.stale && !data.pullRequests.meta.issue && ['ready', 'empty'].includes(data.pullRequests.meta.availability)) {
+      void changeNotifications({ scope: githubNotificationScope(keys.prs), action: 'observe', ids: data.pullRequests.data.map(item => String(item.number)) });
+    }
+    if (data.issues.data && !data.issues.meta.stale && !data.issues.meta.issue && ['ready', 'empty'].includes(data.issues.meta.availability)) {
+      void changeNotifications({ scope: githubNotificationScope(keys.issues), action: 'observe', ids: data.issues.data.map(item => String(item.number)) });
+    }
+  }, [data, projectId, keys.commits, keys.prs, keys.issues]);
 
   const acknowledge = (tab: GitHubTabKey, id: string) => {
     if (tab === 'commits') graph.acknowledge(id);
-    const stored = history.current.get(keys[tab]);
-    if (!stored) return;
-    const acknowledged = acknowledgeGitHubItem(stored, id);
-    history.current.set(keys[tab], acknowledged);
-    saveUnreadHistory(keys[tab], acknowledged);
-    setUnread((prev) => ({ ...prev, [tab]: acknowledged.unread }));
+    void changeNotifications({ scope: githubNotificationScope(keys[tab]), action: 'acknowledge', ids: [id] });
   };
   const selectTab = (tab: GitHubTabKey) => setActiveTab(tab);
 
   const repo = data?.repository;
 
   const pagination = useGitHubPagination(projectId, data, query, (tab, ids) => {
-    const stored = history.current.get(keys[tab]) ?? readUnreadHistory(keys[tab]);
-    const next = { seen: new Set([...(stored?.seen ?? []), ...ids]), unread: stored?.unread ?? new Set<string>() };
-    history.current.set(keys[tab], next);
-    saveUnreadHistory(keys[tab], next);
+    void changeNotifications({ scope: githubNotificationScope(keys[tab]), action: 'observe', ids, baseline: true });
   });
   const { commits, prs, issues } = pagination;
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -241,6 +244,15 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
               <span className="font-semibold">GitHub Request Error:</span> {error}
             </div>
           )}
+          {notificationIssue && <div className="panel-alert alert-error" role="alert">
+            <span>{notificationIssue}</span>
+            <button type="button" className="btn btn-secondary btn-xs" onClick={() => {
+              if (!projectId) retryNotifications(githubNotificationScope(keys.commits));
+              retryNotifications(githubNotificationScope(keys.prs));
+              retryNotifications(githubNotificationScope(keys.issues));
+              if (projectId) graph.retryNotificationChanges();
+            }}>Retry</button>
+          </div>}
 
           {/* Tabs: Commits, Pull Requests, Issues */}
           <div ref={tabsRef} className="github-tabs-nav" role="tablist" aria-label={embedded ? 'Worktree history views' : 'GitHub activity views'}>

@@ -9,7 +9,7 @@ import { createServer } from '../http/api.js';
 import { GIT_PATH, defaultCommandRunner, type CommandRunner } from '../integrations/cli.js';
 import { AdeStore, type SessionRecord } from './store.js';
 import { LocalRuntime } from './localRuntime.js';
-import { AdeSessions } from './sessions.js';
+import { AdeSessions, resolveAgent, agentCatalog } from './sessions.js';
 import { addProject } from './projects.js';
 import { listProjectFolders } from './projectFolders.js';
 import { AdeGit } from './git.js';
@@ -19,6 +19,24 @@ import { installAgyHook, readAgyBinding, agyBindingFile } from './agyBinding.js'
 import { installStatusHooks, readAgentStatus, statusFile } from './statusHooks.js';
 import { AdeConversations } from './conversation.js';
 import { projectShortcuts, runProjectShortcut, saveProjectShortcuts } from './projectShortcuts.js';
+
+test('OpenCode detection supports the current scoped package and both native command aliases', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vade-opencode-detect-'));
+  const previous = process.env.PATH;
+  const bin = path.join(directory, 'node_modules', '@opencode', 'cli', 'bin'); fs.mkdirSync(bin, { recursive: true });
+  const executable = path.join(bin, process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+  fs.writeFileSync(executable, 'fixture; not executed');
+  try {
+    process.env.PATH = directory;
+    for (const provider of ['opencode', 'opencode2'] as const) assert.deepEqual(resolveAgent(provider), { executable, args: [] });
+    assert.ok(agentCatalog().installed.some(row => row.id === 'opencode'));
+    assert.ok(agentCatalog().installed.some(row => row.id === 'opencode2'));
+    fs.unlinkSync(executable);
+    assert.equal(resolveAgent('opencode'), null); assert.equal(resolveAgent('opencode2'), null);
+    fs.mkdirSync(executable);
+    assert.equal(resolveAgent('opencode2'), null, 'A directory cannot establish an installed CLI');
+  } finally { process.env.PATH = previous; fs.rmSync(directory, { recursive: true, force: true }); }
+});
 
 test('CodeBuddy permission hooks show approval only while the native widget is actually visible', async () => {
   const f=fixture();try{
@@ -183,6 +201,22 @@ test('resource trees include terminals and agent descendants once and exclude un
   assert.ok(value.memoryBytes > 0);
   assert.ok(['backend-tree', 'backend'].includes(value.scope));
   if (value.scope === 'backend-tree') assert.ok(value.processCount! >= 1);
+});
+
+test('RAM summaries avoid detailed process metadata and share cached scans', async t => {
+  const reader = new ResourceReader(), calls: boolean[] = [];
+  t.mock.method(reader as any, 'collect', async (detailed = true) => {
+    calls.push(detailed);
+    return [{ pid: process.pid, parent: 0, bytes: 1234, ...(detailed ? { name: 'Fixture', commandLine: 'owned', cpuSeconds: 1 } : {}) }];
+  });
+  const [first, second] = await Promise.all([reader.read([], null), reader.read([], null)]);
+  assert.equal(first.memoryBytes, 1234); assert.equal(second.memoryBytes, 1234);
+  assert.deepEqual(calls, [false]);
+  const details = await reader.details([], null);
+  assert.equal(details.groups[0].processes[0].name, 'Fixture');
+  assert.deepEqual(calls, [false, true]);
+  await reader.snapshot(); await reader.snapshot(false, false);
+  assert.deepEqual(calls, [false, true], 'Fresh detailed data can serve either view without another scan');
 });
 
 test('rendered prompt parsing is bounded, excludes multi-select and distinguishes approvals', () => {
@@ -1166,9 +1200,9 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     assert.equal((await fetch(base + projectRoute + `/nodes/${nodeId}/terminal?cursor=-1`)).status, 400);
     assert.equal((await fetch(base + projectRoute + '/commit-graph?nodeId=foreign')).status, 404);
     const catalog = await (await fetch(base + '/api/agents/catalog')).json();
-    assert.deepEqual(catalog.available.map((item: { id: string }) => item.id), ['codex', 'claude', 'antigravity', 'terminal']);
-    assert.ok(catalog.installed.every((item: { command: string }) => ['codex', 'claude', 'agy', 'terminal'].includes(item.command)));
-    assert.equal((await (await fetch(base + '/api/usage')).json()).meta.availability, 'unavailable');
+    assert.deepEqual(catalog.available.map((item: { id: string }) => item.id), ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'terminal']);
+    assert.ok(catalog.installed.every((item: { command: string }) => ['codex', 'claude', 'agy', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'terminal'].includes(item.command)));
+    assert.ok(['ready', 'unavailable'].includes((await (await fetch(base + '/api/usage')).json()).meta.availability));
     const refreshes: boolean[] = [];
     const readUsage = f.runtime.connectionsService.usage.bind(f.runtime.connectionsService);
     f.runtime.connectionsService.usage = force => { refreshes.push(Boolean(force)); return readUsage(force); };
@@ -1202,6 +1236,38 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     assert.deepEqual(f.runtime.store.sessions(project.id), []);
     assert.ok(fs.existsSync(path.join(f.repo, '.git')));
     assert.equal((await fetch(base + projectRoute, { method: 'DELETE' })).status, 404);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve())); f.close();
+  }
+});
+
+test('notification HTTP state syncs validated scopes and persists additive reads', async () => {
+  const f = fixture();
+  const server = createServer({ localRuntime: f.runtime });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  const post = (value: unknown) => fetch(base + '/api/notifications/state', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value),
+  });
+  const read = (scopes: unknown) => fetch(base + '/api/notifications/state?' + new URLSearchParams({ scopes: JSON.stringify(scopes) }));
+  try {
+    assert.equal((await post({ scope: 'inbox', action: 'observe', ids: ['one'], path: 'escape' })).status, 400);
+    assert.equal((await post({ scope: 'preferences', action: 'observe', ids: ['one'] })).status, 400);
+    assert.equal((await post({ scope: 'github:repo::prs', action: 'acknowledge', ids: ['bad\nid'] })).status, 400);
+    assert.equal((await post({ scope: 'github:repo::prs', action: 'observe', ids: ['old'] })).status, 200);
+    assert.equal((await post({ scope: 'github:repo::prs', action: 'observe', ids: ['new', 'old'] })).status, 200);
+    assert.equal((await post({ scope: 'github:repo::prs', action: 'acknowledge', ids: ['new'] })).status, 200);
+    assert.equal((await post({ scope: 'commit:repo', action: 'observe', ids: ['sha'] })).status, 200);
+    const response = await read(['github:repo::prs', 'commit:repo', 'inbox']);
+    assert.equal(response.status, 200);
+    const states = (await response.json()).states;
+    assert.deepEqual(states['github:repo::prs'].unreadIds, []);
+    assert.deepEqual(states['github:repo::prs'].readIds, ['new']);
+    assert.deepEqual(states['commit:repo'].seenIds, ['sha']);
+    assert.deepEqual(states.inbox.seenIds, []);
+    assert.equal((await read([])).status, 400);
+    assert.equal((await read(Array.from({ length: 33 }, (_, index) => `github:${index}`))).status, 400);
   } finally {
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve())); f.close();

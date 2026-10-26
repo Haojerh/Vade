@@ -6,7 +6,7 @@ import React, { Suspense, lazy, useEffect, useLayoutEffect, useRef, useState } f
 import type { Node, NodeDetails as NodeDetailsType } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
-import { ConversationHistory } from './ConversationHistory';
+const ConversationHistory = lazy(() => import('./ConversationHistory').then(module => ({ default: module.ConversationHistory })));
 import { ConversationToolCall } from './ConversationToolCall';
 import { ProviderActivity } from './ProviderActivity';
 import { useAgentDraft } from '../../hooks/useAgentDraft';
@@ -48,6 +48,7 @@ interface NodeDetailsProps {
   onClose: () => void;
   onRefresh: () => void;
   onSessionChange?: () => void;
+  onConversationVisibilityChange?: (visible: boolean) => void;
   onOpenSession?: (nodeId: string) => void;
   handoffEnabled?: boolean;
   visibleSections?: NodeDetailsVisibleSections;
@@ -66,6 +67,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   onClose,
   onRefresh,
   onSessionChange,
+  onConversationVisibilityChange,
   onOpenSession,
   handoffEnabled = false,
   visibleSections,
@@ -75,6 +77,10 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const bodyRef = useRef<HTMLDivElement>(null);
   const [showBackToBottom, setShowBackToBottom] = useState(false);
   const [sessionView, setSessionView] = useState<'chat' | 'terminal'>(readAgentView);
+  useEffect(() => {
+    onConversationVisibilityChange?.(Boolean(selectedNodeId) && sessionView === 'chat' && visibleSections?.conversation !== false);
+    return () => onConversationVisibilityChange?.(false);
+  }, [selectedNodeId, sessionView, visibleSections?.conversation, onConversationVisibilityChange]);
   useEffect(() => { setSessionView(readAgentView()); }, [projectId, selectedNodeId]);
   useLayoutEffect(() => {
     setShowBackToBottom(false);
@@ -301,7 +307,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         </p>
                       </div>
                     ) : (
-                      convData ? <ConversationHistory key={`${projectId}:${selectedNodeId}:${selectedRunId}:${convData?.sourceIdentity}`} projectId={projectId!} nodeId={selectedNodeId} runId={selectedRunId ?? null} page={convData} tools={tools} scrollContainerRef={bodyRef} /> : <div className="conversation-thread">{tools.map(tool => <ConversationToolCall key={tool.id} tool={tool} />)}</div>
+                      convData ? <Suspense fallback={<p role="status">Loading conversation…</p>}><ConversationHistory key={`${projectId}:${selectedNodeId}:${selectedRunId}:${convData?.sourceIdentity}`} projectId={projectId!} nodeId={selectedNodeId} runId={selectedRunId ?? null} page={convData} tools={tools} scrollContainerRef={bodyRef} /></Suspense> : <div className="conversation-thread">{tools.map(tool => <ConversationToolCall key={tool.id} tool={tool} />)}</div>
                     )}
                     <ProviderActivity node={selectedNode?.id === node.id ? selectedNode : node} />
                   </section>

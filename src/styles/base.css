@@ -331,3 +331,5 @@ button {
     transition: none !important;
   }
 }
+/* Keep sessions alive while hidden; only presentation animations are paused. */
+.app-page-hidden *, .app-page-hidden *::before, .app-page-hidden *::after { animation-play-state: paused !important; }

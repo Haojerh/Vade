@@ -36,7 +36,7 @@ export function useLiveGraphActivity(scope: string, nodes: Node[], edges: Edge[]
       for (const item of (node.toolActivity?.data ?? []).flatMap(tool => [tool, ...(tool.children ?? [])])) {
         const known = seen.current.has(item.id);
         seen.current.add(item.id);
-        if (!first && initialized && !known && enabled && (!item.at || now - Date.parse(item.at) < 30000)) {
+        if (!document.hidden && !first && initialized && !known && enabled && (!item.at || now - Date.parse(item.at) < 30000)) {
           newTools.push({ ...item, nodeId: node.id, expiresAt: now + 4500 });
         }
       }
@@ -46,7 +46,7 @@ export function useLiveGraphActivity(scope: string, nodes: Node[], edges: Edge[]
     for (const edge of edges) for (const message of edge.messages ?? []) {
       const known = seen.current.has(message.id);
       seen.current.add(message.id);
-      if (!first && mailInitialized && !known && now - Date.parse(message.at) < 30000) newPackets.push({ ...message, expiresAt: now + 1600 });
+      if (!document.hidden && !first && mailInitialized && !known && now - Date.parse(message.at) < 30000) newPackets.push({ ...message, expiresAt: now + 1600 });
     }
     if (seen.current.size > 10000) seen.current = new Set([...seen.current].slice(-5000));
     if (newTools.length) setTools((previous) => [...previous, ...newTools].slice(-200));
@@ -54,13 +54,19 @@ export function useLiveGraphActivity(scope: string, nodes: Node[], edges: Edge[]
     if (newPackets.length) setPackets((previous) => [...previous, ...newPackets].slice(-100));
   }, [scope, nodes, edges, enabled]);
   useEffect(() => {
-    const timer = window.setInterval(() => {
+    let timer: ReturnType<typeof setInterval> | undefined;
+    const expire = () => {
       const now = Date.now();
       setTools((items) => items.some((item) => item.expiresAt <= now && !heldTools.current.has(item.id))
         ? items.filter((item) => item.expiresAt > now || heldTools.current.has(item.id)) : items);
       setPackets((items) => items.some((item) => item.expiresAt <= now) ? items.filter((item) => item.expiresAt > now) : items);
-    }, 200);
-    return () => window.clearInterval(timer);
+    };
+    const visibility = () => {
+      clearInterval(timer); timer = undefined;
+      if (!document.hidden) { expire(); timer = setInterval(expire, 200); }
+    };
+    document.addEventListener('visibilitychange', visibility); visibility();
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', visibility); };
   }, []);
   return { tools, packets, holdTool };
 }

@@ -12,7 +12,7 @@ import { installStatusHooks, readAgentStatus, statusFile } from './statusHooks.j
 import { antigravityPromptReady, isInterruptionInput, programStatusReader, PROGRAM_STATUS_REPLY, TerminalTurnStatus } from './programStatus.js';
 import { attachmentPaste, attachmentReference, decodeAttachments, storeAttachments, usesNativeFileAttachment } from '../services/attachments.js';
 import { TerminalScreen } from './terminalScreen.js';
-import { isOpenCode, validProviderSessionId, createOpenCodeSession, verifyOpenCode, openCodePlugin, openCodeMajor } from './openCodeSessions.js';
+import { isOpenCode, validProviderSessionId, createOpenCodeSession, verifyOpenCode, installOpenCodePlugin, openCodeMajor } from './openCodeSessions.js';
 import { permissionArgs, readAgentPreferences } from './agentPreferences.js';
 import { answerCodeBuddyQuestion, codeBuddyApprovalVisible, terminalInteraction } from './interaction.js';
 import { ProviderChatControls } from './providerChatControls.js';
@@ -100,6 +100,12 @@ export function resolveAgent(provider: AdeProvider, shell?: TerminalShell): { ex
       if ((provider === 'opencode' || provider === 'opencode2') && process.platform === 'win32') {
         const binary = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', 'opencode-ai', 'bin', provider === 'opencode2' ? 'opencode2.exe' : 'opencode.exe');
         if (fs.existsSync(binary)) return { executable: binary, args: [] };
+      }
+      if (provider === 'opencode' || provider === 'opencode2') {
+        // Current @opencode/cli exposes both command names through the same
+        // native binary. Resolve the fixed package path, never execute npm shims.
+        const binary = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', '@opencode', 'cli', 'bin', process.platform === 'win32' ? 'opencode.exe' : 'opencode');
+        try { if (fs.statSync(binary).isFile()) return { executable: binary, args: [] }; } catch { /* Try the legacy package entry. */ }
       }
       const entry = path.join(dir.replace(/^"|"$/g, ''), 'node_modules', definition.package, definition.entry);
       if (node && fs.existsSync(entry)) return { executable: node, args: [entry] };
@@ -483,13 +489,16 @@ export class AdeSessions {
     env.ADE_STATUS_TOKEN = record.statusToken!;
     env.ADE_STATUS_PROVIDER = record.provider;
     env.ADE_STATUS_CWD = record.cwd;
+    // Native history keeps its verified original directory when resumed into
+    // another checkout. Never inherit a parent's source-directory allowance.
+    env.ADE_STATUS_SOURCE_CWD = record.sourceCwd ?? '';
     env.ADE_STATUS_SESSION = record.providerThreadId ?? '';
     if (isOpenCode(record.provider)) {
       env.ADE_OPENCODE_PLUGIN_API = record.provider === 'opencode2' ? 'v2' : 'v1';
       const key = record.provider === 'kilo' ? 'KILO_CONFIG_CONTENT' : 'OPENCODE_CONFIG_CONTENT';
       let config: any = {}; try { config = JSON.parse(env[key] || '{}'); } catch { throw new CliError('INVALID_ARGUMENT', 'Provider inline configuration is invalid'); }
       if (!config || typeof config !== 'object' || Array.isArray(config) || (config.plugin !== undefined && !Array.isArray(config.plugin))) throw new CliError('INVALID_ARGUMENT', 'Provider plugin configuration is invalid');
-      env[key] = JSON.stringify({ ...config, plugin: [...(config.plugin ?? []), openCodePlugin(this.store.directory)] });
+      installOpenCodePlugin(record.provider, env);
     }
     if (record.provider === 'terminal' && (record.shell === 'bash' || (!record.shell && process.platform !== 'win32'))) env.PROMPT_COMMAND = 'printf "\\033]7502;%s;%s\\007" "$ADE_STATUS_TOKEN" "$(history 1 | sed "s/^ *[0-9]* *//" | base64 | tr -d "\\n")"';
     if (record.provider === 'antigravity' && record.bindingToken) {
@@ -623,7 +632,7 @@ export class AdeSessions {
     const state = this.status(projectId, id).data?.state;
     if (['working','waiting','blocked'].includes(state ?? '')) return false;
     const empty = isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
-    const native = record.provider === 'codebuddy' ? live.screen?.codeBuddyPromptReady() : record.provider === 'antigravity' && antigravityPromptReady(live.screen?.text() ?? '');
+    const native = isOpenCode(record.provider) ? empty : record.provider === 'codebuddy' ? live.screen?.codeBuddyPromptReady() : record.provider === 'antigravity' && antigravityPromptReady(live.screen?.text() ?? '');
     return Boolean(empty && (['idle','completed','failed','interrupted'].includes(state ?? '') || native));
   }
 
@@ -798,7 +807,7 @@ export class AdeSessions {
         && this.live.get(other.id)?.live && (this.sending.has(other.id) || ['working', 'waiting', 'blocked'].includes(this.status(projectId, other.id).data?.state ?? ''))))
         throw new CliError('RUNTIME_UNAVAILABLE', 'Another agent is using this worktree. This queued task was not submitted.');
       if (['waiting', 'blocked'].includes(status.data?.state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent needs input. Answer its question or approval controls in Chat, or use Terminal for native setup.');
-      const nativeReady = (!status.data || status.data.state === 'unknown') && (initialNativeReady || initialCodeBuddyReady);
+      const nativeReady = (!status.data || status.data.state === 'unknown') && (initialNativeReady || initialCodeBuddyReady || isOpenCode(record.provider) && openCodeReady);
       if (!nativeReady && (status.meta.availability !== 'ready' || !['idle', 'working', 'completed', 'failed', 'interrupted'].includes(status.data?.state ?? ''))) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent input prompt is not ready yet. Open Terminal to finish setup, then try again.');
     };
     writable(); this.sending.add(id);

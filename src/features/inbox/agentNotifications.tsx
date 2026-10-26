@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { InboxItem, InboxData, Section } from '../../../shared/contracts';
+import type { InboxItem, InboxData, NotificationState, Section } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
+import { useSharedNotifications } from '../notifications/useSharedNotifications';
 
 const key = 'vade:agent-notifications:v1';
+export function notificationWasHandled(state: NotificationState | null, id: string): boolean {
+  return Boolean(state && (state.readIds.includes(id) || state.clearedIds.includes(id)));
+}
 function readSettings(): { enabled: boolean; sound: boolean; system: boolean } {
   try { const value = JSON.parse(localStorage.getItem(key) ?? '{}'); return { enabled: value.enabled !== false, sound: value.sound !== false, system: value.system !== false }; }
   catch { return { enabled: true, sound: true, system: true }; }
@@ -59,8 +63,10 @@ function chime() {
 
 export function useAgentNotifications(section: Section<InboxData> | null, onOpen: (item: InboxItem) => void) {
   const settings = useNotificationSettings();
+  const inboxState = useSharedNotifications('inbox');
   const [popups, setPopups] = useState<InboxItem[]>([]);
-  const current = useRef({ settings, onOpen }); current.current = { settings, onOpen };
+  const current = useRef({ settings, onOpen, inboxState: inboxState.state });
+  current.current = { settings, onOpen, inboxState: inboxState.state };
   const seen = useRef(new Set<string>()), mountedAt = useRef(Date.now());
   const browserNotifications = useRef(new Set<Notification>());
   const deliver = useRef((item: InboxItem) => {});
@@ -68,6 +74,7 @@ export function useAgentNotifications(section: Section<InboxData> | null, onOpen
     if (seen.current.has(item.id)) return;
     seen.current.add(item.id);
     if (seen.current.size > 2000) seen.current.delete(seen.current.values().next().value!);
+    if (notificationWasHandled(current.current.inboxState, item.id)) return;
     if (!current.current.settings.enabled || !['completed', 'waiting'].includes(item.outcome)) return;
     if (document.hidden || !document.hasFocus()) {
       if (current.current.settings.system && !window.adeDesktop && typeof Notification !== 'undefined' && Notification.permission === 'granted') {

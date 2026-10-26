@@ -11,6 +11,62 @@ import { codeBuddyRecordedSettings } from './conversation.js';
 import type { SessionRecord } from './store.js';
 import { AdeSessions } from './sessions.js';
 import { CodeBuddyChatControls } from './codeBuddyChatControls.js';
+import fsNative from 'node:fs';
+import osNative from 'node:os';
+import pathNative from 'node:path';
+import { installOpenCodePlugin } from './openCodeSessions.js';
+import { readAgentStatus } from './statusHooks.js';
+import { AgentWorkClock } from './agentWorkClock.js';
+
+test('native OpenCode status drop-ins preserve configuration and publish exact-session working time', async () => {
+  const directory = fsNative.mkdtempSync(pathNative.join(osNative.tmpdir(), 'vade-native-status-'));
+  const keys = ['ADE_STATUS_FILE','ADE_STATUS_TOKEN','ADE_STATUS_SESSION','ADE_STATUS_PROVIDER','ADE_STATUS_CWD','ADE_STATUS_SOURCE_CWD','ADE_OPENCODE_PLUGIN_API'];
+  const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+  try {
+    fsNative.mkdirSync(pathNative.join(directory,'status'));
+    for (const provider of ['opencode','kilo','opencode2'] as const) {
+      const config = pathNative.join(directory,provider), plugins = pathNative.join(config,'plugins');
+      fsNative.mkdirSync(plugins,{recursive:true}); fsNative.writeFileSync(pathNative.join(plugins,'user.js'),'user plugin');
+      const settings = pathNative.join(config,'opencode.json'); fsNative.writeFileSync(settings,'{"permission":"ask"}');
+      const env = { OPENCODE_CONFIG_DIR: config, KILO_CONFIG_DIR: config, OPENCODE_CONFIG_CONTENT:'{"plugin":["existing"]}' };
+      installOpenCodePlugin(provider,env); installOpenCodePlugin(provider,env);
+      assert.equal(fsNative.readFileSync(pathNative.join(plugins,'user.js'),'utf8'),'user plugin');
+      assert.equal(fsNative.readFileSync(settings,'utf8'),'{"permission":"ask"}');
+      assert.equal(env.OPENCODE_CONFIG_CONTENT,'{"plugin":["existing"]}');
+      const record = {id:provider,projectId:'project',provider,cwd:directory,statusToken:'current-token',providerThreadId:'ses_exact',createdAt:new Date().toISOString(),closed:false,worktreeId:'tree',title:provider} as SessionRecord;
+      const nativeDirectory=provider==='kilo'?pathNative.join(directory,'original-checkout'):directory;
+      Object.assign(process.env,{ADE_STATUS_FILE:pathNative.join(directory,'status',provider+'.json'),ADE_STATUS_TOKEN:record.statusToken,ADE_STATUS_SESSION:record.providerThreadId,ADE_STATUS_PROVIDER:provider,ADE_STATUS_CWD:directory,ADE_STATUS_SOURCE_CWD:provider==='kilo'?nativeDirectory:'',ADE_OPENCODE_PLUGIN_API:provider==='opencode2'?'v2':'v1'});
+      const source = fsNative.readFileSync(pathNative.join(plugins,'vade-agent-status.js'),'utf8');
+      const module = await import('data:text/javascript;base64,'+Buffer.from(source).toString('base64')+'#'+provider);
+      const factory=typeof module.default==='function'?module.default:module.default.server;
+      assert.deepEqual(await factory({directory:pathNative.join(directory,'unrelated')}),{});
+      const hooks = await factory({directory:nativeDirectory});
+      assert.equal(readAgentStatus(directory,record,true).data?.state,'idle');
+      const event = (type:string,properties:unknown)=>hooks.event({event:{type,properties}});
+      await event('session.status',{sessionID:'ses_other',status:{type:'busy'}});
+      assert.equal(readAgentStatus(directory,record,true).data?.state,'idle');
+      await event('session.status',{sessionID:'ses_exact',status:{type:'busy'}});
+      const clock = new AgentWorkClock(), working = readAgentStatus(directory,record,true);
+      assert.equal(working.data?.state,'working'); assert.ok(clock.observe(record,working)?.activeSince);
+      await event('session.idle',{sessionID:'ses_exact'});
+      const completed=readAgentStatus(directory,record,true);
+      assert.equal(completed.data?.state,'completed'); assert.ok(clock.observe(record,completed)?.endedAt);
+      if(provider==='opencode2') {
+        let admitted: ((properties:unknown)=>Promise<void>) | undefined;
+        let finish!: () => void;
+        const finishing = new Promise<void>(resolve => { finish=resolve; });
+        const cleanup=await module.default.setup({session:{hook:async(_name:string,callback:any)=>{admitted=callback;return{dispose(){}};}},event:{subscribe:async function*(){await finishing;yield {type:'session.execution.succeeded',data:{sessionID:'ses_exact'}};}}});
+        await admitted!({sessionID:'ses_exact'}); assert.equal(readAgentStatus(directory,record,true).data?.state,'working');
+        finish(); for(let i=0;i<8;i++)await Promise.resolve();
+        assert.equal(readAgentStatus(directory,record,true).data?.state,'completed');
+        await cleanup();
+      }
+      fsNative.writeFileSync(pathNative.join(plugins,'vade-agent-status.js'),'unrelated file');
+      assert.throws(()=>installOpenCodePlugin(provider,env),/unrelated/);
+      assert.equal(fsNative.readFileSync(pathNative.join(plugins,'vade-agent-status.js'),'utf8'),'unrelated file');
+    }
+  } finally { for(const key of keys){if(previous[key]===undefined)delete process.env[key];else process.env[key]=previous[key];} fsNative.rmSync(directory,{recursive:true,force:true}); }
+});
 import { codeBuddyEffortAcknowledgement } from '../providers/codeBuddySettings.js';
 
 test('workflow CodeBuddy reads exact native model effort metadata without prompts, tools or persistence', async () => {
@@ -69,6 +125,70 @@ test('new OpenCode effort initialization waits for the native prompt and uses th
   live.screen.settled = async () => { live.inputRevision++; };
   await assert.rejects(sessions.initializeOpenCodeVariant(record), /input changed/);
   assert.equal(applied.length, 1, 'Concurrent user input must prevent the setting command');
+});
+
+test('native prompt readiness bounds Kilo sidebar columns and recognizes the current CodeBuddy footer', async () => {
+  const screen = new TerminalScreen(() => {}, () => {});
+  try {
+    screen.resize(148, 32);
+    screen.write('\x1b[?1049h\x1b[2J\x1b[23;1H  ┃\x1b[23;110HModel Steps Cost\x1b[24;1H  ┃\x1b[24;110HNemotron 3 Ultra\x1b[25;1H  ┃\x1b[26;1H  ┃  Code auto · Native model Kilo Gateway\x1b[26;110Hproject:main\x1b[27;1H  ╹' + '▀'.repeat(100) + '\x1b[24;5H');
+    await screen.settled(); assert.equal(screen.openCodePromptReady(), true);
+    screen.write('\x1b[24;5Hdraft\x1b[24;5H'); await screen.settled(); assert.equal(screen.openCodePromptReady(), false);
+    screen.write('\x1b[?1049l\x1b[2J\x1b[20;1H─────────────────\x1b[21;1H>  \x1b[22;1H─────────────────\x1b[23;1H⏵⏵ bypass permissions on (meta+m to cycle)  ← for agents\x1b[21;3H');
+    await screen.settled(); assert.equal(screen.codeBuddyPromptReady(), true);
+    screen.write('\x1b[21;3Hexisting draft\x1b[21;3H'); await screen.settled(); assert.equal(screen.codeBuddyPromptReady(), false);
+    screen.write('\x1b[2J\x1b[HSelect effort\x1b[21;1H>  \x1b[23;1H← for agents\x1b[21;3H');
+    await screen.settled(); assert.equal(screen.codeBuddyPromptReady(), false);
+  } finally { screen.dispose(); }
+});
+
+test('CodeBuddy sends once from the current agents footer before hook status is available', async () => {
+  const screen=new TerminalScreen(()=>{},()=>{}),sessions=Object.create(AdeSessions.prototype) as any;
+  const record={provider:'codebuddy',id:'node',projectId:'project',cwd:process.cwd()},live={live:true,screen,inputRevision:0,start:0,buffer:''},writes:string[]=[];
+  const draw=(draft='')=>{const data='\x1b[2J\x1b[20;1H─────────────────\x1b[21;1H> '+draft+'\x1b[22;1H─────────────────\x1b[23;1H⏵⏵ bypass permissions on (meta+m to cycle)  ← for agents\x1b[21;'+(draft.length+3)+'H';live.buffer+=data;screen.write(data);};
+  Object.assign(sessions,{live:new Map([['node',live]]),sending:new Set(),store:{directory:process.cwd(),sessions:()=>[]},require:()=>record,status:()=>({data:null,meta:{availability:'unavailable'}}),command:async(_:unknown,message:{data:string})=>{writes.push(message.data);if(message.data.startsWith('\x1b[200~'))draw('hello');if(message.data==='\r')draw();}});
+  try{draw();await screen.settled();await sessions.send('project','node',{message:'hello'});assert.deepEqual(writes,['\x1b[200~hello\x1b[201~','\r']);}finally{screen.dispose();}
+});
+
+test('OpenCode family accepts its observed empty prompt before lifecycle hooks and preserves setup and draft guards', async () => {
+  for (const provider of ['opencode', 'opencode2', 'kilo'] as const) {
+    const screen = new TerminalScreen(() => {}, () => {}), sessions = Object.create(AdeSessions.prototype) as any;
+    const record = { provider, id: 'node', projectId: 'project', cwd: process.cwd() };
+    const live = { live: true, screen, inputRevision: 0, start: 0, buffer: '' }, writes: string[] = [];
+    let status: any = { data: null, meta: { availability: 'unavailable' } };
+    const render = async (draft = '', footer = 'Build auto · DeepSeek V4.1 Flash Free OpenCode') => {
+      screen.write('\x1b[?1049h\x1b[2J\x1b[18;1H┃\x1b[19;1H┃  ' + draft + '\x1b[20;1H┃\x1b[21;1H┃ ' + footer + '\x1b[22;1H╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀\x1b[19;4H');
+      await screen.settled();
+    };
+    Object.assign(sessions, { live: new Map([['node', live]]), sending: new Set(), store: { directory: process.cwd(), sessions: () => [] }, require: () => record,
+      status: () => status, command: async (_: unknown, message: { data: string }) => { writes.push(message.data); } });
+    try {
+      await render(); assert.equal(screen.openCodePromptReady(), true, provider);
+      await sessions.send('project', 'node', { message: 'hi' });
+      assert.deepEqual(writes, ['\x1b[200~hi\x1b[201~', '\r']);
+      assert.equal(sessions.handoffPromptReady('project', 'node'), true, provider);
+      status = { data: { state: 'unknown' }, meta: { availability: 'ready' } };
+      await sessions.send('project', 'node', { message: 'next', requireIdle: true });
+      assert.deepEqual(writes.slice(2), ['\x1b[200~next\x1b[201~', '\r']);
+      const count = writes.length;
+      for (const state of ['waiting', 'blocked', 'working']) {
+        status = { data: { state }, meta: { availability: 'ready' } };
+        await assert.rejects(sessions.send('project', 'node', { message: 'queued', requireIdle: true }), /empty, idle/);
+      }
+      status = { data: { state: 'waiting' }, meta: { availability: 'ready' } };
+      await assert.rejects(sessions.send('project', 'node', { message: 'must not approve' }), /needs input/);
+      status = { data: null, meta: { availability: 'unavailable' } };
+      await render('existing draft'); assert.equal(screen.openCodePromptReady(), false);
+      await assert.rejects(sessions.send('project', 'node', { message: 'must not overwrite' }), /empty agent prompt/);
+      await render('', 'Shell command'); assert.equal(screen.openCodePromptReady(), false);
+      await assert.rejects(sessions.send('project', 'node', { message: 'must not run shell' }), /empty agent prompt/);
+      screen.write('\x1b[2J\x1b[HSign in to continue\x1b[19;4H'); await screen.settled();
+      await assert.rejects(sessions.send('project', 'node', { message: 'must not answer setup' }), /empty agent prompt/);
+      await render(); live.live = false;
+      await assert.rejects(sessions.send('project', 'node', { message: 'stopped' }), /stopped/);
+      assert.equal(writes.length, count, 'Blocked cases must never write input');
+    } finally { screen.dispose(); }
+  }
 });
 
 test('Codex waits for the rendered paste capsule, sends Enter once and refuses a folder trust prompt', async () => {

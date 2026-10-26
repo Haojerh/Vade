@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
-import { renderToStaticMarkup } from 'react-dom/server';
+import { renderToStaticMarkup, renderToReadableStream } from 'react-dom/server';
 import { latestAgentMessage } from '../features/workflow/conversation';
 import { MessageMarkdown } from '../features/workflow/MessageMarkdown';
 import { ConversationHistory, mergeConversationMessages, mergeLiveConversation } from '../features/workflow/ConversationHistory';
@@ -15,6 +15,29 @@ import type { Node, Edge, NodeDetails as NodeDetailsType } from '../../shared/co
 import type { ConversationMessage } from '../../shared/contracts';
 import type { OrganizationConfig } from '../../shared/contracts';
 import { arrangeOrganization, connectionCreatesCycle } from '../features/organization/organizationGraph';
+import { deferHistoryRendering } from '../hooks/useHistoryRendering';
+
+test('history rendering measures real heights, follows replaced rows and releases observers', () => {
+  const previous = { ResizeObserver: globalThis.ResizeObserver, MutationObserver: globalThis.MutationObserver, CSS: globalThis.CSS };
+  let resize: (entries: any[]) => void = () => {}, mutate: () => void = () => {}, disconnected = 0;
+  const observed = new Set<unknown>();
+  class Resize { constructor(fn: typeof resize) { resize = fn; } observe(row: unknown) { observed.add(row); } unobserve(row: unknown) { observed.delete(row); } disconnect() { observed.clear(); disconnected++; } }
+  class Mutation { constructor(fn: typeof mutate) { mutate = fn; } observe() {} disconnect() { disconnected++; } }
+  Object.assign(globalThis, { ResizeObserver: Resize, MutationObserver: Mutation, CSS: { supports: () => true } });
+  const first = { style: { contentVisibility: '', containIntrinsicBlockSize: '' } }, second = { style: { contentVisibility: '', containIntrinsicBlockSize: '' } };
+  let rows = [first];
+  try {
+    const dispose = deferHistoryRendering({ querySelectorAll: () => rows } as unknown as HTMLElement)!;
+    assert.equal(first.style.contentVisibility, '', 'Never guess a height before a real measurement');
+    resize([{ target: first, contentRect: { height: 137 } }]);
+    assert.equal(first.style.containIntrinsicBlockSize, 'auto 137px');
+    assert.equal(first.style.contentVisibility, 'auto');
+    rows = [second]; mutate(); assert.ok(!observed.has(first)); assert.ok(observed.has(second));
+    resize([{ target: second, contentRect: { height: 241 } }]);
+    assert.equal(second.style.containIntrinsicBlockSize, 'auto 241px');
+    dispose(); assert.equal(disconnected, 2); assert.equal(second.style.contentVisibility, '');
+  } finally { Object.assign(globalThis, previous); }
+});
 
 test('workflow arrangement keeps fan-in dependencies and settings while separating execution stages', () => {
   const config: OrganizationConfig = { version: 1, enabled: true, isolatedWorktrees: true, nodes: ['review', 'frontend', 'backend'].map(id => ({ id, title: id, prompt: id, provider: 'codebuddy', model: 'deepseek-v4.1-flash', effort: 'high', x: 0, y: 0 })), edges: [{ source: 'frontend', target: 'review' }, { source: 'backend', target: 'review' }] };
@@ -506,7 +529,7 @@ test('NodeDetails displays loading state and avoids rendering stale data when de
   assert.ok(html.includes('modal-loading-state'), 'Loading state must be shown while matching details are loading');
 });
 
-test('NodeDetails does not render skeleton loading state when matching details exist even during background loading', () => {
+test('NodeDetails does not render skeleton loading state when matching details exist even during background loading', async () => {
   const matchingDetails = {
     node: {
       id: 'agent-1',
@@ -547,7 +570,7 @@ test('NodeDetails does not render skeleton loading state when matching details e
     },
   } as unknown as NodeDetailsType;
 
-  const html = renderToStaticMarkup(createElement(NodeDetails, {
+  const stream = await renderToReadableStream(createElement(NodeDetails, {
     projectId: 'proj',
     details: matchingDetails,
     loading: true,
@@ -559,6 +582,8 @@ test('NodeDetails does not render skeleton loading state when matching details e
     visibleSections: DEFAULT_VISIBLE_SECTIONS,
   }));
 
+  await stream.allReady;
+  const html = await new Response(stream).text();
   assert.ok(html.includes('Antigravity Session'));
   assert.ok(html.includes('Hello'));
   assert.ok(!html.includes('modal-loading-state'), 'Skeleton state must not be rendered when matching details already exist');

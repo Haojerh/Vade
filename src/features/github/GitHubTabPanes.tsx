@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { Icon } from '../../components/ui/Icon';
-import { CommitHistoryGraph } from './CommitHistoryGraph';
+const CommitHistoryGraph = lazy(() => import('./CommitHistoryGraph').then(module => ({ default: module.CommitHistoryGraph })));
 import type { useCommitGraph } from './useCommitGraph';
 import type {
   Commit,
@@ -131,7 +131,7 @@ export const CommitsTabPane: React.FC<CommitsTabPaneProps> = ({
       className="tab-pane"
     >
       {projectId ? (
-        <CommitHistoryGraph key={graph.key} observation={graph} showGraph={commitGraphEnabled} />
+        <Suspense fallback={<p role="status">Loading commit history…</p>}><CommitHistoryGraph key={graph.key} observation={graph} showGraph={commitGraphEnabled} /></Suspense>
       ) : (
         <>
           {renderGitHubSectionMeta(data?.commits, 'Commits')}

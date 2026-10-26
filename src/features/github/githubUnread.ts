@@ -1,6 +1,7 @@
 export interface UnreadHistory { seen: Set<string>; unread: Set<string> }
 
 const storagePrefix = 'orca-visualization:github-notifications:v1:';
+const commitStoragePrefix = 'orca-visualization:commit-reads:v1:';
 
 export function readUnreadHistory(key: string, storage?: Pick<Storage, 'getItem'>): UnreadHistory | undefined {
   try {
@@ -15,16 +16,6 @@ export function readUnreadHistory(key: string, storage?: Pick<Storage, 'getItem'
   } catch { return undefined; }
 }
 
-export function saveUnreadHistory(key: string, history: UnreadHistory, storage?: Pick<Storage, 'setItem'>): void {
-  try {
-    (storage ?? window.localStorage).setItem(storagePrefix + key, JSON.stringify({
-      version: 1, seen: [...history.seen], unread: [...history.unread],
-    }));
-  } catch {
-    // Private browsing or a full storage quota must not break in-memory tracking.
-  }
-}
-
 export function observeGitHubItems(previous: UnreadHistory | undefined, ids: string[]): UnreadHistory {
   if (!previous) return { seen: new Set(ids), unread: new Set() };
   return { seen: new Set([...previous.seen, ...ids]),
@@ -35,4 +26,16 @@ export function acknowledgeGitHubItem(previous: UnreadHistory, id: string): Unre
   const unread = new Set(previous.unread);
   unread.delete(id);
   return { ...previous, unread };
+}
+
+/** Read-only compatibility bridge for one-time import of browser-local commit reads. */
+export function readLegacyCommitReads(key: string, storage?: Pick<Storage, 'getItem'>): Set<string> {
+  try {
+    const raw = (storage ?? window.localStorage).getItem(commitStoragePrefix + key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed.version === 1 && Array.isArray(parsed.ids) && parsed.ids.every((id: unknown) => typeof id === 'string')) return new Set(parsed.ids);
+    }
+  } catch { /* Legacy storage is optional. */ }
+  return new Set();
 }

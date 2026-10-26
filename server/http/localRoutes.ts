@@ -9,6 +9,7 @@ import { createResponseHelpers, parseJsonBody } from './httpUtils.js';
 import { listProjectFolders } from '../runtime/projectFolders.js';
 import { addProject } from '../runtime/projects.js';
 import { projectShortcuts, runProjectShortcut, saveProjectShortcuts } from '../runtime/projectShortcuts.js';
+import { notificationScope, notificationState, updateNotificationState } from '../runtime/notificationState.js';
 
 function text(value: unknown, label: string, max = 100): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max || /[\x00-\x1f\x7f]/.test(value)) throw new CliError('INVALID_ARGUMENT', `Invalid ${label}`);
@@ -232,6 +233,17 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     if (pathname === '/api/resources') {
       requireMethod('GET'); queryKeys();
       sendJson(200, await runtime.resources.read(runtime.sessions.processRoots(), runtime.desktopMemory)); return;
+    }
+    if (pathname === '/api/notifications/state') {
+      if (method === 'POST') {
+        queryKeys(); sendJson(200, updateNotificationState(runtime.store, await body<import('../../shared/contracts.js').UpdateNotificationStateRequest>(['scope','action','ids','baseline','legacy'], 1_500_000))); return;
+      }
+      requireMethod('GET'); queryKeys('scopes');
+      const raw = query.get('scopes');
+      if (!raw || raw.length > 12000) throw new CliError('INVALID_ARGUMENT', 'Provide bounded notification scopes');
+      let scopes: unknown; try { scopes = JSON.parse(raw); } catch { throw new CliError('INVALID_ARGUMENT', 'Invalid notification scopes'); }
+      if (!Array.isArray(scopes) || !scopes.length || scopes.length > 32) throw new CliError('INVALID_ARGUMENT', 'Provide up to 32 notification scopes');
+      sendJson(200, { states: Object.fromEntries(scopes.map(scope => { const key=notificationScope(scope); return [key,notificationState(runtime.store,key)]; })) }); return;
     }
     if (pathname === '/api/inbox') {
       requireMethod('GET'); queryKeys();

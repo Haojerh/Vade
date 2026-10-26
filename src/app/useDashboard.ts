@@ -32,6 +32,7 @@ export interface UseDashboardReturn {
   nodeDetailsLoading: boolean;
   nodeDetailsError: string | null;
   refreshNodeDetails: () => void;
+  setConversationVisible: (visible: boolean) => void;
 
   // Snapshot & Graph
   snapshot: DashboardSnapshot | null;
@@ -79,6 +80,7 @@ export function useDashboard(): UseDashboardReturn {
     nodeGeneration,
     loadNodeDetails,
     refreshNodeDetails,
+    setConversationVisible,
   } = useNodeDetailsLoader({
     selectedProjectId,
     selectedNodeId,
@@ -332,6 +334,7 @@ export function useDashboard(): UseDashboardReturn {
     nodeDetailsLoading,
     nodeDetailsError,
     refreshNodeDetails,
+    setConversationVisible,
 
     snapshot,
     snapshotLoading,

@@ -8,6 +8,26 @@ import { Readable } from 'node:stream';
 import { LocalSpeech, speechModulePath, validateSpeechAudio } from './speech.js';
 import { speechModels } from './speechCatalog.js';
 
+test('idle speech unloads after one minute and cannot stop a newer recording or worker', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const service = new LocalSpeech('unused'), state = service as any;
+  let killed = 0;
+  const child = { kill: () => killed++ };
+  try {
+    state.child = child; state.warmed = 'model'; state.releaseWhenIdle();
+    t.mock.timers.tick(59999); assert.equal(killed, 0);
+    t.mock.timers.tick(1); assert.equal(killed, 1); assert.equal(state.warmed, undefined);
+    state.child = child; state.releaseWhenIdle(); state.active = { id: 'new-recording' };
+    t.mock.timers.tick(60000); assert.equal(killed, 1);
+    state.active = undefined; state.releaseWhenIdle(); state.child = { kill: () => killed += 10 };
+    t.mock.timers.tick(60000); assert.equal(killed, 1);
+    state.child = child; state.releaseWhenIdle();
+    state.pending.set(1, { resolve() {}, reject() {}, timer: setTimeout(() => {}, 120000) });
+    t.mock.timers.tick(60000); assert.equal(killed, 1);
+    state.pending.clear(); state.releaseWhenIdle(); t.mock.timers.tick(60000); assert.equal(killed, 2);
+  } finally { service.close(); }
+});
+
 test('installed speech resolves the unpacked addon independently of resources cwd and refuses outside fallbacks', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vade-packaged-speech-'));
   const resources = path.join(directory, 'resources'), application = path.join(resources, 'app.asar');

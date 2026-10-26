@@ -14,8 +14,15 @@ import { createServer } from '../http/api.js';
 const ids = ['01234567-1234-1234-1234-123456789abc', '11234567-1234-1234-1234-123456789abc', '21234567-1234-1234-1234-123456789abc'];
 function fixture() {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'vade-history-'));
-  const saved = [process.env.CODEX_HOME, process.env.CLAUDE_CONFIG_DIR, process.env.GEMINI_APPDATA_DIR];
-  process.env.CODEX_HOME = path.join(directory, 'codex'); process.env.CLAUDE_CONFIG_DIR = path.join(directory, 'claude'); process.env.GEMINI_APPDATA_DIR = path.join(directory, 'agy');
+  const keys = ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'CODEBUDDY_CONFIG_DIR', 'GEMINI_APPDATA_DIR', 'XDG_DATA_HOME', 'OPENCODE_DB', 'KILO_DB'] as const;
+  const saved = keys.map(key => process.env[key]);
+  process.env.CODEX_HOME = path.join(directory, 'codex');
+  process.env.CLAUDE_CONFIG_DIR = path.join(directory, 'claude');
+  process.env.CODEBUDDY_CONFIG_DIR = path.join(directory, 'codebuddy');
+  process.env.GEMINI_APPDATA_DIR = path.join(directory, 'agy');
+  process.env.XDG_DATA_HOME = path.join(directory, 'xdg-data');
+  process.env.OPENCODE_DB = path.join(directory, 'opencode.db');
+  process.env.KILO_DB = path.join(directory, 'kilo.db');
   const store = new AdeStore(path.join(directory, 'data'));
   const source = path.join(directory, 'source'), target = path.join(directory, 'target'); fs.mkdirSync(source); fs.mkdirSync(target);
   const project = store.register(source, 'Source project', 'folder'), other = store.register(target, 'Target project', 'folder');
@@ -41,7 +48,7 @@ function fixture() {
   fs.mkdirSync(path.join(process.env.GEMINI_APPDATA_DIR, 'conversations'), { recursive: true });
   const db = new DatabaseSync(path.join(process.env.GEMINI_APPDATA_DIR, 'conversations', `${ids[2]}.db`)); db.exec('CREATE TABLE trajectory_meta (cascade_id TEXT)'); db.prepare('INSERT INTO trajectory_meta VALUES (?)').run(ids[2]); db.close();
   write(path.join(process.env.GEMINI_APPDATA_DIR, 'history.jsonl'), [{ conversationId: ids[2], workspace: source }]);
-  return { directory, store, project, other, source, target, codexFile, write, async close(closeStore = true) { if (closeStore) store.close(); for (const [index, key] of ['CODEX_HOME', 'CLAUDE_CONFIG_DIR', 'GEMINI_APPDATA_DIR'].entries()) { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index]; } await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } };
+  return { directory, store, project, other, source, target, codexFile, write, async close(closeStore = true) { if (closeStore) store.close(); for (const [index, key] of keys.entries()) { if (saved[index] === undefined) delete process.env[key]; else process.env[key] = saved[index]; } await fs.promises.rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } };
 }
 
 test('provider history indexes public messages, exact identities, scopes and project totals', async () => {

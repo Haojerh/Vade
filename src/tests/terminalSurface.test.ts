@@ -1,6 +1,32 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { whenTerminalSurfaceReady } from '../features/workflow/terminalSurface';
+import { observeTerminalVisibility } from '../features/workflow/terminalVisibility';
+
+test('terminal visibility pauses hidden or collapsed surfaces and disposes every observer', () => {
+  const previous = { ResizeObserver: globalThis.ResizeObserver, IntersectionObserver: globalThis.IntersectionObserver };
+  const page = new EventTarget() as EventTarget & { hidden: boolean }; page.hidden = false;
+  let width = 320, intersect: (entries: any[]) => void = () => {}, resize: () => void = () => {}, disposed = 0;
+  class Resize { constructor(callback: () => void) { resize = callback; } observe() {} disconnect() { disposed++; } }
+  class Intersection { constructor(callback: (entries: any[]) => void) { intersect = callback; } observe() {} disconnect() { disposed++; } }
+  Object.assign(globalThis, { ResizeObserver: Resize, IntersectionObserver: Intersection });
+  const surface = { ownerDocument: page, isConnected: true, get clientWidth() { return width; }, clientHeight: 200 } as unknown as HTMLElement;
+  const states: boolean[] = [];
+  try {
+    const dispose = observeTerminalVisibility(surface, value => states.push(value));
+    page.hidden = true; page.dispatchEvent(new Event('visibilitychange'));
+    page.dispatchEvent(new Event('visibilitychange'));
+    page.hidden = false; page.dispatchEvent(new Event('visibilitychange'));
+    width = 0; resize(); width = 320; resize();
+    intersect([{ target: surface, isIntersecting: false }]);
+    page.hidden = true; page.dispatchEvent(new Event('visibilitychange'));
+    page.hidden = false; page.dispatchEvent(new Event('visibilitychange'));
+    intersect([{ target: surface, isIntersecting: true }]);
+    assert.deepEqual(states, [true, false, true, false, true, false, true]);
+    dispose(); page.hidden = true; page.dispatchEvent(new Event('visibilitychange')); resize();
+    assert.equal(states.length, 7); assert.equal(disposed, 2);
+  } finally { Object.assign(globalThis, previous); }
+});
 
 async function fixture(run: (state: { surface: HTMLElement; dialog: { open: boolean }; show: () => void; finish: () => void; frame: () => void; tick: () => Promise<void> }) => Promise<void>) {
   const previous = { requestAnimationFrame: globalThis.requestAnimationFrame, cancelAnimationFrame: globalThis.cancelAnimationFrame, ResizeObserver: globalThis.ResizeObserver, MutationObserver: globalThis.MutationObserver };

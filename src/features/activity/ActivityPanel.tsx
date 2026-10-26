@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useHistoryRendering } from '../../hooks/useHistoryRendering';
 import type { Activity } from '../../../shared/contracts';
 
 interface ActivityPanelProps {
@@ -11,6 +12,8 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
   onSelectNode,
 }) => {
   const items = activity ?? [];
+  const list = useRef<HTMLOListElement>(null);
+  useHistoryRendering(list, items.length > 80);
 
   const formatTime = (iso: string) => {
     try {
@@ -40,7 +43,7 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
             No observed activity events in the current session window. Initial connection serves as a baseline.
           </div>
         ) : (
-          <ol className="activity-list" role="list">
+          <ol ref={list} className="activity-list" role="list">
             {items.map((act) => {
               const kindLabel =
                 act.kind === 'task-status'
@@ -50,7 +53,7 @@ export const ActivityPanel: React.FC<ActivityPanelProps> = ({
                   : 'Output';
 
               return (
-                <li key={act.id} className="activity-row">
+                <li key={act.id} data-history-row className="activity-row">
                   <div className="activity-meta">
                     <span className={`badge badge-activity-${act.kind}`}>
                       {kindLabel}

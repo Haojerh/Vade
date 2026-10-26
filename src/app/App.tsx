@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { Suspense, lazy, useState, useEffect, useRef, useCallback } from 'react';
 import { RightSidebarTabs } from './RightSidebarTabs';
 import { ActivitySection } from '../features/sourceControl/ActivitySection';
 import { SourceControlPanel } from '../features/sourceControl/SourceControlPanel';
@@ -17,7 +17,7 @@ import { GitHubPanel } from '../features/github/GitHubPanel';
 import { ResizableSidebar } from '../components/ui/ResizableSidebar';
 import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
 import { TopBar } from './TopBar';
-import { SettingsPage } from './SettingsPage';
+const SettingsPage = lazy(() => import('./SettingsPage').then(module => ({ default: module.SettingsPage })));
 import { BottomPanel } from './BottomPanel';
 import { fetchPrerequisites } from '../api/client';
 import type { InboxItem, PrerequisitesStatus } from '../../shared/contracts';
@@ -36,6 +36,11 @@ import { StatusBar } from './StatusBar';
 import { DashboardActions } from './DashboardActions';
 
 export const App: React.FC = () => {
+  useEffect(() => {
+    const visibility = () => document.documentElement.classList.toggle('app-page-hidden', document.hidden);
+    document.addEventListener('visibilitychange', visibility); visibility();
+    return () => { document.removeEventListener('visibilitychange', visibility); document.documentElement.classList.remove('app-page-hidden'); };
+  }, []);
   const [pageHash, setPageHash] = useState(() => window.location.hash);
   useEffect(() => {
     const changed = () => {
@@ -65,6 +70,7 @@ export const App: React.FC = () => {
     nodeDetailsLoading,
     nodeDetailsError,
     refreshNodeDetails,
+    setConversationVisible,
 
     snapshot,
     snapshotLoading,
@@ -160,7 +166,7 @@ export const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    const check = () => { void checkPrerequisitesStatus(); };
+    const check = () => { if (!document.hidden) void checkPrerequisitesStatus(); };
     const visible = () => { if (document.visibilityState === 'visible') check(); };
     check();
     const timer = setInterval(check, 3000);
@@ -251,14 +257,14 @@ export const App: React.FC = () => {
     );
   }
 
-  if (pageHash.startsWith('#/settings')) return <>{notificationPopups}<SettingsPage
+  if (pageHash.startsWith('#/settings')) return <>{notificationPopups}<Suspense fallback={<p role="status">Loading settings…</p>}><SettingsPage
     section={pageHash.split('/')[2] ?? 'general'} onBack={() => { window.location.hash = ''; }}
     theme={theme} onToggleTheme={toggleTheme} cardStateColors={cardStateColors} onToggleCardStateColors={setCardStateColors}
     orchestrationSeparated={orchestrationSeparated} onToggleOrchestrationSeparated={setOrchestrationSeparated}
     commitGraphEnabled={commitGraphEnabled} onToggleCommitGraph={setCommitGraphEnabled}
     toolActivityEnabled={toolActivityEnabled} onToggleToolActivity={setToolActivityEnabled}
     chatToolCallsEnabled={chatToolCallsEnabled} onToggleChatToolCalls={setChatToolCallsEnabled}
-  /></>;
+  /></Suspense></>;
 
   return (
     <div
@@ -471,7 +477,8 @@ export const App: React.FC = () => {
       {/* 4. Native Dialog Modal for Node Inspection */}
       <InboxPanel isOpen={inboxModal.present} isClosing={inboxModal.closing} onClose={inboxModal.close}
         items={inbox.items} handled={inbox.handled} onHandle={inbox.markHandled} onClear={inbox.clearItems} loading={inbox.loading}
-        issue={inbox.error || inbox.section?.meta.issue?.message || null} partial={Boolean(inbox.section?.meta.partial)}
+        issue={inbox.error || inbox.section?.meta.issue?.message || null} notificationIssue={inbox.notificationError}
+        onRetryNotifications={inbox.retryNotificationChanges} partial={Boolean(inbox.section?.meta.partial)}
         onRefresh={() => { void inbox.refresh(); }} onOpenAgent={item => {
           if (!item.nodeId) return;
           pendingInboxItem.current = item;
@@ -488,6 +495,7 @@ export const App: React.FC = () => {
         onClose={() => setSelectedNodeId(null)}
         onRefresh={refreshNodeDetails}
         onSessionChange={refreshAll}
+        onConversationVisibilityChange={setConversationVisible}
         handoffEnabled={prerequisites?.runtime === 'ade'}
         onOpenSession={nodeId => setSelectedNodeId(nodeId)}
         visibleSections={visibleSections}

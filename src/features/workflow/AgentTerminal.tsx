@@ -8,6 +8,7 @@ import { isTerminalReply, isTerminalClipboardShortcut } from './terminalInput';
 import { Icon } from '../../components/ui/Icon';
 import { attachTerminalTouch } from './terminalTouch';
 import { whenTerminalSurfaceReady } from './terminalSurface';
+import { observeTerminalVisibility } from './terminalVisibility';
 
 export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, streamPath, setupLabel = 'Installation' }: { projectId: string; nodeId: string; provider?: string; onStatusChange?: () => void; streamPath?: string; setupLabel?: string }) {
   const statusChange = useRef(onStatusChange); statusChange.current = onStatusChange;
@@ -85,7 +86,17 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     } catch { /* xterm's default renderer remains available when WebGL is unavailable. */ }
     let cursor = 0, active = true, failed = false, initialPage = true, lastLive: boolean | undefined;
     let socket: WebSocket | null = null, frame = 0, inputTimer: ReturnType<typeof setTimeout> | undefined;
-    let queuedInput = '', sentSize = '';
+    let queuedInput = '', sentSize = '', visible = !document.hidden;
+    let deferredOutput: string | null = null, deferredAck: number | null = null;
+    let claimOnNextPage = false;
+    const pause = () => {
+      // Keep the ordered input connection alive. Withhold output credit so the
+      // server sends at most one bounded page while this view is hidden.
+      cancelAnimationFrame(frame);
+      terminal.options.cursorBlink = false;
+      terminal.blur();
+      initialPage = false; // Returning to a view must never resume an exited agent.
+    };
     const closedTab = (event: Event) => {
       const detail = (event as CustomEvent<{ projectId: string; nodeId: string }>).detail;
       if (detail?.projectId !== projectId || detail.nodeId !== nodeId) return;
@@ -101,7 +112,7 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     };
     setError(null); setLive(null);
     const fitTerminal = (claim = false) => {
-      if (!active || document.hidden || !host.current?.clientWidth || !host.current?.clientHeight) return;
+      if (!active || !visible || document.hidden || !host.current?.clientWidth || !host.current?.clientHeight) return;
       terminal.resize(terminal.cols, terminal.rows); // Re-measure if first opened while hidden.
       const dimensions = fit.proposeDimensions();
       if (!dimensions) return;
@@ -110,7 +121,7 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
       try { send({ type: 'resize', cols, rows }); sentSize = size; } catch (error) { fail(error); }
     };
     const input = terminal.onData(data => {
-      if (failed || !active || isTerminalReply(data)) return;
+      if (failed || !active || !visible || isTerminalReply(data)) return;
       fitTerminal(true);
       queuedInput += data;
       if (queuedInput.length > 262144) { fail(new Error('Terminal input is too large. Paste smaller sections.')); return; }
@@ -121,15 +132,18 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
           // One ordered socket replaces one HTTP round trip per keystroke. Never replay input.
           while (queuedInput) { const data = queuedInput.slice(0, 16384); queuedInput = queuedInput.slice(data.length); send({ type: 'input', data }); }
         } catch (error) { fail(error); }
+        if (!visible) pause();
       }, 4);
     });
     const connect = () => {
+      if (!active || failed || !visible || socket) return;
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const current = new WebSocket(`${protocol}//${location.host}${streamPath ?? `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/terminal-stream`}?cursor=${cursor}`);
       socket = current; sentSize = '';
       current.onopen = () => { /* Restore the host-sized screen before asking the PTY to resize. */ };
       current.onmessage = async event => {
         if (!active || failed || socket !== current) return;
+        if (!visible) { deferredOutput = event.data; return; }
         try {
           const message = JSON.parse(event.data) as TerminalServerMessage;
           if (message.type === 'error') throw new Error(message.message);
@@ -139,7 +153,8 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
           if (page.cols && page.rows && (terminal.cols !== page.cols || terminal.rows !== page.rows)) terminal.resize(page.cols, page.rows);
           if (page.data) await new Promise<void>(resolve => terminal.write(page.data, resolve));
           if (!active || socket !== current) return;
-          fitTerminal(); terminal.refresh(0, terminal.rows - 1);
+          fitTerminal(claimOnNextPage); claimOnNextPage = false;
+          if (visible) terminal.refresh(0, terminal.rows - 1);
           cursor = page.cursor; setLive(page.live); setResumable(!streamPath && Boolean(page.resumable)); setRestartable(!streamPath && Boolean(page.restartable));
           if (lastLive !== page.live) { lastLive = page.live; statusChange.current?.(); }
           const autoResume = !streamPath && initialPage && !page.live && page.recoverable;
@@ -150,7 +165,8 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
               await resumeTerminal(projectId, nodeId);
               if (active) { cursor = 0; terminal.reset(); connect(); }
             } finally { if (active) setResuming(false); }
-          } else send({ type: 'ack', cursor });
+          } else if (visible) send({ type: 'ack', cursor });
+          else deferredAck = cursor;
         } catch (error) { fail(error); }
       };
       current.onclose = event => {
@@ -173,8 +189,25 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     const surface = host.current;
     fitTerminal();
     if (!window.matchMedia('(pointer: coarse)').matches) terminal.focus();
-    connect();
-    return () => { active = false; window.removeEventListener('ade:session-closed', closedTab); window.removeEventListener('focus', claimViewport); document.removeEventListener('visibilitychange', claimViewport); surface.removeEventListener('pointerdown', claimViewport, true); surface.removeEventListener('wheel', claimViewport, true); clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); disposeTouch(); terminal.dispose(); };
+    const disposeVisibility = observeTerminalVisibility(surface, next => {
+      visible = next;
+      if (!next) pause();
+      else if (active && !failed) {
+        terminal.options.cursorBlink = true;
+        if (deferredOutput !== null && socket) {
+          const data = deferredOutput; deferredOutput = null;
+          claimOnNextPage = true;
+          socket.onmessage?.call(socket, new MessageEvent('message', { data }));
+        } else {
+          connect(); fitTerminal(true); terminal.refresh(0, terminal.rows - 1);
+          if (deferredAck !== null) {
+            const acknowledged = deferredAck; deferredAck = null;
+            try { send({ type: 'ack', cursor: acknowledged }); } catch (error) { fail(error); }
+          }
+        }
+      }
+    });
+    return () => { active = false; disposeVisibility(); window.removeEventListener('ade:session-closed', closedTab); window.removeEventListener('focus', claimViewport); document.removeEventListener('visibilitychange', claimViewport); surface.removeEventListener('pointerdown', claimViewport, true); surface.removeEventListener('wheel', claimViewport, true); clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); disposeTouch(); terminal.dispose(); };
   }, [projectId, nodeId, retry, streamPath, provider, surfaceReady]);
   return <section className="agent-terminal" aria-label="Agent terminal" aria-busy={live === null && !error}>
     {error && <div className="panel-alert alert-error" role="alert">{error} <button className="btn btn-secondary btn-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button><span> Inspect the terminal before repeating input.</span></div>}

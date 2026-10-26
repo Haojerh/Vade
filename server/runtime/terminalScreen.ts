@@ -68,9 +68,10 @@ export class TerminalScreen {
       const border = /^(\s*)╹▀{3,}/.exec(textAt(bottom));
       if (!border) continue;
       const column = border[1].length;
+      const right = border[0].length;
       const content = (row: number): string | null => {
         const text = textAt(row);
-        return text.slice(0, column).trim() === '' && text[column] === '┃' ? text.slice(column + 1).trim() : null;
+        return text.slice(0, column).trim() === '' && text[column] === '┃' ? text.slice(column + 1, right).trim() : null;
       };
       const footer = content(bottom - 1);
       if (!footer || /^shell\b/i.test(footer) || !/^\S+\s+\S/.test(footer)) return false;
@@ -88,8 +89,8 @@ export class TerminalScreen {
   }
   /** Native composer placeholders are dim; typed text must never be overwritten. */
   codeBuddyPromptReady(): boolean {
-    const screen = this.text() ?? '';
-    return /\? for shortcuts/.test(screen) && !/(?:Esc to cancel|Select model|Select effort|Keyboard:.*(?:Select|Navigate))/i.test(screen)
+    const screen = this.viewportText();
+    return /\? for shortcuts|← for agents/.test(screen) && !/(?:Esc to cancel|Select model|Select effort|Keyboard:.*(?:Select|Navigate))/i.test(screen)
       && this.composerEmpty(false, true);
   }
 

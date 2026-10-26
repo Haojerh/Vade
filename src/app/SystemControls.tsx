@@ -53,7 +53,6 @@ export function SystemControls({ resources, children }: { resources: AppResource
   useEffect(() => {
     if (!resources || document.hidden) return;
     let closed = false;
-    void readDetails().then(value => { if (!closed) setDetails(value); }).catch(() => {});
     if (Date.now() - portsReadAt > 15000) void readPorts().then(value => { if (!closed) setListeners(value); }).catch(() => {});
     return () => { closed = true; };
   }, [resources?.observedAt]);
@@ -69,7 +68,8 @@ export function SystemControls({ resources, children }: { resources: AppResource
       } catch (error) { if (!abort.signal.aborted) setError((error as Error).message); } finally { busy = false; }
     };
     void read(); const timer = setInterval(() => void read(), 5000);
-    return () => { abort.abort(); clearInterval(timer); };
+    document.addEventListener('visibilitychange', read);
+    return () => { abort.abort(); clearInterval(timer); document.removeEventListener('visibilitychange', read); };
   }, [memory.present, ports.present]);
   async function stop() {
     const port = confirm.data; if (!port || stopping) return;

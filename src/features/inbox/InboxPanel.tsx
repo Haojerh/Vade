@@ -15,6 +15,8 @@ interface InboxPanelProps {
   onClear?: (ids: string[]) => void;
   loading: boolean;
   issue: string | null;
+  notificationIssue?: string | null;
+  onRetryNotifications?: () => void;
   partial: boolean;
   onRefresh: () => void;
   onOpenAgent: (item: InboxItem) => void;
@@ -41,6 +43,7 @@ export function InboxPanel(props: InboxPanelProps) {
       <button className="inbox-handle-all" disabled={!items.length} onClick={() => showHandled ? props.onClear?.(items.map(item => item.id)) : props.onHandle(unread.map(item => item.id))}>{showHandled ? 'Clear All' : 'Mark all handled'}</button>
     </div>
     {props.issue && <p className="inbox-notice" role="status">{props.issue}</p>}
+    {props.notificationIssue && <div className="inbox-notice" role="alert">{props.notificationIssue}{props.onRetryNotifications && <button type="button" className="btn btn-secondary btn-xs" onClick={props.onRetryNotifications}>Retry</button>}</div>}
     <div className="inbox-results" aria-busy={props.loading}>
       {!items.length && <div className="inbox-empty"><Icon name="check" size={24} /><h3>{props.loading ? 'Checking results…' : props.issue ? 'Results unavailable' : showHandled ? 'No handled results' : 'You’re all caught up'}</h3><p>{props.issue ? 'Try refreshing the inbox.' : 'New agent and task results appear here.'}</p></div>}
       <ul>{items.map(item => <li key={item.id} className={`inbox-row result-${item.outcome}`}>

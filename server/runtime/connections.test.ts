@@ -42,7 +42,9 @@ test('provider account detection skips GitHub probes and shares concurrent reads
   assert.equal(probes, 0);
   assert.equal(first, second);
   assert.equal(first.data?.connections.some(connection => connection.id === 'github'), false);
-  assert.equal(first.data?.connections.length, 3);
+  assert.deepEqual(first.data?.connections.map(connection => connection.id), [
+    'codex', 'claude', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'antigravity',
+  ]);
 });
 
 test('quota parsers preserve zero, distinguish unknown from zero, and use structured disabled pool evidence', () => {
@@ -92,17 +94,25 @@ test('native quota reads deduplicate, preserve last good observations on errors,
 test('Antigravity usage probe gates old CLI versions and disables the background updater', async () => {
   const calls: string[][] = [];
   let version = '1.1.10', now = 1900000000000;
+  const access = mock.method(fs, 'access', async () => { throw Object.assign(new Error('not found'), { code: 'ENOENT' }); });
   const runner: CommandRunner = async (_executable, args, options) => {
     calls.push(args);
     assert.equal(options?.env?.AGY_CLI_DISABLE_AUTO_UPDATE, 'true');
     return { exitCode: 0, stderr: '', stdout: args[0] === '--version' ? version : JSON.stringify({ command: { name: 'usage', data: { groups: [{ name: 'Pool', buckets: [{ remaining_fraction: .5 }] }] } } }) };
   };
-  const service = new LocalConnections(runner, { credentials: async () => [null, null], resolve: p => p === 'antigravity' ? { executable: 'agy', args: [] } : null, now: () => now });
-  await service.usage(); assert.deepEqual(calls, [['--version']]);
-  version = '1.2.11'; now += 11000;
-  const reading = await service.usage();
-  assert.deepEqual(calls.at(-1), ['-p', '/usage', '--output-format', 'json', '--print-timeout', '20s']);
-  assert.equal(reading.data?.providers[2].windows[0].usedPercent, 50);
+  try {
+    const service = new LocalConnections(runner, { credentials: async () => [null, null], resolve: p => p === 'antigravity' ? { executable: 'agy', args: [] } : null, now: () => now });
+    let reading = await service.usage();
+    while (reading.data?.pendingProviders?.length) reading = await service.usage();
+    assert.deepEqual(calls, [['--version']]);
+    version = '1.2.11'; now += 61000;
+    reading = await service.usage();
+    while (reading.data?.pendingProviders?.length) reading = await service.usage();
+    assert.deepEqual(calls.at(-1), ['-p', '/usage', '--output-format', 'json', '--print-timeout', '20s']);
+    assert.equal(reading.data?.providers.find(provider => provider.provider === 'antigravity')?.windows[0].usedPercent, 50);
+  } finally {
+    access.mock.restore();
+  }
 });
 
 test('GitHub detection uses fixed auth metadata and excludes private account fields', async () => {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import type { DashboardSnapshot } from '../../shared/contracts';
 import { fetchSnapshot, subscribeProjectEvents, withoutClosedTabs } from '../api/client';
+import { useAutomaticKanban } from '../features/kanban/kanbanPreferences';
 
 export interface UseSnapshotSubscriptionProps {
   selectedProjectId: string | null;
@@ -28,6 +29,7 @@ export function useSnapshotSubscription({
   selectedRunId,
   onSnapshotArrived,
 }: UseSnapshotSubscriptionProps): UseSnapshotSubscriptionReturn {
+  const keepAliveWhenHidden = useAutomaticKanban();
   const [snapshot, setSnapshot] = useState<DashboardSnapshot | null>(null);
   const [snapshotLoading, setSnapshotLoading] = useState<boolean>(false);
   const [snapshotError, setSnapshotError] = useState<string | null>(null);
@@ -56,6 +58,7 @@ export function useSnapshotSubscription({
   // Staleness watchdog (marks stale after 15s without successful observation)
   useEffect(() => {
     const interval = setInterval(() => {
+      if (document.hidden) return;
       if (!lastGraphObservedAtRef.current) {
         setIsLocallyStale(true);
         return;
@@ -131,8 +134,10 @@ export function useSnapshotSubscription({
         sseCleanup = null;
       }
 
+      let polling = false;
       const poll = async () => {
-        if (cancelled || currentGen !== selectionGeneration.current) return;
+        if (cancelled || polling || (document.hidden && !keepAliveWhenHidden) || currentGen !== selectionGeneration.current) return;
+        polling = true;
         try {
           const snap = await fetchSnapshot(selectedProjectId, selectedRunId);
           onFreshSnapshot(snap);
@@ -140,7 +145,7 @@ export function useSnapshotSubscription({
           if (!cancelled && currentGen === selectionGeneration.current) {
             setSnapshotError(err.message || 'Snapshot polling failed');
           }
-        }
+        } finally { polling = false; }
       };
 
       poll();
@@ -162,6 +167,7 @@ export function useSnapshotSubscription({
             startPollingFallback();
           }
         },
+        keepAliveWhenHidden,
       );
     } catch {
       startPollingFallback();
@@ -173,7 +179,7 @@ export function useSnapshotSubscription({
       if (sseCleanup) sseCleanup();
       if (pollingTimer) clearInterval(pollingTimer);
     };
-  }, [selectedProjectId, selectedRunId]);
+  }, [selectedProjectId, selectedRunId, keepAliveWhenHidden]);
 
   return {
     snapshot,

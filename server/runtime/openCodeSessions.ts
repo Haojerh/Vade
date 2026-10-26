@@ -120,12 +120,30 @@ async function withOpenCodeServer<T>(resolved: { executable: string; args: strin
   }
 }
 
-// Process-local plugin configuration preserves the user's plugins and permissions.
+// Native status plugins are fenced to the owned launch environment.
 // Only the exact root session can publish status with the current launch token.
 export function openCodePlugin(directory: string): string {
   const file = path.join(directory, 'ade-opencode-status.mjs');
   fs.writeFileSync(file, OPEN_CODE_PLUGIN, { mode: 0o600 });
   return pathToFileURL(file).href;
+}
+/** Native v2 ignores the legacy inline plugin list. A managed drop-in is
+ * inert outside a launch carrying our exact session, cwd and token. */
+export function installOpenCodePlugin(provider: 'opencode' | 'opencode2' | 'kilo', env: NodeJS.ProcessEnv): void {
+  const name = provider === 'kilo' ? 'kilo' : 'opencode';
+  const configured = env[provider === 'kilo' ? 'KILO_CONFIG_DIR' : 'OPENCODE_CONFIG_DIR'];
+  const root = configured || path.join(env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), name);
+  if (!path.isAbsolute(root)) throw new CliError('INVALID_ARGUMENT', 'Provider configuration directory must be absolute');
+  const plugins = path.join(root, 'plugins'), file = path.join(plugins, 'vade-agent-status.js');
+  const marker = '// Vade managed native status plugin\n';
+  for (const candidate of [root, plugins, file]) {
+    try { if (fs.lstatSync(candidate).isSymbolicLink()) throw new CliError('INVALID_ARGUMENT', 'Provider status plugin cannot follow a symbolic link'); }
+    catch (error: any) { if (error?.code !== 'ENOENT') throw error; }
+  }
+  if (fs.existsSync(file) && (!fs.statSync(file).isFile() || fs.statSync(file).size > 65536 || !fs.readFileSync(file, 'utf8').startsWith(marker))) throw new CliError('INVALID_ARGUMENT', 'An unrelated provider plugin occupies the Vade status filename');
+  fs.mkdirSync(plugins, { recursive: true, mode: 0o700 });
+  const source = marker + OPEN_CODE_PLUGIN;
+  if (!fs.existsSync(file) || fs.readFileSync(file, 'utf8') !== source) fs.writeFileSync(file, source, { mode: 0o600 });
 }
 const OPEN_CODE_PLUGIN = String.raw`
 import fs from 'node:fs';
@@ -133,7 +151,8 @@ import path from 'node:path';
 const factory = async (context) => {
   const env = process.env; let active = false, outcome = false;
   const normalize = value => { const result=path.resolve(value); return process.platform==='win32' ? result.toLowerCase() : result; };
-  if (typeof context?.directory !== 'string' || !env.ADE_STATUS_CWD || normalize(context.directory) !== normalize(env.ADE_STATUS_CWD)) return {};
+  const roots = [env.ADE_STATUS_CWD, env.ADE_STATUS_SOURCE_CWD].filter(value => typeof value === 'string' && path.isAbsolute(value));
+  if (typeof context?.directory !== 'string' || !env.ADE_STATUS_CWD || !roots.some(root => normalize(context.directory) === normalize(root))) return {};
   const publish = (state, event, attention) => {
     if (!env.ADE_STATUS_FILE || !env.ADE_STATUS_TOKEN || !env.ADE_STATUS_SESSION) return;
     const temporary = env.ADE_STATUS_FILE + '.' + process.pid + '.tmp';
@@ -173,5 +192,5 @@ const setup = async context => {
   })().catch(() => {});
   return async () => { controller.abort(); try { await registration?.dispose?.(); } finally { await consuming; } };
 };
-export default process.env.ADE_OPENCODE_PLUGIN_API === 'v2' ? { id: 'ade-opencode-status', setup, server: factory } : factory;
+export default process.env.ADE_OPENCODE_PLUGIN_API === 'v1' ? factory : { id: 'ade-opencode-status', setup, server: factory };
 `;

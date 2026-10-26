@@ -63,10 +63,13 @@ export function useGitHubActivity({ selectedProjectId, query = REPOSITORY_QUERY 
   }, [selectedProjectId, query]);
 
   useEffect(() => {
-    loadGitHub();
-    const interval = setInterval(loadGitHub, 60000);
+    const visible = () => { if (!document.hidden) void loadGitHub(); };
+    visible();
+    const interval = setInterval(visible, 60000);
+    document.addEventListener('visibilitychange', visible);
     return () => {
       clearInterval(interval);
+      document.removeEventListener('visibilitychange', visible);
       if (githubAbortRef.current) {
         githubAbortRef.current.abort();
       }

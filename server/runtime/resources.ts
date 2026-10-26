@@ -19,9 +19,16 @@ export class ResourceReader {
   private cached?: { key: string; at: number; value: AppResources };
   private pending?: Promise<ProcessMemory[]>;
   private rows?: { at: number; value: ProcessMemory[] };
+  private summaryRows?: { at: number; value: ProcessMemory[] };
+  private summaryPending?: Promise<ProcessMemory[]>;
   private cpu = new Map<number, { at: number; seconds: number; startedAt?: string }>();
-  async snapshot(force = false): Promise<ProcessMemory[]> {
+  async snapshot(force = false, detailed = true): Promise<ProcessMemory[]> {
     if (!force && this.rows && Date.now() - this.rows.at < 5000) return this.rows.value;
+    if (!detailed) {
+      if (!force && this.summaryRows && Date.now() - this.summaryRows.at < 5000) return this.summaryRows.value;
+      if (!this.summaryPending) this.summaryPending = this.collect(false).then(value => { this.summaryRows = { at: Date.now(), value }; return value; }).finally(() => { this.summaryPending = undefined; });
+      return this.summaryPending;
+    }
     if (!this.pending) this.pending = this.collect().then(value => { this.rows = { at: Date.now(), value }; return value; }).finally(() => { this.pending = undefined; });
     return this.pending;
   }
@@ -45,7 +52,7 @@ export class ResourceReader {
     const allRoots = [...new Set([process.pid, ...roots, ...liveDesktop?.pids ?? []])].sort((a, b) => a - b), key = allRoots.join(':');
     if (this.cached?.key === key && Date.now() - this.cached.at < 5000) return this.cached.value;
     try {
-      const rows = await this.snapshot();
+      const rows = await this.snapshot(false, false);
       if (!rows.some(row => row.pid === process.pid)) throw new Error('Backend missing from process snapshot');
       const memory = processTreeMemory(rows, allRoots);
       const value: AppResources = { ...memory, scope: liveDesktop?.pids?.length ? 'desktop-tree' : 'backend-tree', observedAt: new Date().toISOString() };
@@ -54,17 +61,19 @@ export class ResourceReader {
       return { memoryBytes: liveDesktop?.bytes ?? process.memoryUsage().rss, scope: liveDesktop ? 'desktop-app' : 'backend', observedAt: new Date().toISOString() };
     }
   }
-  private async collect(): Promise<ProcessMemory[]> {
+  private async collect(detailed = true): Promise<ProcessMemory[]> {
     const windows = process.platform === 'win32';
+    const columns = '@{n="pid";e={$_.ProcessId}},@{n="parent";e={$_.ParentProcessId}},@{n="bytes";e={[double]$_.WorkingSetSize}}';
+    const details = ',@{n="name";e={$_.Name}},@{n="commandLine";e={if($_.CommandLine){$_.CommandLine.Substring(0,[Math]::Min(1024,$_.CommandLine.Length))}}},@{n="startedAt";e={$_.CreationDate.ToUniversalTime().Ticks.ToString()}},@{n="privateBytes";e={[double]$_.PrivatePageCount}},@{n="cpuSeconds";e={([double]$_.KernelModeTime+[double]$_.UserModeTime)/10000000}}';
     const command = promisify(execFile)(windows ? 'powershell.exe' : 'ps', windows
-      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', 'Get-CimInstance Win32_Process | Select-Object @{n="pid";e={$_.ProcessId}},@{n="parent";e={$_.ParentProcessId}},@{n="bytes";e={[double]$_.WorkingSetSize}},@{n="name";e={$_.Name}},@{n="commandLine";e={if($_.CommandLine){$_.CommandLine.Substring(0,[Math]::Min(1024,$_.CommandLine.Length))}}},@{n="startedAt";e={$_.CreationDate.ToUniversalTime().Ticks.ToString()}},@{n="privateBytes";e={[double]$_.PrivatePageCount}},@{n="cpuSeconds";e={([double]$_.KernelModeTime+[double]$_.UserModeTime)/10000000}} | ConvertTo-Json -Compress']
-      : ['-axo', 'pid=,ppid=,rss=,comm=,args='], { windowsHide: true, timeout: 5000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });
+      ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', `Get-CimInstance Win32_Process | Select-Object ${columns}${detailed ? details : ''} | ConvertTo-Json -Compress`]
+      : ['-axo', detailed ? 'pid=,ppid=,rss=,comm=,args=' : 'pid=,ppid=,rss='], { windowsHide: true, timeout: 5000, maxBuffer: 2 * 1024 * 1024, encoding: 'utf8' });
     const samplerPid = command.child.pid;
     const { stdout } = await command;
     const rows: ProcessMemory[] = windows ? JSON.parse(stdout) : stdout.trim().split('\n').map(line => {
-      const fields = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/.exec(line);
+      const fields = (detailed ? /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s*(.*)$/ : /^\s*(\d+)\s+(\d+)\s+(\d+)\s*$/).exec(line);
       if (!fields) throw new Error('Invalid process row');
-      return { pid: Number(fields[1]), parent: Number(fields[2]), bytes: Number(fields[3]) * 1024, name: fields[4].split('/').at(-1), commandLine: fields[5].slice(0, 1024) };
+      return { pid: Number(fields[1]), parent: Number(fields[2]), bytes: Number(fields[3]) * 1024, ...(detailed ? { name: fields[4].split('/').at(-1), commandLine: fields[5].slice(0, 1024) } : {}) };
     });
     if (!Array.isArray(rows) || rows.length > 10000 || rows.some(row => !Number.isInteger(row.pid) || !Number.isInteger(row.parent) || !Number.isFinite(row.bytes) || row.bytes < 0)) throw new Error('Invalid process snapshot');
     const now = Date.now(), next = new Map<number, { at: number; seconds: number; startedAt?: string }>();
@@ -73,7 +82,7 @@ export class ResourceReader {
       row.cpuPercent = previous && previous.startedAt === row.startedAt && now > previous.at ? Math.max(0, Math.min(100, (row.cpuSeconds - previous.seconds) * 100000 / (now - previous.at) / Math.max(1, os.cpus().length))) : null;
       next.set(row.pid, { at: now, seconds: row.cpuSeconds, startedAt: row.startedAt });
     }
-    this.cpu = next;
+    if (detailed) this.cpu = next;
     return rows.filter(row => row.pid !== samplerPid);
   }
 }

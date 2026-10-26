@@ -19,6 +19,7 @@ export interface UseNodeDetailsLoaderReturn {
   nodeGeneration: React.MutableRefObject<number>;
   loadNodeDetails: () => Promise<void>;
   refreshNodeDetails: () => void;
+  setConversationVisible: (visible: boolean) => void;
 }
 
 export function useNodeDetailsLoader({
@@ -29,6 +30,8 @@ export function useNodeDetailsLoader({
   const [nodeDetails, setNodeDetails] = useState<NodeDetails | null>(null);
   const [nodeDetailsLoading, setNodeDetailsLoading] = useState<boolean>(false);
   const [nodeDetailsError, setNodeDetailsError] = useState<string | null>(null);
+  const [conversationVisible, setConversationVisible] = useState(true);
+  const streamCursor = useRef<{ key: string; current: string | null }>({ key: '', current: null });
 
   const nodeGeneration = useRef<number>(0);
   const nodeAbortRef = useRef<AbortController | null>(null);
@@ -93,6 +96,9 @@ export function useNodeDetailsLoader({
   const streamKind = nodeDetails?.node.id === selectedNodeId && (nodeDetails.session?.chat !== false || nodeDetails.session.history) ? nodeDetails.node.kind : null;
   const streamIdentity = nodeDetails?.conversation.data?.sourceIdentity;
   useEffect(() => {
+    const key = JSON.stringify([selectedProjectId, selectedNodeId, selectedRunId, streamIdentity]);
+    if (streamCursor.current.key !== key) streamCursor.current = { key, current: null };
+    if (!conversationVisible) return;
     if (!selectedProjectId || !selectedNodeId || !streamKind || !['agent', 'orchestrator'].includes(streamKind)) return;
     return subscribeConversationEvents(selectedProjectId, selectedNodeId, selectedRunId, (conversation) => {
         if (conversation.data && conversation.data.sourceIdentity !== streamIdentity) { void loadNodeDetails(); return; }
@@ -108,8 +114,8 @@ export function useNodeDetailsLoader({
         setNodeDetailsError(null);
       }, (connected) => {
         setNodeDetailsError(connected ? null : 'Live conversation disconnected. Reconnecting…');
-      }, () => { void loadNodeDetails(); });
-  }, [selectedProjectId, selectedNodeId, selectedRunId, streamKind, streamIdentity, loadNodeDetails]);
+      }, () => { void loadNodeDetails(); }, streamCursor.current);
+  }, [selectedProjectId, selectedNodeId, selectedRunId, streamKind, streamIdentity, loadNodeDetails, conversationVisible]);
 
   const refreshNodeDetails = useCallback(() => {
     loadNodeDetails();
@@ -126,5 +132,6 @@ export function useNodeDetailsLoader({
     nodeGeneration,
     loadNodeDetails,
     refreshNodeDetails,
+    setConversationVisible,
   };
 }

@@ -131,6 +131,14 @@ export class LocalSpeech {
     for (const pending of this.pending.values()) { clearTimeout(pending.timer); pending.reject(new CliError('RUNTIME_UNAVAILABLE', 'Local speech stopped. Start dictation again.')); }
     this.pending.clear();
   }
+  private releaseWhenIdle() {
+    clearTimeout(this.timer);
+    const child = this.child;
+    this.timer = setTimeout(() => {
+      if (this.child === child && !this.active && !this.pending.size) this.destroy();
+    }, 60000);
+    this.timer.unref?.();
+  }
   private rpc(message: object): Promise<SpeechTranscript> {
     const child = this.child;
     if (!child?.connected) return Promise.reject(new CliError('RUNTIME_UNAVAILABLE', 'Local speech is not running'));
@@ -185,7 +193,7 @@ export class LocalSpeech {
     try { return await this.rpc({ type: 'finish' }); }
     catch (error) { this.destroy(); throw error; }
     finally {
-      if (this.active === session) { this.active = undefined; clearTimeout(this.timer); this.timer = setTimeout(() => this.destroy(), 60000); }
+      if (this.active === session) { this.active = undefined; this.releaseWhenIdle(); }
     }
   }
   cancel(id: string) { if (this.active?.id === id) this.destroy(); }
