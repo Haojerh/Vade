@@ -108,9 +108,10 @@ export class OrganizationRuntime {
       return this.sessions.send(projectId, sessionId, request);
     }
     if (!config.enabled) return this.sessions.send(projectId, sessionId, request);
-    // Ended workflow members remain ordinary agent conversations. Continuing
-    // their chat must not wrap each message in another workflow assignment.
-    if (!adhoc && this.runs(projectId).some(run => terminal(run) && (run.orchestratorId === sessionId || run.steps.some(step => step.sessionId === sessionId)))) {
+    // Finished workers remain ordinary chats. A completed coordinator can start
+    // a fresh, explicitly confirmed workflow from its next user request.
+    const previous = this.runs(projectId).find(run => terminal(run) && (run.orchestratorId === sessionId || run.steps.some(step => step.sessionId === sessionId)));
+    if (!adhoc && previous && (previous.orchestratorId !== sessionId || previous.state !== 'completed')) {
       const record = this.sessions.require(projectId, sessionId);
       const owner = this.runs(projectId).find(run => !terminal(run) && (run.worktreeId === record.worktreeId || run.streams.some(stream => stream.worktreeId === record.worktreeId)));
       if (owner) invalid('This checkout belongs to an active workflow. Cancel that run before continuing this agent chat.');
@@ -228,7 +229,9 @@ export class OrganizationRuntime {
           if (!['completed', 'failed'].includes(request.outcome)) invalid('Invalid workflow outcome');
           if (request.outcome === 'completed' && (!run.planReason || run.steps.some(item => !['completed', 'skipped'].includes(item.state)) || run.streams.some(stream => !stream.integrated))) invalid('All participating nodes and integrations must complete before finishing');
           if (run.steps.some(item => ['running', 'starting'].includes(item.state))) invalid('Wait for workers or cancel before finishing');
-          await this.quiesce(run, run.steps); run.state = request.outcome; run.result = bounded(request.summary, 10000, 'workflow summary', true); this.save(run);
+          const summary = bounded(request.summary, 10000, 'workflow summary', true);
+          await this.quiesce(run, run.steps); run.state = request.outcome; run.result = summary; this.save(run);
+          if (run.state === 'completed') await this.cleanupCompleted(run);
         } else if (request.action === 'cancel') await this.cancelRun(run.id);
         else invalid('Unsupported workflow command');
       }
@@ -269,6 +272,30 @@ export class OrganizationRuntime {
   private async quiesce(run: WorkflowRun, steps: WorkflowStep[]): Promise<void> {
     for (const step of steps) if (step.sessionId) await this.sessions.stopWorkflowWorker(run.projectId, step.sessionId);
   }
+  private async cleanupCompleted(run: WorkflowRun): Promise<void> {
+    if (!run.config.closeWorkersOnCompletion) return;
+    const warnings: string[] = [];
+    for (const step of run.steps) if (step.sessionId && step.sessionId !== run.orchestratorId) {
+      try { this.sessions.closeSession(run.projectId, step.sessionId); }
+      catch (error) { warnings.push(`Worker tab retained: ${this.error(error)}`); }
+    }
+    if (run.config.removeWorktreesOnCompletion && run.streams.length && run.streams.every(stream => stream.integrated)) {
+      const project = this.store.project(run.projectId);
+      for (const id of new Set([...run.streams.map(stream => stream.worktreeId), run.integrationTreeId].filter((id): id is string => Boolean(id)))) {
+        try {
+          if (id === run.worktreeId) invalid('The starting checkout is retained');
+          if (this.store.sessions(run.projectId).some(session => !session.closed && session.worktreeId === id)) invalid('The worktree still has open sessions');
+          const tree = await this.git.requireWorktree(project, id);
+          const source = await this.git.requireWorktree(project, run.worktreeId);
+          const head = await this.git.headCommit(tree.path);
+          if (!head) invalid('The worktree has no commit');
+          await this.git.run(source.path, ['merge-base', '--is-ancestor', head, 'HEAD']);
+          await this.git.remove(project, id);
+        } catch (error) { warnings.push(`Worktree retained: ${this.error(error)}`); }
+      }
+    }
+    if (warnings.length) { run.error = `Workflow completed; cleanup needs attention. ${warnings.join(' ')}`; this.save(run); }
+  }
   private async dispatch(run: WorkflowRun, request: any): Promise<void> {
     if (!run.planReason) invalid('Submit a plan before dispatching');
     const step = run.steps.find(item => item.nodeId === request.nodeId);
@@ -304,7 +331,7 @@ export class OrganizationRuntime {
     const predecessors = run.config.edges.filter(edge => edge.target === step.nodeId).map(edge => ({ node: edge.source, result: run.steps.find(item => item.nodeId === edge.source)?.result }));
     const prompt = this.instructions(run, step.sessionId, `You are worker node ${node.id}: ${node.title}. ${stream ? 'This is an isolated stream; commit your own changes and leave it clean before reporting.' : 'Use the assigned shared checkout; other workers are serialized.'}`) + `\nRole:\n${node.prompt}\nTask:\n${step.task}\nOriginal user request:\n${run.originalRequest}\nPredecessor results (full results via context):\n${JSON.stringify(predecessors).slice(0, 8000)}\nReport an explicit result through the CLI, then stop editing.`;
     try {
-      await this.sessions.send(run.projectId, step.sessionId, { message: prompt }, true); step.delivery = 'submitted'; step.state = 'running'; run.error = null; run.state = 'running'; this.save(run);
+      await this.sessions.send(run.projectId, step.sessionId, { message: prompt }, true, true, true); step.delivery = 'submitted'; step.state = 'running'; run.error = null; run.state = 'running'; this.save(run);
     } catch (error) {
       // Only a pre-write readiness refusal is eligible for a deliberate later dispatch.
       if (error instanceof CliError && error.issue.code === 'RUNTIME_UNAVAILABLE') { run.error = 'Finish sign-in/trust or input setup in the worker Terminal, then dispatch this same node again.'; }

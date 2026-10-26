@@ -4,7 +4,7 @@ import { ProviderChatControls } from './providerChatControls.js';
 import type { AgentChatOptions } from '../../shared/contracts.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import { AntigravityChatControls } from './antigravityChatControls.js';
-import { WorkflowModels } from './workflowModels.js';
+import { WorkflowModels, codeBuddyWorkflowCatalog } from './workflowModels.js';
 import { OpenCodeChatControls } from './openCodeChatControls.js';
 import { TerminalScreen } from './terminalScreen.js';
 import { codeBuddyRecordedSettings } from './conversation.js';
@@ -13,22 +13,168 @@ import { AdeSessions } from './sessions.js';
 import { CodeBuddyChatControls } from './codeBuddyChatControls.js';
 import { codeBuddyEffortAcknowledgement } from '../providers/codeBuddySettings.js';
 
+test('workflow CodeBuddy reads exact native model effort metadata without prompts, tools or persistence', async () => {
+  const script = `
+    const readline = require('node:readline');
+    if (!process.argv.includes('--no-session-persistence') || !process.argv.includes('--strict-mcp-config') || !process.argv.includes('{"disableAllHooks":true}')) process.exit(2);
+    const send = value => process.stdout.write(JSON.stringify(value) + '\\n');
+    readline.createInterface({input:process.stdin}).on('line', line => {
+      const m = JSON.parse(line);
+      if (m.method === 'initialize') send({jsonrpc:'2.0',id:m.id,result:{protocolVersion:1}});
+      else if (m.method === 'session/new' && m.params.cwd === process.cwd() && m.params.mcpServers.length === 0) send({jsonrpc:'2.0',id:99,method:'session/request_permission',params:{}});
+      else if (m.id === 99 && m.error?.code === -32601) send({jsonrpc:'2.0',id:2,result:{models:{availableModels:[
+        {modelId:'deepseek-v4.1-flash',name:'DeepSeek',_meta:{effortOptions:[{value:'low'},{value:'high'},{value:'max'},{value:'invented'}],apiKey:'never expose'}},
+        {modelId:'deepseek-v4.1-flash-sg',name:'DeepSeek',_meta:{effortOptions:[{value:'high'}]}},
+        {modelId:'plain-model',name:'Plain'}, {modelId:'../bad',name:'Invalid'}
+      ]}}});
+      else process.exit(3);
+    });`;
+  const models = await codeBuddyWorkflowCatalog({ executable: process.execPath, args: ['-e', script, '--'] });
+  assert.deepEqual(models, [
+    {id:'deepseek-v4.1-flash',label:'deepseek-v4.1-flash',efforts:['low','high','max']},
+    {id:'deepseek-v4.1-flash-sg',label:'deepseek-v4.1-flash-sg',efforts:['high']},
+    {id:'plain-model',label:'plain-model',efforts:[]},
+  ]);
+  assert.ok(!JSON.stringify(models).includes('never expose'));
+});
+
+test('workflow CodeBuddy fails closed when native metadata is unavailable', async () => {
+  const script = `process.stdin.once('data', () => console.log(JSON.stringify({jsonrpc:'2.0',id:1,error:{code:-1,message:'private native error'}})));`;
+  await assert.rejects(codeBuddyWorkflowCatalog({ executable: process.execPath, args: ['-e', script, '--'] }), /capabilities could not be read/);
+});
+
+test('workflow OpenCode family reuses native catalogs with model-specific variants', async t => {
+  const calls: string[] = [];
+  t.mock.method(OpenCodeChatControls.prototype, 'catalog', async (provider: 'opencode' | 'opencode2' | 'kilo') => {
+    calls.push(provider);
+    return [{ id: 'provider/reasoner', label: 'Reasoner', efforts: ['default', 'high'].map(value => ({ value, label: value })) }, { id: 'provider/plain', label: 'Plain', efforts: [] }];
+  });
+  const catalog = new WorkflowModels();
+  for (const provider of ['opencode', 'opencode2', 'kilo'] as const) {
+    assert.deepEqual((await catalog.list(provider))[0].efforts, ['default', 'high']);
+    await catalog.validate({ provider, model: 'provider/reasoner', effort: 'high' });
+    await assert.rejects(catalog.validate({ provider, model: 'provider/plain', effort: 'high' }), /supported effort/);
+  }
+  assert.deepEqual(calls, ['opencode', 'opencode2', 'kilo']);
+});
+
+test('new OpenCode effort initialization waits for the native prompt and uses the live settings fence', async () => {
+  const sessions = Object.create(AdeSessions.prototype) as any;
+  const record = { id: 'node', projectId: 'project', provider: 'opencode', statusToken: 'launch', workflowLaunch: { model: 'provider/reasoner', effort: 'high' } };
+  const live = { live: true, inputRevision: 0, screen: { settled: async () => {}, openCodePromptReady: () => true } };
+  const applied: unknown[] = [];
+  Object.assign(sessions, { live: new Map([['node', live]]), shutdown: new AbortController(), require: () => record, setChatOption: async (...args: unknown[]) => { applied.push(args); } });
+  await sessions.initializeOpenCodeVariant(record);
+  assert.deepEqual(applied, [['project', 'node', { key: 'effort', value: 'high' }, { model: 'provider/reasoner' }]]);
+  live.screen.settled = async () => { live.inputRevision++; };
+  await assert.rejects(sessions.initializeOpenCodeVariant(record), /input changed/);
+  assert.equal(applied.length, 1, 'Concurrent user input must prevent the setting command');
+});
+
+test('Codex waits for the rendered paste capsule, sends Enter once and refuses a folder trust prompt', async () => {
+  const screen = new TerminalScreen(() => {}, () => {}), sessions = Object.create(AdeSessions.prototype) as any;
+  const record = { provider: 'codex', id: 'node', projectId: 'project', cwd: process.cwd() };
+  const live = { live: true, screen, inputRevision: 0, start: 0, buffer: '' }, writes: string[] = [];
+  const render = (text: string) => { live.buffer += text; screen.write(text); };
+  const prompt = 'x'.repeat(1855);
+  Object.assign(sessions, { live: new Map([['node', live]]), sending: new Set(), store: { directory: process.cwd(), sessions: () => [] }, require: () => record,
+    status: () => ({ data: {state:'idle'}, meta: {availability:'ready'} }), command: async (_: unknown, message: {data: string}) => {
+      writes.push(message.data);
+      if (message.data.startsWith('\x1b[200~')) setTimeout(() => render('\x1b[2J\x1b[H> [Pasted Content 1855 chars]'), 450);
+      if (message.data === '\r') { assert.equal(screen.codexComposerHasText(prompt), true); render('\x1b[2J\x1b[H> \x1b[2mAsk Codex\x1b[0m\x1b[3G'); }
+    } });
+  try {
+    render('\x1b[2J\x1b[H> \x1b[2mAsk Codex\x1b[0m\x1b[3G'); await screen.settled();
+    await sessions.send('project','node',{message:prompt},true,true,true);
+    assert.deepEqual(writes, ['\x1b[200~' + prompt + '\x1b[201~', '\r']);
+    render('\x1b[2J\x1b[HDo you trust this folder?\r\n> 1. Yes, trust folder'); await screen.settled();
+    await assert.rejects(sessions.send('project','node',{message:'assignment'},true,true,true), /empty, idle/);
+    assert.equal(writes.length, 2, 'Trust setup must receive no assignment or approval input');
+  } finally { screen.dispose(); }
+});
+
+test('Codex ignored Enter reports uncertain delivery without retrying', async t => {
+  const screen = new TerminalScreen(() => {}, () => {}), sessions = Object.create(AdeSessions.prototype) as any;
+  const live = { live:true, screen, inputRevision:0, start:0, buffer:'' }, writes:string[]=[];
+  let now = 0;
+  Object.assign(sessions, {live:new Map([['node',live]]),sending:new Set(),store:{directory:process.cwd()},require:()=>({provider:'codex'}),
+    status:()=>({data:{state:'idle'},meta:{availability:'ready'}}),command:async (_:unknown,message:{data:string})=>{
+      writes.push(message.data);
+      if(message.data.startsWith('\x1b[200~')) { const text='\x1b[2J\x1b[H> hello'; live.buffer+=text;screen.write(text); }
+      if(message.data==='\r') t.mock.method(Date,'now',()=>now+=1000);
+    }});
+  try {
+    screen.write('\x1b[2J\x1b[H> \x1b[2mAsk Codex\x1b[0m\x1b[3G'); await screen.settled();
+    await assert.rejects(sessions.send('project','node',{message:'hello'}),/Delivery may be partial/);
+    assert.equal(writes.filter(value=>value==='\r').length,1);
+    assert.equal(writes.length,2);
+  } finally {screen.dispose();}
+});
+
+test('Codex retries Enter once only after a fresh stable redraw proves the exact idle draft remains', async t => {
+  const screen=new TerminalScreen(()=>{},()=>{}),sessions=Object.create(AdeSessions.prototype) as any;
+  const live={live:true,screen,inputRevision:0,start:0,buffer:''},writes:string[]=[];
+  let now=0,enters=0;
+  const render=(text:string)=>{live.buffer+=text;screen.write(text);};
+  Object.assign(sessions,{live:new Map([['node',live]]),sending:new Set(),store:{directory:process.cwd()},require:()=>({provider:'codex'}),
+    status:()=>({data:{state:'idle'},meta:{availability:'ready',stale:false}}),command:async (_:unknown,message:{data:string})=>{
+      writes.push(message.data);
+      if(message.data.startsWith('\x1b[200~'))render('\x1b[2J\x1b[H> hello');
+      if(message.data==='\r'){
+        enters++;
+        if(enters===1){t.mock.method(Date,'now',()=>now+=200);render('\x1b[2J\x1b[H> hello');}
+        else render('\x1b[2J\x1b[H> \x1b[2mAsk Codex\x1b[0m\x1b[3G');
+      }
+    }});
+  try{
+    render('\x1b[2J\x1b[H> \x1b[2mAsk Codex\x1b[0m\x1b[3G');await screen.settled();
+    assert.equal((await sessions.send('project','node',{message:'hello'})).ok,true);
+    assert.equal(enters,2);assert.equal(writes.filter(value=>value.startsWith('\x1b[200~')).length,1,'Retry must never paste the assignment again');
+  }finally{screen.dispose();}
+});
+
+test('Codex never retries Enter for a changed draft, busy terminal or uncertain write', async t => {
+  for(const mode of ['changed','busy','write-error']){
+    const screen=new TerminalScreen(()=>{},()=>{}),sessions=Object.create(AdeSessions.prototype) as any;
+    const live={live:true,screen,inputRevision:0,start:0,buffer:''},writes:string[]=[];
+    let now=0,state='idle';
+    const render=(text:string)=>{live.buffer+=text;screen.write(text);};
+    Object.assign(sessions,{live:new Map([['node',live]]),sending:new Set(),store:{directory:process.cwd()},require:()=>({provider:'codex'}),
+      status:()=>({data:{state},meta:{availability:'ready',stale:false}}),command:async (_:unknown,message:{data:string})=>{
+        writes.push(message.data);
+        if(message.data.startsWith('\x1b[200~'))render('\x1b[2J\x1b[H> hello');
+        if(message.data==='\r'){
+          if(mode==='write-error')throw new Error('PTY acknowledgement lost');
+          if(mode==='busy')state='working';
+          render('\x1b[2J\x1b[H> '+(mode==='changed'?'different message':'hello'));
+          t.mock.method(Date,'now',()=>now+=1000);
+        }
+      }});
+    try{
+      render('\x1b[2J\x1b[H> \x1b[2mAsk Codex\x1b[0m\x1b[3G');await screen.settled();
+      await assert.rejects(sessions.send('project','node',{message:'hello'}),/Delivery may be partial/);
+      assert.equal(writes.filter(value=>value==='\r').length,1,mode);
+      assert.equal(writes.length,2,mode);
+    }finally{screen.dispose();t.mock.restoreAll();}
+  }
+});
+
 test('CodeBuddy sends from an empty native prompt with unknown lifecycle status and refuses waiting or drafts', async () => {
   const terminal = new TerminalScreen(() => {}, () => {});
   const sessions = Object.create(AdeSessions.prototype) as any;
   const record = { provider: 'codebuddy' };
-  const live = { live: true, screen: terminal, inputRevision: 0 };
+  const live = { live: true, screen: terminal, inputRevision: 0, start: 0, buffer: '' };
   let state = 'unknown'; const writes: string[] = [];
   Object.assign(sessions, { live: new Map([['node', live]]), sending: new Set(), store: { directory: process.cwd() }, require: () => record,
     status: () => ({ meta: { availability: state === 'unknown' ? 'unavailable' : 'ready' }, data: { state } }), command: async (_: unknown, message: { data: string }) => {
       writes.push(message.data);
       if (message.data.startsWith('\x1b[200~')) {
         // Native paste processing can finish after the old fixed 300 ms delay.
-        setTimeout(() => { terminal.write('\x1b[2J\x1b[H> hello\x1b[999m'); }, 450);
+        setTimeout(() => { live.buffer += 'rendered paste'; terminal.write('\x1b[2J\x1b[H> hello\x1b[999m'); }, 450);
       }
       if (message.data === '\r') {
         assert.ok(terminal.codeBuddyComposerHasText('hello'), 'Enter must follow the rendered paste');
-        terminal.write('\x1b[2J\x1b[H> \x1b[999m\r\n? for shortcuts');
+        live.buffer += 'empty composer'; terminal.write('\x1b[2J\x1b[H> \x1b[999m\r\n? for shortcuts');
       }
     } });
   try {
@@ -48,7 +194,7 @@ test('CodeBuddy sends from an empty native prompt with unknown lifecycle status 
 test('CodeBuddy unconfirmed submission sends Enter only once and never reports success', async t => {
   const terminal = new TerminalScreen(() => {}, () => {});
   const sessions = Object.create(AdeSessions.prototype) as any;
-  const live = { live: true, screen: terminal, inputRevision: 0 };
+  const live = { live: true, screen: terminal, inputRevision: 0, start: 0, buffer: '' };
   const writes: string[] = [];
   let clock = 0;
   t.mock.method(Date, 'now', () => clock += 6000);
@@ -56,7 +202,7 @@ test('CodeBuddy unconfirmed submission sends Enter only once and never reports s
     status: () => ({ meta: { availability: 'unavailable' }, data: { state: 'unknown' } }),
     command: async (_: unknown, message: { data: string }) => {
       writes.push(message.data);
-      if (message.data.startsWith('\x1b[200~')) terminal.write('\x1b[2J\x1b[H> hello\x1b[999m');
+      if (message.data.startsWith('\x1b[200~')) { live.buffer += 'rendered paste'; terminal.write('\x1b[2J\x1b[H> hello\x1b[999m'); }
     } });
   try {
     terminal.write('\x1b[2J\x1b[H> \x1b[999m\r\n? for shortcuts'); await terminal.settled();

@@ -17,13 +17,29 @@ function stringLiteral(literal: string | undefined): string | null {
   } catch { return null; }
 }
 
+function recordedPatch(code: string): string | null {
+  const direct = stringLiteral(code.match(/\bapply_patch\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1]);
+  if (direct) return direct;
+  // Codex code-mode calls often bind a literal patch before passing it to the
+  // tool. Resolve only a recorded const string, never expressions or execution.
+  const call = /\bapply_patch\(\s*([a-zA-Z_$][\w$]*)\s*\)/.exec(code);
+  if (!call) return null;
+  const name = call[1].replace(/[$]/g, '\\$');
+  const declaration = new RegExp('\\bconst\\s+' + name + '\\s*=\\s*("(?:\\\\.|[^"\\\\])*"|\'(?:\\\\.|[^\'\\\\])*\')\\s*;').exec(code.slice(0, call.index));
+  if (!declaration) return null;
+  const between = code.slice(declaration.index + declaration[0].length, call.index);
+  if (new RegExp('\\b' + name + '\\s*(?:[+*/?-]?=|\\+\\+|--)').test(between)) return null;
+  const patch = stringLiteral(declaration[1]);
+  return patch?.startsWith('*** Begin Patch\n') ? patch : null;
+}
+
 export function toolLabel(name: string, rawInput: unknown, maxLength = 160): string {
   const input = inputObject(rawInput);
   // Code-mode wrappers carry literal tool arguments in `code`; inspect text only, never execute it.
   const code = typeof input.code === 'string' ? input.code : typeof input.patch === 'string' && /exec/i.test(name) ? input.patch : '';
   const commandLiteral = code.match(/\b(?:cmd|command)\s*["']?\s*:\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1];
   const wrappedCommand = stringLiteral(commandLiteral);
-  const wrappedPatch = stringLiteral(code.match(/\bapply_patch\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1]);
+  const wrappedPatch = recordedPatch(code);
   const action = wrappedPatch || /edit|write|patch|replace|diff/i.test(name) ? 'Edit'
     : /read|view|cat/i.test(name) ? 'Read'
     : /exec|bash|shell|command|terminal/i.test(name) ? 'Run' : name;
@@ -48,7 +64,7 @@ export function toolActivityFromCall(session: string, id: unknown, name: unknown
 export function toolEditPreview(raw: unknown): ToolEditPreview[] {
   const input = inputObject(raw);
   const code = typeof input.code === 'string' ? input.code : typeof input.patch === 'string' ? input.patch : '';
-  const wrapped = stringLiteral(code.match(/\bapply_patch\(\s*("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/)?.[1]);
+  const wrapped = recordedPatch(code);
   const patch = wrapped ?? input.patch ?? input.patchText ?? input.diff;
   const previews: ToolEditPreview[] = [];
   const clean = (text: string) => text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');

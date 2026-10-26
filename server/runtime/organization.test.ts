@@ -35,6 +35,7 @@ function fixture(gitProject = false) {
     messagePromptReady: () => true,
     launch: async (projectId: string, worktreeId: string, cwd: string, provider: SessionRecord['provider'], title: string, _shell: unknown, workflowLaunch: SessionRecord['workflowLaunch']) => { const record: SessionRecord = { id: crypto.randomUUID(), projectId, worktreeId, cwd, provider, title, closed: false, createdAt: new Date().toISOString(), statusToken: crypto.randomUUID(), workflowLaunch }; store.saveSession(record); live.add(record.id); return record; },
     stopWorkflowWorker: async (_projectId: string, id: string) => { stopped.push(id); live.delete(id); },
+    closeSession: (projectId: string, id: string) => { const record = store.sessions(projectId).find(row => row.id === id)!; store.saveSession({ ...record, closed: true }); live.delete(id); },
   } as unknown as AdeSessions;
   const runtime = new OrganizationRuntime(store, adeGit, sessions); runtime.setPort(4317); runtime.setup.install();
   runtime.setup.skillsDirectory = path.join(directory, 'home', '.agents', 'skills');
@@ -54,6 +55,27 @@ function fixture(gitProject = false) {
   }
   return { directory, repo, store, project, adeGit, runtime, sent, sendCalls, stopped, start, call, live, setSendError: (error: Error | null) => { sendError = error; }, close: () => { runtime.close(); store.close(); fs.rmSync(directory, { recursive: true, force: true }); } };
 }
+
+test('completed workflow cleanup preserves coordinator and refuses unmerged worktrees', async () => {
+  const f = fixture(true);
+  try {
+    const { record, run } = await f.start({ ...config(), closeWorkersOnCompletion: true, removeWorktreesOnCompletion: true });
+    const tree = await f.adeGit.create(f.project, { name: 'cleanup-worker', baseBranch: run.baseSha ?? 'HEAD', setup: 'skip' });
+    const worker = { ...record, id: crypto.randomUUID(), worktreeId: tree.id, cwd: tree.path };
+    f.store.saveSession(worker);
+    execFileSync(GIT_PATH, ['-C', tree.path, 'commit', '--allow-empty', '-m', 'unmerged'], { windowsHide: true });
+    run.state = 'completed'; run.steps[0].sessionId = worker.id;
+    run.streams = [{ id: 'feature', title: 'Feature', nodes: [run.steps[0].nodeId], worktreeId: tree.id, integrated: true }];
+    await (f.runtime as any).cleanupCompleted(run);
+    assert.equal(f.store.sessions(f.project.id).find(row => row.id === worker.id)?.closed, true);
+    assert.equal(f.store.sessions(f.project.id).find(row => row.id === record.id)?.closed, false);
+    assert.ok(await f.adeGit.requireWorktree(f.project, tree.id));
+    assert.match(run.error!, /Worktree retained/);
+    execFileSync(GIT_PATH, ['merge', '--ff-only', tree.branch!], { cwd: f.repo, windowsHide: true });
+    await (f.runtime as any).cleanupCompleted(run);
+    await assert.rejects(f.adeGit.requireWorktree(f.project, tree.id));
+  } finally { f.close(); }
+});
 
 test('workflow configuration rejects cycles, malformed nodes and extra command fields', () => {
   const value = config(); assert.deepEqual(validateOrganization(value), value);
@@ -183,6 +205,28 @@ test('cancelled and failed workflow members continue ordinary chat without creat
   }
 });
 
+test('completed coordinator starts a fresh confirmed workflow while its former workers remain ordinary chats', async () => {
+  const f=fixture();try{
+    const {record,run}=await f.start();
+    await f.call(record.id,'plan',{nodes:['implement'],reason:'Implement',streams:[]});
+    await f.call(record.id,'dispatch',{nodeId:'implement',task:'Implement'});
+    const worker=f.runtime.runs()[0].steps[0].sessionId!;
+    await f.call(worker,'result',{outcome:'completed',summary:'Done'});
+    await f.call(record.id,'finish',{outcome:'completed',summary:'Finished'});
+    const sent=f.sent.length;
+    await assert.rejects(f.runtime.send(f.project.id,record.id,{message:'Build the next feature'}),/Workflow enabled, confirm/);
+    assert.equal(f.sent.length,sent);
+    await f.runtime.send(f.project.id,worker,{message:'Explain the implementation'});
+    assert.equal(f.runtime.runs().length,1);
+    await f.runtime.send(f.project.id,record.id,{message:'Build the next feature',workflowConfirmed:true});
+    assert.equal(f.runtime.runs().length,2);
+    const next=f.runtime.runs().find(value=>value.id!==run.id)!;
+    assert.equal(next.orchestratorId,record.id);assert.equal(next.originalRequest,'Build the next feature');
+    await f.runtime.send(f.project.id,record.id,{message:'Keep it small'});
+    assert.equal(f.runtime.runs().length,2,'Active coordinator follow-ups must not launch another run');
+  }finally{f.close();}
+});
+
 test('workflow setup verifies both standard-directory skills and rejects stale CLI awareness', async () => {
   const f = fixture(); try {
     assert.equal(f.runtime.setup.status().ready, true);
@@ -193,6 +237,26 @@ test('workflow setup verifies both standard-directory skills and rejects stale C
     await assert.rejects(f.runtime.configure(config()), /Install/);
     fs.copyFileSync(f.runtime.setup.source('cli-SKILL.md'), skill);
     assert.equal(f.runtime.setup.status().ready, true);
+  } finally { f.close(); }
+});
+
+test('fan-in review waits for both frontend and backend explicit results', async () => {
+  const f = fixture(); try {
+    const graph = config();
+    graph.nodes = ['frontend', 'backend', 'review'].map((id, index) => ({ ...graph.nodes[0], id, title: id, x: index * 260 }));
+    graph.edges = [{ source: 'frontend', target: 'review' }, { source: 'backend', target: 'review' }];
+    const { record } = await f.start(graph);
+    await f.call(record.id, 'plan', { nodes: ['frontend', 'backend', 'review'], reason: 'Review both implementations', streams: [] });
+    await assert.rejects(f.call(record.id, 'dispatch', { nodeId: 'review', task: 'review both' }), /not ready/);
+    for (const nodeId of ['frontend', 'backend']) {
+      await f.call(record.id, 'dispatch', { nodeId, task: `implement ${nodeId}` });
+      const step = f.runtime.runs()[0].steps.find(step => step.nodeId === nodeId)!;
+      await f.call(step.sessionId!, 'result', { outcome: 'completed', summary: `${nodeId} ready` });
+      if (nodeId === 'frontend') await assert.rejects(f.call(record.id, 'dispatch', { nodeId: 'review', task: 'review both' }), /not ready/);
+    }
+    await f.call(record.id, 'dispatch', { nodeId: 'review', task: 'review both' });
+    assert.match(f.sent.at(-1)!.message, /frontend ready/);
+    assert.match(f.sent.at(-1)!.message, /backend ready/);
   } finally { f.close(); }
 });
 
@@ -249,6 +313,26 @@ test('uncertain assignment delivery cannot be replayed', async () => {
     f.setSendError(null); await assert.rejects(f.call(record.id, 'dispatch', { nodeId: 'implement' }), /uncertain/);
     assert.equal(f.runtime.runs()[0].steps[0].delivery, 'uncertain');
   } finally { f.close(); }
+});
+
+test('native trust readiness blocks dispatch before delivery and explicit retry reuses the same worker', async t => {
+  const f = fixture(); try {
+    const { record } = await f.start();
+    await f.call(record.id,'plan',{nodes:['implement'],reason:'Implement',streams:[]});
+    const send = (f.runtime as any).sessions.send;
+    const calls: unknown[][] = [];
+    t.mock.method((f.runtime as any).sessions,'send',async (...args: unknown[]) => { calls.push(args); return send(...args); });
+    f.setSendError(new CliError('RUNTIME_UNAVAILABLE','Leave an empty, idle agent prompt before sending this task'));
+    await assert.rejects(f.call(record.id,'dispatch',{nodeId:'implement',task:'Implement'}),/empty, idle/);
+    const blocked=f.runtime.runs()[0], id=blocked.steps[0].sessionId;
+    assert.equal(blocked.state,'blocked'); assert.equal(blocked.steps[0].delivery,'not-sent');
+    assert.match(blocked.error!,/sign-in\/trust/);
+    assert.deepEqual(calls[0].slice(3),[true,true,true],'Workflow assignments must require an empty idle native prompt');
+    f.setSendError(null);
+    await f.call(record.id,'dispatch',{nodeId:'implement'});
+    assert.equal(f.runtime.runs()[0].steps[0].sessionId,id);
+    assert.equal(f.runtime.runs()[0].steps[0].delivery,'submitted');
+  } finally {f.close();}
 });
 
 test('isolation rejects cross-stream dependencies and integrates independent committed changes', async () => {
@@ -311,6 +395,25 @@ test('runtime restart fails unfinished runs and never replays prompts', async ()
     assert.equal(restarted.runs()[0].state, 'failed'); assert.match(restarted.runs()[0].error!, /restarted/);
     assert.equal(f.sent.length, count); restarted.close();
   } finally { f.close(); }
+});
+
+test('workflow config HTTP saves cleanup options and rejects invalid or unknown fields', async () => {
+  const f = fixture();
+  const server = createServer({ localRuntime: { organization: f.runtime, streams: new Set<() => void>() } as LocalRuntime });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/workflow/config`;
+  const post = (value: object) => fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(value) });
+  try {
+    const value = { ...config(), enabled: false, closeWorkersOnCompletion: true, removeWorktreesOnCompletion: true };
+    const saved = await post(value);
+    assert.equal(saved.status, 200);
+    assert.deepEqual(await saved.json(), value);
+    assert.deepEqual(await (await fetch(url)).json(), value);
+    assert.equal((await post({ ...value, closeWorkersOnCompletion: 'yes' })).status, 400);
+    assert.equal((await post({ ...value, closeWorkersOnCompletion: false })).status, 400);
+    assert.equal((await post({ ...value, arbitrary: true })).status, 400);
+    assert.deepEqual(await (await fetch(url)).json(), value);
+  } finally { await new Promise<void>(resolve => server.close(() => resolve())); f.close(); }
 });
 
 test('installed CLI uses authenticated loopback control and never returns its capability secret', async () => {

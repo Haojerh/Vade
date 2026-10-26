@@ -1,9 +1,63 @@
 import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { WorkflowModel, WorkflowProvider, OrganizationNode } from '../../shared/contracts.js';
 import { resolveAgent } from './sessions.js';
 import { codexRequest } from './codexThread.js';
 import { CliError } from '../integrations/cli.js';
 import { invalid } from './workflowConfig.js';
+import { OpenCodeChatControls } from './openCodeChatControls.js';
+
+/** Fixed metadata-only ACP exchange; never prompt, authenticate or mutate a live session. */
+export function codeBuddyWorkflowCatalog(resolved: { executable: string; args: string[] }): Promise<WorkflowModel[]> {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'vade-codebuddy-catalog-'));
+  let closed = Promise.resolve();
+  return new Promise<WorkflowModel[]>((resolve, reject) => {
+    const child = spawn(resolved.executable, [...resolved.args, '--acp', '--no-session-persistence', '--permission-mode', 'dontAsk', '--setting-sources', 'user', '--strict-mcp-config', '--mcp-config', '{"mcpServers":{}}', '--settings', '{"disableAllHooks":true}'], { cwd, windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+    closed = new Promise<void>(resolve => child.once('close', () => resolve()));
+    let buffer = '', bytes = 0, settled = false, initialized = false;
+    const finish = (models?: WorkflowModel[]) => {
+      if (settled) return; settled = true; clearTimeout(timer); child.stdin.end(); child.kill();
+      models?.length ? resolve(models) : reject(new CliError('RUNTIME_UNAVAILABLE', 'CodeBuddy model capabilities could not be read. Check native sign-in and retry the catalog.'));
+    };
+    const send = (value: object) => { if (!settled) child.stdin.write(JSON.stringify(value) + '\n'); };
+    const timer = setTimeout(() => finish(), 25000);
+    child.stdin.on('error', () => finish());
+    child.once('error', () => finish()); child.once('exit', () => finish());
+    child.stdout.setEncoding('utf8');
+    child.stdout.on('data', (chunk: string) => {
+      bytes += Buffer.byteLength(chunk); if (bytes > 2 * 1024 * 1024) { finish(); return; }
+      buffer += chunk;
+      let newline: number;
+      while (!settled && (newline = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
+        let message: any; try { message = JSON.parse(line); } catch { continue; }
+        if (message?.method) {
+          // Catalog reads cannot grant permissions, read files or execute tools.
+          if (typeof message.id === 'string' || typeof message.id === 'number') send({ jsonrpc: '2.0', id: message.id, error: { code: -32601, message: 'Catalog client does not provide tools' } });
+        } else if (message?.id === 1 && !initialized) {
+          if (message.error || message.result?.protocolVersion !== 1) { finish(); return; }
+          initialized = true;
+          send({ jsonrpc: '2.0', id: 2, method: 'session/new', params: { cwd, mcpServers: [] } });
+        } else if (message?.id === 2 && initialized) {
+          const rows = message.result?.models?.availableModels;
+          if (message.error || !Array.isArray(rows)) { finish(); return; }
+          const models: WorkflowModel[] = [], seen = new Set<string>();
+          for (const row of rows.slice(0, 200)) {
+            if (typeof row?.modelId !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9_.:/-]{0,199}$/.test(row.modelId) || seen.has(row.modelId)) continue;
+            seen.add(row.modelId);
+            const efforts = Array.isArray(row._meta?.effortOptions) ? [...new Set<string>(row._meta.effortOptions.flatMap((option: any) => typeof option?.value === 'string' && /^(?:minimal|low|medium|high|xhigh|max)$/.test(option.value) ? [option.value] : []))] : [];
+            // Native display names can be identical for distinct routing IDs.
+            models.push({ id: row.modelId, label: row.modelId, efforts });
+          }
+          finish(models);
+        }
+      }
+    });
+    send({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'Vade model catalog', version: '1' } } });
+  }).finally(async () => { await closed; await fs.promises.rm(cwd, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); });
+}
 
 function listing(resolved: { executable: string; args: string[] }, args: string[], input?: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -19,6 +73,7 @@ function listing(resolved: { executable: string; args: string[] }, args: string[
   });
 }
 export class WorkflowModels {
+  private openCode = new OpenCodeChatControls();
   private cache = new Map<WorkflowProvider, { at: number; models: WorkflowModel[] }>();
   private pending = new Map<WorkflowProvider, Promise<WorkflowModel[]>>();
   async list(provider: WorkflowProvider): Promise<WorkflowModel[]> {
@@ -35,6 +90,9 @@ export class WorkflowModels {
     return request;
   }
   private async discover(provider: WorkflowProvider): Promise<WorkflowModel[]> {
+    if (provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') {
+      return (await this.openCode.catalog(provider, process.cwd())).map(model => ({ id: model.id, label: model.label, efforts: model.efforts.map(effort => effort.value) }));
+    }
     const resolved = resolveAgent(provider);
     if (!resolved) throw new CliError('CLI_MISSING', 'Install this provider before selecting a model');
     if (provider === 'codex') return codexRequest(resolved, process.cwd(), async call => {
@@ -46,14 +104,8 @@ export class WorkflowModels {
       }
       return models.slice(0, 200);
     });
-    if (provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') {
-      const raw = await listing(resolved, provider === 'opencode2' ? ['models', '--standalone'] : ['models']);
-      return [...new Set(raw.split(/\r?\n/).map(line => line.trim()).filter(id => /^[a-zA-Z0-9_.:-]+\/[a-zA-Z0-9_.:/-]+$/.test(id)))].slice(0,200).map(id => ({ id, label: id, efforts: [] }));
-    }
     if (provider === 'codebuddy') {
-      const help = await listing(resolved, ['--help']);
-      const values = help.match(/Currently supported: \(([^)]+)\)/)?.[1] ?? '';
-      return values.split(',').map(id => id.trim()).filter(id => /^[a-zA-Z0-9_.:/-]{1,200}$/.test(id)).slice(0,200).map(id => ({ id, label: id, efforts: [] }));
+      return codeBuddyWorkflowCatalog(resolved);
     }
     if (provider === 'antigravity') {
       const raw = await listing(resolved, ['models']);

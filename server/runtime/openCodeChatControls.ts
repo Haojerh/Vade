@@ -64,7 +64,7 @@ function footerEffort(model: AgentChatModel, screen: string): string | undefined
 export class OpenCodeChatControls {
   private cache = new Map<string, { at: number; models: AgentChatModel[] }>();
   private pending = new Map<string, Promise<AgentChatModel[]>>();
-  private async catalog(provider: 'opencode' | 'opencode2' | 'kilo', cwd: string): Promise<AgentChatModel[]> {
+  async catalog(provider: 'opencode' | 'opencode2' | 'kilo', cwd: string): Promise<AgentChatModel[]> {
     const key = `${provider}:${cwd}`, cached = this.cache.get(key);
     if (cached && Date.now() - cached.at < 60000) return cached.models;
     const previous = this.pending.get(key); if (previous) return previous;

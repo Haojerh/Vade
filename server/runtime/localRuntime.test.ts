@@ -20,6 +20,101 @@ import { installStatusHooks, readAgentStatus, statusFile } from './statusHooks.j
 import { AdeConversations } from './conversation.js';
 import { projectShortcuts, runProjectShortcut, saveProjectShortcuts } from './projectShortcuts.js';
 
+test('CodeBuddy permission hooks show approval only while the native widget is actually visible', async () => {
+  const f=fixture();try{
+    const project=await f.runtime.git.register(f.repo),tree=(await f.runtime.git.worktrees(project))[0];
+    const record:SessionRecord={id:'approval-node',projectId:project.id,worktreeId:tree.id,cwd:tree.path,provider:'codebuddy',providerThreadId:'11234567-1234-1234-1234-123456789abc',statusToken:'owned-launch',title:'CodeBuddy',closed:false,createdAt:new Date().toISOString()};
+    f.runtime.store.saveSession(record);
+    const screen=new TerminalScreen(()=>{},()=>{}),live={live:true,screen,turnStatus:new TerminalTurnStatus()};
+    (f.runtime.sessions as any).live.set(record.id,live);
+    fs.mkdirSync(path.dirname(statusFile(f.runtime.store.directory,record.id)),{recursive:true});
+    fs.writeFileSync(statusFile(f.runtime.store.directory,record.id),JSON.stringify({token:record.statusToken,provider:record.provider,id:record.providerThreadId,state:'waiting',event:'PermissionRequest',attention:'approval',at:new Date().toISOString()}));
+    screen.write('Working on the task');await screen.settled();
+    assert.equal(f.runtime.sessions.status(project.id,record.id).data?.state,'working');
+    screen.write('\x1b[2J\x1b[HPowerShell command\r\nnpm test\r\nDo you want to proceed?\r\n> 1. Yes\r\n  2. Yes, and do not ask again for session\r\n  3. No, adjust the command');await screen.settled();
+    assert.equal(f.runtime.sessions.status(project.id,record.id).data?.attention,'approval');
+    screen.write('\x1b[2J\x1b[HWorking on the task');await screen.settled();
+    for(let i=0;i<10;i++)assert.equal(f.runtime.sessions.status(project.id,record.id).data?.state,'working');
+    assert.equal(f.runtime.store.inboxItems().length,0);
+  }finally{f.close();}
+});
+
+test('Antigravity interruption survives late hooks and redraw probes without creating extra Inbox turns', async () => {
+  const f=fixture();try{
+    const project=await f.runtime.git.register(f.repo),tree=(await f.runtime.git.worktrees(project))[0];
+    const record:SessionRecord={id:'interruption-node',projectId:project.id,worktreeId:tree.id,cwd:tree.path,provider:'antigravity',providerThreadId:'11234567-1234-1234-1234-123456789abc',statusToken:'owned-launch',title:'Antigravity',closed:false,createdAt:new Date().toISOString()};
+    f.runtime.store.saveSession(record);
+    const screen=new TerminalScreen(()=>{},()=>{}),live:any={live:true,screen,turnStatus:new TerminalTurnStatus()};
+    (f.runtime.sessions as any).live.set(record.id,live);
+    const base=Date.now()-1000;
+    const publish=(state:string,event:string,offset:number)=>{fs.mkdirSync(path.dirname(statusFile(f.runtime.store.directory,record.id)),{recursive:true});fs.writeFileSync(statusFile(f.runtime.store.directory,record.id),JSON.stringify({token:record.statusToken,provider:record.provider,id:record.providerThreadId,state,event,toolCall:{name:'run_command',summary:'npm test'},at:new Date(base+offset).toISOString()}));};
+    publish('working','PreInvocation',0);f.runtime.sessions.status(project.id,record.id);
+    live.programStatus={data:{state:'interrupted',source:'provider-terminal',event:'native-interrupt-confirmation'},meta:{availability:'ready',stale:false,observedAt:new Date(base+100).toISOString()}};
+    publish('working','PreToolUse',200);
+    for(let i=0;i<13;i++){
+      assert.equal(f.runtime.sessions.status(project.id,record.id).data?.state,'interrupted');
+      (f.runtime.sessions as any).attentionStatus(record,live.lastHook);
+    }
+    assert.equal(f.runtime.store.db.prepare('SELECT count(*) n FROM turn_results').get()?.n,1);
+    publish('working','PreInvocation',300);assert.equal(f.runtime.sessions.status(project.id,record.id).data?.state,'working');
+    publish('completed','Stop',400);assert.equal(f.runtime.sessions.status(project.id,record.id).data?.state,'completed');
+    assert.equal(f.runtime.store.inboxItems().length,2,'A genuinely new invocation must retain its own outcome');
+  }finally{f.close();}
+});
+
+test('Inbox collapses historical duplicates of an exact turn observation without deleting rows or merging separate turns',()=>{
+  const f=fixture();try{
+    const project=f.runtime.store.register(f.repo);
+    const item={projectId:project.id,projectName:project.name,nodeId:'node',entityId:'node',runId:null,title:'Agent',source:'turn',outcome:'interrupted',at:'2026-10-26T08:13:08.318Z'};
+    for(let i=0;i<9;i++)f.runtime.store.db.prepare('INSERT INTO turn_results VALUES(?,?,?)').run(`duplicate-${i}`,item.at,JSON.stringify({...item,id:`duplicate-${i}`}));
+    const other={...item,id:'another-turn',at:'2026-10-26T08:14:00.000Z'};
+    f.runtime.store.db.prepare('INSERT INTO turn_results VALUES(?,?,?)').run(other.id,other.at,JSON.stringify(other));
+    assert.deepEqual(f.runtime.store.inboxItems().map(item=>item.id),['another-turn','duplicate-0']);
+    assert.equal(f.runtime.store.db.prepare('SELECT count(*) n FROM turn_results').get()?.n,10);
+  }finally{f.close();}
+});
+
+test('folder inventory detects git init without changing project identity or agent bindings', async () => {
+  const f = fixture();
+  try {
+    const folder = path.join(f.directory, 'plain workspace'); fs.mkdirSync(folder);
+    const project = f.runtime.store.register(folder, 'My workspace', 'folder');
+    assert.equal(project.kind, 'folder');
+    const tree = (await f.runtime.git.worktrees(project))[0];
+    const agent: SessionRecord = { id: 'saved-agent', projectId: project.id, worktreeId: tree.id, cwd: folder, provider: 'codex', title: 'My agent', closed: true, createdAt: new Date().toISOString() };
+    f.runtime.store.saveSession(agent);
+    f.runtime.store.rename(tree.id, 'My checkout');
+    execFileSync(GIT_PATH, ['init'], { cwd: folder, windowsHide: true, stdio: 'ignore' });
+    const [first, second] = await Promise.all([f.runtime.git.projects(), f.runtime.git.projects()]);
+    const updated = first.find(row => row.id === project.id)!;
+    assert.deepEqual(second, first);
+    assert.equal(updated.kind, 'git'); assert.equal(updated.name, 'My workspace');
+    assert.deepEqual(updated.paths, project.paths); assert.deepEqual(updated.repoIds, [project.id]);
+    assert.equal((await f.runtime.git.worktrees(updated))[0].id, tree.id);
+    assert.deepEqual(f.runtime.store.sessions(project.id), [agent]);
+    assert.equal(f.runtime.store.title(tree.id, ''), 'My checkout');
+    assert.equal((await f.runtime.git.register(folder)).id, project.id);
+    assert.equal(f.runtime.store.projects().length, 1);
+    assert.ok(f.calls.every(args => ['rev-parse', 'worktree'].includes(args[0])), 'Detection must never mutate Git');
+  } finally { f.close(); }
+});
+
+test('folder detection ignores nested, inherited and invalid repository markers', async () => {
+  const f = fixture();
+  try {
+    const nested = path.join(f.directory, 'container'); fs.mkdirSync(nested);
+    const child = path.join(nested, 'repo'); fs.mkdirSync(child);
+    const project = f.runtime.store.register(nested, undefined, 'folder');
+    execFileSync(GIT_PATH, ['init'], { cwd: child, windowsHide: true, stdio: 'ignore' });
+    const inherited = path.join(f.repo, 'child folder'); fs.mkdirSync(inherited);
+    const registered = f.runtime.store.register(inherited, 'Existing folder', 'folder');
+    const invalid = path.join(f.directory, 'invalid'); fs.mkdirSync(invalid); fs.writeFileSync(path.join(invalid, '.git'), 'not a repository');
+    const broken = f.runtime.store.register(invalid, undefined, 'folder');
+    await f.runtime.git.projects();
+    for (const item of [project, registered, broken]) assert.equal(f.runtime.store.project(item.id).kind, 'folder');
+  } finally { f.close(); }
+});
+
 test('project shortcuts validate commands, persist by project and stage once in a new owned shell', async () => {
   const f = fixture();
   try {
@@ -305,7 +400,7 @@ test('Antigravity native composer readiness is separate from unavailable lifecyc
 test('Chat sends text and validated attachments to all three owned terminals with ordered paste and a single submit', async () => {
   for (const provider of ['codex', 'claude', 'antigravity'] as const) {
     const f = fixture(), log = path.join(f.directory, 'input.jsonl');
-    const script = `const fs=require('node:fs');process.stdin.setRawMode(true);process.stdin.on('data',d=>{fs.appendFileSync(${JSON.stringify(log)},JSON.stringify(d.toString())+'\\n');if(d.includes('[200~'))process.stdout.write('\\x1b[2J\\x1b[H> Staged prompt');if(d.includes('\\r'))process.stdout.write('\\r\\n?\\x1b[1Cfor shortcuts');});process.stdout.write('READY\\r\\n?\\x1b[1Cfor shortcuts');`;
+    const script = "const fs=require('node:fs');let pending='';process.stdin.setRawMode(true);process.stdin.on('data',d=>{fs.appendFileSync(__LOG_FILE__,JSON.stringify(d.toString())+'\\n');pending+=d.toString();const match=pending.match(/\\x1b\\[200~([\\s\\S]*?)\\x1b\\[201~/);if(match){setTimeout(()=>process.stdout.write('\\x1b[2J\\x1b[H> [Pasted Content '+Array.from(match[1]).length+' chars]'),450);pending='';}if(d.includes('\\r'))process.stdout.write('\\x1b[2J\\x1b[H? for shortcuts\\r\\n> \\x1b[2mAsk Codex\\x1b[0m\\x1b[10G');});process.stdout.write('READY\\r\\n? for shortcuts\\r\\n> \\x1b[2mAsk Codex\\x1b[0m\\x1b[10G');".replace('__LOG_FILE__', JSON.stringify(log));
     const sessions = new AdeSessions(f.runtime.store, () => ({ executable: process.execPath, args: ['-e', script, '--'] }), async () => '11234567-1234-1234-1234-123456789abc', () => {}, () => {});
     Object.defineProperty(f.runtime, 'sessions', { value: sessions });
     let state = 'idle';

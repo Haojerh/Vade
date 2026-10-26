@@ -142,6 +142,22 @@ export class TerminalScreen {
     }
     return false;
   }
+  /** Codex's current composer, including its native large-paste capsule. */
+  codexComposerHasText(expected: string): boolean {
+    if (this.composerEmpty()) return false;
+    const buffer = this.terminal.buffer.active, row = buffer.baseY + buffer.cursorY;
+    const line = buffer.getLine(row);
+    if (!line) return false;
+    const rendered = line.translateToString(false, 0, buffer.cursorX).trimEnd();
+    const normalized = expected.replace(/\r\n?/g, '\n');
+    const capsule = rendered.match(/\[Pasted Content (\d+) chars\]$/);
+    const tail = normalized.split('\n').at(-1)?.split('\t').at(-1)?.trimEnd().slice(-Math.min(48, this.terminal.cols - 4));
+    if (capsule ? ![normalized.length, Array.from(normalized).length].includes(Number(capsule[1])) : !tail || !rendered.endsWith(tail)) return false;
+    for (let current = row; current >= Math.max(buffer.baseY, row - 50); current--) {
+      if (/^\s*[\u203a\u276f>]/.test(buffer.getLine(current)?.translateToString(true) ?? '')) return true;
+    }
+    return false;
+  }
   text(): string | null {
     const buffer = this.terminal.buffer.active;
     const lines: string[] = [];

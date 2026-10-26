@@ -28,7 +28,7 @@ dialog.node-modal-dialog.agent-details-dialog {
 
 .desktop-custom-titlebar dialog.node-modal-dialog { top: 36px; bottom: 0; max-height: min(85vh, calc(100dvh - 60px)); }
 .desktop-custom-titlebar dialog.node-modal-dialog:not(.confirmation-dialog) { min-height: min(480px, calc(100dvh - 60px)); }
-.desktop-custom-titlebar dialog.node-modal-dialog:is(.worktree-details-dialog, .composer-only-dialog) { min-height: 0; }
+.desktop-custom-titlebar dialog.node-modal-dialog:is(.worktree-details-dialog, .composer-only-dialog, .add-project-dialog) { min-height: 0; }
 dialog.node-modal-dialog.composer-only-dialog { min-height: 0; }
 .composer-only-dialog .agent-chatbox-section { margin-top: 0; padding-top: 0; border-top: 0; }
 

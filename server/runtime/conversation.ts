@@ -140,7 +140,11 @@ export function codeBuddyCommandOutput(record: SessionRecord): () => string {
 export function publicMessage(record: SessionRecord, line: string, sourceIdentity: string) {
   const visible = (message: ReturnType<typeof parseCoordinatorTranscriptLine>['message']) => {
     if (!message || message.role !== 'user' || !message.text.startsWith('[Vade workflow assignment; protocol 1.0.0]')) return message;
-    if (!message.text.includes('\nYou are the orchestrator.')) return null;
+    if (!message.text.includes('\nYou are the orchestrator.')) {
+      const role = message.text.indexOf('\nRole:\n'), task = message.text.indexOf('\nTask:\n', role), original = message.text.indexOf('\nOriginal user request:\n', task), end = message.text.lastIndexOf('\nPredecessor results (full results via context):\n');
+      if (role < 0 || task < role || original < task || end < original) return null;
+      return { ...message, text: 'Workflow assignment\n\nRole:\n' + message.text.slice(role + 7, task) + '\n\nTask:\n' + message.text.slice(task + 7, original) + '\n\nOriginal user request:\n' + message.text.slice(original + 24, end) };
+    }
     const marker = '\nOriginal user request:\n', start = message.text.indexOf(marker);
     return start < 0 ? null : { ...message, text: message.text.slice(start + marker.length) };
   };

@@ -14,7 +14,35 @@ export function worktreeId(projectId: string, directory: string): string {
 }
 
 export class AdeGit {
+  private folderScanOffset = 0;
+  private projectRefresh: Promise<Project[]> | null = null;
   constructor(readonly store: AdeStore, readonly runner: CommandRunner = defaultCommandRunner) {}
+
+  async projects(): Promise<Project[]> {
+    if (this.projectRefresh) return this.projectRefresh;
+    this.projectRefresh = (async () => {
+      const folders = this.store.projects().filter(project => project.kind === 'folder');
+      // Bound native probes and share concurrent inventory refreshes.
+      const selected = Array.from({ length: Math.min(10, folders.length) }, (_, index) => folders[(this.folderScanOffset + index) % folders.length]);
+      this.folderScanOffset = folders.length ? (this.folderScanOffset + selected.length) % folders.length : 0;
+      for (let index = 0; index < selected.length; index += 2) await Promise.all(selected.slice(index, index + 2).map(project => this.refreshProject(project)));
+      return this.store.projects();
+    })().finally(() => { this.projectRefresh = null; });
+    return this.projectRefresh;
+  }
+
+  private async refreshProject(project: Project): Promise<void> {
+    try {
+      const directory = localDirectory(project.paths[0]);
+      const marker = fs.lstatSync(path.join(directory, '.git'));
+      if (marker.isSymbolicLink() || (!marker.isDirectory() && !marker.isFile())) return;
+      const root = fs.realpathSync((await this.run(directory, ['rev-parse', '--show-toplevel'])).trim());
+      // Never widen a registered folder to an ancestor or nested repository.
+      if (path.relative(directory, root) !== '') return;
+      const current = this.store.project(project.id);
+      if (current.kind === 'folder' && current.paths[0] === project.paths[0]) this.store.promoteGitProject(project.id);
+    } catch { /* Keep the registered folder until its own repository is verified. */ }
+  }
 
   async run(cwd: string, args: string[]): Promise<string> {
     const result = await this.runner(GIT_PATH, args, { cwd, timeoutMs: 15000, maxStdout: 2 * 1024 * 1024, maxStderr: 8192 });
@@ -62,11 +90,15 @@ export class AdeGit {
       return [{ id: worktreeId(project.id, directory), path: directory, branch: null, main: true, locked: false }];
     }
     const raw = await this.run(project.paths[0], ['worktree', 'list', '--porcelain', '-z']);
+    const promotedRoot = this.store.promotedFolderPath(project.id);
     const trees: LocalWorktree[] = [];
     let current: LocalWorktree | null = null;
     for (const field of raw.split('\0')) {
       if (field.startsWith('worktree ')) {
-        const directory = field.slice(9);
+        const listed = field.slice(9);
+        // Git prints forward slashes on Windows. Preserve the original folder
+        // path spelling so existing worktree IDs and session bindings survive.
+        const directory = promotedRoot && path.relative(promotedRoot, listed) === '' ? promotedRoot : listed;
         current = { id: worktreeId(project.id, directory), path: directory, branch: null, main: trees.length === 0, locked: false };
         trees.push(current);
       } else if (current && field.startsWith('branch ')) current.branch = field.slice(7).replace(/^refs\/heads\//, '');

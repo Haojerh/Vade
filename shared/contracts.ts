@@ -601,6 +601,8 @@ export interface OrganizationNode {
 }
 export interface OrganizationConfig {
   version: 1; enabled: boolean; isolatedWorktrees: boolean;
+  closeWorkersOnCompletion?: boolean;
+  removeWorktreesOnCompletion?: boolean;
   orchestratorPosition?: { x: number; y: number };
   nodes: OrganizationNode[]; edges: { source: string; target: string }[];
 }

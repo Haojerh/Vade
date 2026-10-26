@@ -3,6 +3,16 @@ import type { AdeProvider, AgentInteraction } from '../../shared/contracts.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import { CliError } from '../integrations/cli.js';
 
+/** CodeBuddy hooks also run for permission checks that never open a widget. */
+export function codeBuddyApprovalVisible(screen: string): boolean {
+  const widget = screen.split('\n').map(line => line.replace(/^[\s\u2502\u2503|]+/, '').replace(/[\u2502\u2503|]\s*$/, '')).join('\n');
+  const heading = /(?:Do you want to (?:proceed|allow|run|make)|Are you sure you want to do this|Allow (?:this|the) ).{0,500}?\?/i;
+  return (heading.test(widget.replace(/\s+/g, ' ')) || heading.test(widget.replace(/\n/g, '').replace(/\s+/g, ' ')))
+    && /^\s*[\u203a\u276f>\u25cf]\s*[1-9][.)]\s+/m.test(widget)
+    && /^\s*[\u203a\u276f>\u25cf]?\s*1[.)]\s+(?:Yes|Allow)\b/im.test(widget)
+    && /^\s*[\u203a\u276f>\u25cf]?\s*[2-9][.)]\s+(?:No|Deny|Reject)\b/im.test(widget);
+}
+
 /** Read the current rendered choice UI only. Never interpret a transcript/tool result as a prompt. */
 export function terminalInteraction(screen: string, provider: AdeProvider, identity: string, approvalContext?: string): AgentInteraction | null {
   if (provider === 'terminal' || /multi.?select|space to (?:select|toggle)|select all that apply/i.test(screen)) return null;

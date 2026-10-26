@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import type {
   DashboardSnapshot,
   GitHubData,
@@ -248,8 +248,8 @@ export function useDashboard(): UseDashboardReturn {
     syncUrl(projectId, runId, nodeId);
   }, [selectedProjectId, selectedRunId, selectedNodeId, setSelectedProjectId, setSelectedRunId, nodeGeneration, nodeAbortRef, setSelectedRunIdState, setSelectedNodeIdState, setNodeDetails, setNodeDetailsError, setNodeDetailsLoading, syncUrl]);
 
-  const loadProjects = useCallback(async () => {
-    setProjectsLoading(true);
+  const loadProjects = useCallback(async (background = false) => {
+    if (!background) setProjectsLoading(true);
     setProjectsError(null);
     try {
       const section = await fetchProjects();
@@ -264,13 +264,30 @@ export function useDashboard(): UseDashboardReturn {
     } catch (err: any) {
       setProjectsError(err.message || 'Failed to load project inventory');
     } finally {
-      setProjectsLoading(false);
+      if (!background) setProjectsLoading(false);
     }
   }, [setSelectedProjectIdState]);
 
   useEffect(() => {
     loadProjects();
   }, [loadProjects]);
+
+  const hasFolderProjects = Boolean(inventorySection?.data?.projects.some(project => project.kind === 'folder'));
+  useEffect(() => {
+    if (!hasFolderProjects) return;
+    const refresh = () => { if (document.visibilityState === 'visible') void loadProjects(true); };
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener('focus', refresh);
+    return () => { window.clearInterval(timer); window.removeEventListener('focus', refresh); };
+  }, [hasFolderProjects, loadProjects]);
+
+  const selectedKind = inventorySection?.data?.projects.find(project => project.id === selectedProjectId)?.kind;
+  const previousKind = useRef({ id: selectedProjectId, kind: selectedKind });
+  useEffect(() => {
+    const previous = previousKind.current;
+    previousKind.current = { id: selectedProjectId, kind: selectedKind };
+    if (previous.id === selectedProjectId && previous.kind === 'folder' && selectedKind === 'git') void loadGitHub();
+  }, [selectedProjectId, selectedKind, loadGitHub]);
 
   // Global refresh
   const refreshAll = useCallback(() => {

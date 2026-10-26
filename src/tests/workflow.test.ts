@@ -13,6 +13,26 @@ import { WorkflowGraph } from '../features/workflow/WorkflowGraph';
 import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
 import type { Node, Edge, NodeDetails as NodeDetailsType } from '../../shared/contracts';
 import type { ConversationMessage } from '../../shared/contracts';
+import type { OrganizationConfig } from '../../shared/contracts';
+import { arrangeOrganization, connectionCreatesCycle } from '../features/organization/organizationGraph';
+
+test('workflow arrangement keeps fan-in dependencies and settings while separating execution stages', () => {
+  const config: OrganizationConfig = { version: 1, enabled: true, isolatedWorktrees: true, nodes: ['review', 'frontend', 'backend'].map(id => ({ id, title: id, prompt: id, provider: 'codebuddy', model: 'deepseek-v4.1-flash', effort: 'high', x: 0, y: 0 })), edges: [{ source: 'frontend', target: 'review' }, { source: 'backend', target: 'review' }] };
+  const arranged = arrangeOrganization(config);
+  const node = (id: string) => arranged.nodes.find(node => node.id === id)!;
+  assert.equal(node('frontend').x, node('backend').x);
+  assert.notEqual(node('frontend').y, node('backend').y);
+  assert.ok(node('review').x > node('frontend').x);
+  assert.ok(arranged.orchestratorPosition!.x < node('frontend').x);
+  assert.deepEqual(arranged.edges, config.edges);
+  assert.deepEqual(arranged.nodes.map(({x, y, ...node}) => node), config.nodes.map(({x, y, ...node}) => node));
+  assert.ok(config.nodes.every(node => node.x === 0 && node.y === 0), 'Arrange must not mutate the saved configuration');
+  assert.equal(connectionCreatesCycle(config, 'review', 'frontend'), true);
+  assert.equal(connectionCreatesCycle(config, 'frontend', 'backend'), false);
+  assert.equal(connectionCreatesCycle(config, 'review', 'review'), true);
+  const cyclic = { ...config, edges: [...config.edges, { source: 'review', target: 'frontend' }] };
+  assert.equal(arrangeOrganization(cyclic), cyclic);
+});
 
 test('conversation history prepends older turns, deduplicates boundaries and exposes older paging', () => {
   const older: ConversationMessage = { id: 'old', role: 'user', text: 'Older message', at: null };

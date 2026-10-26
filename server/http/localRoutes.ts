@@ -108,7 +108,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     if (pathname === '/api/workflow/setup-terminal/close') { requireMethod('POST'); queryKeys(); const owner = await body<{ projectId: string; nodeId: string }>(['projectId', 'nodeId']); runtime.organization.setup.closeTerminal(text(owner.projectId, 'setup project ID', 36), text(owner.nodeId, 'setup terminal ID', 36)); sendJson(200, { ok: true }); return; }
     if (pathname === '/api/workflow/config') {
       queryKeys();
-      if (method === 'POST') sendJson(200, await runtime.organization.configure(await body<import('../../shared/contracts.js').OrganizationConfig>(['version', 'enabled', 'isolatedWorktrees', 'nodes', 'edges', 'orchestratorPosition'], 150000)));
+      if (method === 'POST') sendJson(200, await runtime.organization.configure(await body<import('../../shared/contracts.js').OrganizationConfig>(['version', 'enabled', 'isolatedWorktrees', 'nodes', 'edges', 'orchestratorPosition', 'closeWorkersOnCompletion', 'removeWorktreesOnCompletion'], 150000)));
       else { requireMethod('GET'); sendJson(200, runtime.organization.config()); } return;
     }
     if (pathname === '/api/workflow/setup') {
@@ -236,8 +236,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     if (pathname === '/api/inbox') {
       requireMethod('GET'); queryKeys();
       const open = new Map<string, Set<string>>();
-      const items: InboxItem[] = runtime.store.db.prepare('SELECT data FROM (SELECT at, data FROM turn_results UNION ALL SELECT at, data FROM inbox_attention) ORDER BY at DESC LIMIT 200').all().map(row => {
-        const item: InboxItem = JSON.parse(String(row.data));
+      const items: InboxItem[] = runtime.store.inboxItems().map(item => {
         if (!open.has(item.projectId)) open.set(item.projectId, new Set(runtime.store.sessions(item.projectId).filter(session => !session.closed).map(session => session.id)));
         return item.nodeId && !open.get(item.projectId)!.has(item.nodeId) ? { ...item, nodeId: null } : item;
       });
@@ -258,7 +257,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
         const request = await body<RegisterProjectRequest>(['path', 'name', 'mode', 'url']);
         const project = await addProject(runtime.git, request);
         sendJson(201, { project });
-      } else { requireMethod('GET'); sendJson(200, section({ projects: runtime.store.projects() })); }
+      } else { requireMethod('GET'); sendJson(200, section({ projects: await runtime.git.projects() })); }
       return;
     }
     const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|interrupt|terminal|terminal-input|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|events))?)$/);

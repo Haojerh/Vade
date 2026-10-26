@@ -14,7 +14,7 @@ import { attachmentPaste, attachmentReference, decodeAttachments, storeAttachmen
 import { TerminalScreen } from './terminalScreen.js';
 import { isOpenCode, validProviderSessionId, createOpenCodeSession, verifyOpenCode, openCodePlugin, openCodeMajor } from './openCodeSessions.js';
 import { permissionArgs, readAgentPreferences } from './agentPreferences.js';
-import { answerCodeBuddyQuestion, terminalInteraction } from './interaction.js';
+import { answerCodeBuddyQuestion, codeBuddyApprovalVisible, terminalInteraction } from './interaction.js';
 import { ProviderChatControls } from './providerChatControls.js';
 import { OpenCodeChatControls } from './openCodeChatControls.js';
 import { CodeBuddyChatControls } from './codeBuddyChatControls.js';
@@ -201,15 +201,16 @@ export class AdeSessions {
 
   status(projectId: string, id: string) {
     const record = this.require(projectId, id), live = this.live.get(id);
-    const hook = readAgentStatus(this.store.directory, record, Boolean(live?.live));
+    const rawHook = readAgentStatus(this.store.directory, record, Boolean(live?.live));
+    const hook = this.attentionStatus(record, rawHook);
     if (live && (isOpenCode(record.provider) || record.provider === 'codebuddy') && hook.data) {
       hook.data = ['Stop','SessionAborted'].includes(hook.data.event) ? live.turnStatus.nativeEnd(hook.data, Date.parse(hook.meta.observedAt ?? '') || Date.now(), 5000) : live.turnStatus.observe(hook.data);
     }
-    if (live) live.lastHook = hook;
+    if (live) live.lastHook = rawHook;
     if (live?.resumeTurnObserved === false && hook.data?.state === 'working' && ['UserPromptSubmit', 'PreToolUse', 'PostToolUse'].includes(hook.data.event)) {
       live.resumeInitializing = false; live.resumeTurnObserved = true; live.turnStatus.observe(hook.data);
     }
-    if (live?.programStatus && hook.data?.state === 'working' && (record.provider === 'antigravity' || hook.data.event === 'UserPromptSubmit')
+    if (live?.programStatus && hook.data?.state === 'working' && (hook.data.event === 'UserPromptSubmit' || record.provider === 'antigravity' && hook.data.event === 'PreInvocation')
       && Date.parse(hook.meta.observedAt ?? '') > Date.parse(live.programStatus.meta.observedAt ?? '')) {
       live.programStatus = undefined; live.turnStatus.observe(hook.data);
     }
@@ -271,11 +272,12 @@ export class AdeSessions {
     } finally { this.sending.delete(id); this.statusChanged(projectId, record); }
   }
 
-  private observeResult(record: SessionRecord, status: Section<AgentStatus>): Section<AgentStatus> {
-    if (record.provider === 'terminal') return status;
-    if (status.meta.availability !== 'ready' || !status.data) { const workTime=this.workClock.observe(record,status); return status.data&&workTime?{...status,data:{...status.data,workTime}}:status; }
-    if (this.live.get(record.id)?.resumeInitializing && ['working', 'completed'].includes(status.data.state)) return { ...status, data: { state: 'idle', source: status.data.source, event: 'resume-initialization' } };
-    if (this.live.get(record.id)?.resumeTurnObserved === false && status.data.state === 'completed') return { ...status, data: { state: 'idle', source: status.data.source, event: 'resume-ready' } };
+  private attentionStatus(record: SessionRecord, status: Section<AgentStatus>): Section<AgentStatus> {
+    if (!status.data) return status;
+    if (record.provider === 'codebuddy' && status.data.state === 'waiting' && status.data.attention === 'approval') {
+      const visible = codeBuddyApprovalVisible(this.live.get(record.id)?.screen?.viewportText() ?? '');
+      return { ...status, data: { ...status.data, state: visible ? 'waiting' : 'working', attention: visible ? 'approval' : undefined, event: visible ? 'native-approval-prompt' : 'permission-check' } };
+    }
     if (record.provider === 'antigravity' && status.data.state === 'working' && status.data.event === 'PreToolUse' && status.data.toolCall?.summary) {
       const screen = this.live.get(record.id)?.screen?.text() ?? '';
       const summary = status.data.toolCall.summary;
@@ -286,6 +288,15 @@ export class AdeSessions {
         status = { ...status, data: { ...status.data, state: 'waiting', attention: 'approval', source: 'provider-terminal', event: 'native-approval-prompt' } };
       }
     }
+    return status;
+  }
+
+  private observeResult(record: SessionRecord, status: Section<AgentStatus>): Section<AgentStatus> {
+    if (record.provider === 'terminal') return status;
+    if (status.meta.availability !== 'ready' || !status.data) { const workTime=this.workClock.observe(record,status); return status.data&&workTime?{...status,data:{...status.data,workTime}}:status; }
+    if (this.live.get(record.id)?.resumeInitializing && ['working', 'completed'].includes(status.data.state)) return { ...status, data: { state: 'idle', source: status.data.source, event: 'resume-initialization' } };
+    if (this.live.get(record.id)?.resumeTurnObserved === false && status.data.state === 'completed') return { ...status, data: { state: 'idle', source: status.data.source, event: 'resume-ready' } };
+    status = this.attentionStatus(record, status);
     const workTime=this.workClock.observe(record,status);
     if(workTime)status={...status,data:{...status.data!,workTime}};
     const state = status.data!.state, previous = this.resultTurns.get(record.id);
@@ -376,6 +387,7 @@ export class AdeSessions {
     this.starting.add(record.id);
     // Even a new Codex thread starts through the native resume path below.
     const initializingCodex = record.provider === 'codex';
+    const initializeVariant = isOpenCode(record.provider) && !record.providerThreadId && Boolean(record.workflowLaunch?.effort);
     try {
       const node = executableOnPath('node');
       if (!node) throw new CliError('CLI_MISSING', 'Node.js is required for provider status hooks');
@@ -414,11 +426,34 @@ export class AdeSessions {
         resolved = { ...resolved, args: [...resolved.args, ...permissionArgs[record.provider][preference.mode]!] };
         const options = record.workflowLaunch;
         if (options?.model) resolved.args.push('--model', options.model);
-        if (options?.effort) resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
+        if (options?.effort && !isOpenCode(record.provider)) resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
       }
       if (this.shutdown.signal.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
-      return await this.startTerminal(record, resolved, initializingCodex);
+      const started = await this.startTerminal(record, resolved, initializingCodex);
+      // These TUIs have no --effort launch flag. Apply the explicit selection
+      // once through the same fenced, acknowledged picker used by live Chat.
+      // Resuming a session must not replay its original settings commands.
+      if (initializeVariant) await this.initializeOpenCodeVariant(started);
+      return started;
     } finally { this.starting.delete(record.id); }
+  }
+
+  private async initializeOpenCodeVariant(record: SessionRecord): Promise<void> {
+    const live = this.live.get(record.id), revision = live?.inputRevision;
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      if (!live?.live || this.shutdown.signal.aborted || this.live.get(record.id) !== live || this.require(record.projectId, record.id).statusToken !== record.statusToken || live.inputRevision !== revision) {
+        throw new CliError('RUNTIME_UNAVAILABLE', 'The new terminal changed before its effort could be applied. Inspect Terminal; no setting was replayed.');
+      }
+      await live.screen?.settled();
+      if (live.inputRevision !== revision) throw new CliError('RATE_LIMITED', 'Terminal input changed during startup. Select effort in Chat; no setting was replayed.');
+      if (live.screen?.openCodePromptReady()) {
+        await this.setChatOption(record.projectId, record.id, { key: 'effort', value: record.workflowLaunch!.effort! }, { model: record.workflowLaunch!.model });
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new CliError('RUNTIME_UNAVAILABLE', 'The agent started, but its effort could not be applied before startup timed out. Finish any setup in Terminal and select effort in Chat. No command was retried.');
   }
 
   private async startTerminal(record: SessionRecord, resolved: { executable: string; args: string[] }, initializingCodex = false): Promise<SessionRecord> {
@@ -476,8 +511,8 @@ export class AdeSessions {
     }, () => {
       if (record.provider === 'terminal') this.statusChanged(record.projectId, record);
       const hook = session.lastHook;
-      if (record.provider === 'antigravity' && this.live.get(record.id) === session && session.live && hook?.data?.event === 'PreToolUse' && hook.data.state === 'working' && hook.data.toolCall) {
-        const visible = this.observeResult(record, hook).data?.event === 'native-approval-prompt';
+      if (['antigravity', 'codebuddy'].includes(record.provider) && this.live.get(record.id) === session && session.live && hook?.data) {
+        const visible = this.attentionStatus(record, hook).data?.event === 'native-approval-prompt';
         if (visible !== Boolean(session.nativeApprovalVisible)) { session.nativeApprovalVisible = visible; this.statusChanged(record.projectId, record); }
       }
     });
@@ -579,6 +614,7 @@ export class AdeSessions {
 
   messagePromptReady(projectId: string, id: string): boolean {
     const record = this.require(projectId, id);
+    if (record.provider === 'codex') return this.live.get(id)?.screen?.composerEmpty() === true;
     return !isOpenCode(record.provider) || this.live.get(id)?.screen?.openCodePromptReady() === true;
   }
   handoffPromptReady(projectId: string, id: string): boolean {
@@ -746,6 +782,7 @@ export class AdeSessions {
     // only within this locked send, while every write still checks fresh status/liveness.
     const initialNativeReady = record.provider === 'antigravity' && antigravityPromptReady(session?.screen?.text() ?? session?.buffer ?? '');
     const initialCodeBuddyReady = record.provider === 'codebuddy' && session?.screen?.codeBuddyPromptReady() === true;
+    const initialCodexReady = record.provider === 'codex' && session?.screen?.composerEmpty() === true;
     const openCodeReady = !isOpenCode(record.provider) || session?.screen?.openCodePromptReady() === true;
     if (typeof request.message !== 'string' || request.message.length > (internalWorkflow ? 48000 : 10000) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(request.message)) throw new CliError('INVALID_ARGUMENT', 'Message exceeds the allowed length or contains terminal control codes');
     const uploads = decodeAttachments(request.attachments);
@@ -754,6 +791,7 @@ export class AdeSessions {
     const writable = () => {
       if (!session?.live || this.live.get(id) !== session) throw new CliError('RUNTIME_UNAVAILABLE', 'This session is stopped. Open Terminal to resume it before sending.');
       if (!openCodeReady) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal and finish native setup before sending.');
+      if (record.provider === 'codex' && !initialCodexReady) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty Codex prompt and finish native trust/sign-in setup in Terminal before sending.');
       const status = this.status(projectId, id);
       if (request.requireIdle && status.data?.state === 'working') throw new CliError('RUNTIME_UNAVAILABLE', 'The agent started working. This queued task was not submitted.');
       if (request.requireIdle && this.store.sessions(projectId).some(other => other.id !== id && !other.closed && other.worktreeId === record.worktreeId
@@ -778,30 +816,43 @@ export class AdeSessions {
       const references = files.filter(file => !usesNativeFileAttachment(record.provider, file)).map(attachmentReference);
       const prompt = [...references, request.message.trim() || 'Please review the attached files.'].join('\n');
       await write(`\x1b[200~${prompt.replace(/\r\n?/g, '\n')}\x1b[201~`);
-      if (record.provider === 'codebuddy') {
+      if (record.provider === 'codebuddy' || record.provider === 'codex') {
         const deadline = Date.now() + 5000;
         for (;;) {
           await session!.screen?.settled(); writable();
-          if (session!.screen?.codeBuddyComposerHasText(prompt)) break;
-          if (Date.now() >= deadline) throw new CliError('CLI_TIMEOUT', 'CodeBuddy has not rendered the pasted message. Inspect Terminal before submitting; no Enter was sent.');
+          if (record.provider === 'codex' ? session!.screen?.codexComposerHasText(prompt) : session!.screen?.codeBuddyComposerHasText(prompt)) break;
+          if (Date.now() >= deadline) throw new CliError('CLI_TIMEOUT', 'The agent has not rendered the pasted message. Inspect Terminal before submitting; no Enter was sent.');
           await new Promise(resolve => setTimeout(resolve, 40));
         }
       } else await new Promise(resolve => setTimeout(resolve, 300));
       writable();
       if (submit) {
-        const beforeSubmit = record.provider === 'codebuddy' ? this.status(projectId, id).meta.observedAt : undefined;
+        const beforeSubmit = this.status(projectId, id).meta.observedAt;
+        let beforeOutput = session!.start + session!.buffer.length;
         if (session!.resumeTurnObserved === false) session!.resumePromptSubmitted = true;
         await this.command(session!, { type: 'input', data: '\r' });
-        if (record.provider === 'codebuddy') {
-          const deadline = Date.now() + 5000;
+        if (record.provider === 'codebuddy' || record.provider === 'codex') {
+          const started = Date.now(), deadline = started + 5000;
+          let retried = false, lastOutput = beforeOutput, stableSince = started;
           for (;;) {
             await session!.screen?.settled();
-            if (!session!.live || this.live.get(id) !== session) throw new CliError('RUNTIME_UNAVAILABLE', 'CodeBuddy stopped before confirming submission.');
+            if (!session!.live || this.live.get(id) !== session) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent stopped before confirming submission.');
             const observed = this.status(projectId, id);
             const freshActivity = observed.meta.availability === 'ready' && !observed.meta.stale && observed.meta.observedAt
               && observed.meta.observedAt !== beforeSubmit && ['working', 'waiting', 'blocked', 'completed', 'failed', 'interrupted'].includes(observed.data?.state ?? '');
-            if (freshActivity || session!.screen?.composerEmpty(false, true)) break;
-            if (Date.now() >= deadline) throw new CliError('CLI_TIMEOUT', 'CodeBuddy has not confirmed submission. Inspect Terminal; Enter was sent once and will not be retried.');
+            const output = session!.start + session!.buffer.length, now = Date.now();
+            if (freshActivity || output !== beforeOutput && session!.screen?.composerEmpty(false, record.provider === 'codebuddy')) break;
+            if (output !== lastOutput) { lastOutput = output; stableSince = now; }
+            // One user-authorized recovery Enter, only after a fresh, stable
+            // redraw still proves this exact draft is unsubmitted and idle.
+            // Missing evidence, busy states and write failures remain uncertain.
+            if (record.provider === 'codex' && !retried && output !== beforeOutput && now - started >= 1000 && now - stableSince >= 600
+              && observed.meta.availability === 'ready' && !observed.meta.stale && observed.data?.state === 'idle'
+              && !/esc(?:ape)? to interrupt|queued message/i.test(session!.screen?.viewportText() ?? '') && session!.screen?.codexComposerHasText(prompt)) {
+              writable(); retried = true; beforeOutput = output;
+              await this.command(session!, { type: 'input', data: '\r' });
+            }
+            if (now >= deadline) throw new CliError('CLI_TIMEOUT', 'The agent has not confirmed submission. Inspect Terminal before sending again.');
             await new Promise(resolve => setTimeout(resolve, 40));
           }
         }

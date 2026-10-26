@@ -95,8 +95,8 @@ export class LocalRuntime {
       }
       for (const run of workflows) for (const step of run.steps) {
         if (!step.sessionId || !nodes.some(node => node.id === step.sessionId)) continue;
-        const predecessors = run.config.edges.filter(edge => edge.target === step.nodeId).map(edge => run.steps.find(item => item.nodeId === edge.source)?.sessionId).filter((id): id is string => Boolean(id));
-        for (const source of predecessors.length ? predecessors : [run.orchestratorId]) if (nodes.some(node => node.id === source)) edges.push({ id: `workflow-${run.id}-${source}-${step.sessionId}`, source, target: step.sessionId, kind: 'delegates', evidence: 'run-dispatch', active: step.state === 'running' });
+        const source = run.orchestratorId;
+        if (nodes.some(node => node.id === source)) edges.push({ id: `workflow-${run.id}-${source}-${step.sessionId}`, source, target: step.sessionId, kind: 'delegates', evidence: 'run-dispatch', active: step.state === 'running' });
       }
       const graph: Graph = { runs: [], selectedRunId: null, nodes, edges, tasks: [], progress: taskProgress([], 'unavailable'), activity: [] };
       const snapshot: DashboardSnapshot = { projectId, generatedAt: now, revision: crypto.createHash('sha256').update(JSON.stringify({ nodes: nodes.map(({ observedAt, ...node }) => node), edges })).digest('hex'),

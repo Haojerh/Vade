@@ -20,6 +20,7 @@
 .scm-review-toolbar { z-index:1; background:var(--surface-1); }
 .scm-activity-region { position:relative; flex:0 0 auto; min-height:0; }
 .scm-activity-region .scm-activity .github-panel { height:var(--scm-activity-height,340px); min-height:var(--scm-activity-height,340px); }
+.scm-activity-region .scm-activity .github-panel.github-folder-panel { height:auto; min-height:0; max-height:var(--scm-activity-height,340px); overflow-y:auto; overscroll-behavior-y:contain; }
 .scm-activity-resize { position:absolute; top:-4px; left:0; right:0; height:8px; padding:0; border:0; background:transparent; z-index:3; cursor:row-resize; touch-action:none; }
 .scm-activity-resize::after { content:''; position:absolute; left:0; right:0; top:3px; height:2px; background:transparent; }
 .scm-activity-resize:hover::after,.scm-activity-resize:focus-visible::after { background:var(--focus-ring); }

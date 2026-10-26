@@ -19,6 +19,33 @@ import { readOpenCodePage, readOpenCodeModel } from './opencode.js';
 import { readAntigravityToolActivity } from './antigravity.js';
 
 import { transcriptToolActivity, databaseToolActivity, toolLabel, toolActivityFromCall, toolEditPreview } from './toolActivity.js';
+import { publicMessage } from '../runtime/conversation.js';
+import type { SessionRecord } from '../runtime/store.js';
+
+test('recorded const patch arguments expose bounded edits across tool wrappers without evaluating code', () => {
+  const patch = '*** Begin Patch\n*** Update File: a.ts\n@@\n-before\n+after\n*** End Patch';
+  const code = `const patch = ${JSON.stringify(patch)}; text(await tools.apply_patch(patch));`;
+  for (const input of [code, {code}]) {
+    const item = toolActivityFromCall('s','call','exec',input,null)!;
+    assert.equal(item.label,'Edit: a.ts');
+    assert.deepEqual(item.edits?.[0].lines,[{kind:'remove',text:'before'},{kind:'add',text:'after'}]);
+  }
+  assert.deepEqual(toolEditPreview({code:'const patch = readSecret(); await tools.apply_patch(patch);'}),[]);
+  assert.deepEqual(toolEditPreview({code:`const patch = ${JSON.stringify(patch)}; patch = unknown; await tools.apply_patch(patch);`}),[]);
+});
+
+test('workflow workers expose assignment task data while keeping private protocol instructions out of public chat', () => {
+  const assignment = '[Vade workflow assignment; protocol 1.0.0]\nYou are worker node backend: Backend.\nPRIVATE_RUNTIME_INSTRUCTIONS\nRole:\nBuild the API\nTask:\nImplement accounts\nOriginal user request:\nCreate a webapp\nPredecessor results (full results via context):\n[]\nReport through the private CLI.';
+  for (const provider of ['codex','claude','codebuddy'] as const) {
+    const record = {provider,providerThreadId:'s'} as SessionRecord;
+    const row = provider==='codex' ? {type:'response_item',payload:{type:'message',role:'user',content:[{type:'input_text',text:assignment}]}}
+      : provider==='claude' ? {type:'user',sessionId:'s',message:{role:'user',content:[{type:'text',text:assignment}]}}
+      : {type:'message',role:'user',sessionId:'s',content:[{type:'text',text:assignment}]};
+    const text = publicMessage(record,JSON.stringify(row),'s')?.text;
+    assert.equal(text,'Workflow assignment\n\nRole:\nBuild the API\n\nTask:\nImplement accounts\n\nOriginal user request:\nCreate a webapp');
+    assert.ok(!text.includes('PRIVATE_RUNTIME_INSTRUCTIONS')); assert.ok(!text.includes('private CLI'));
+  }
+});
 
 test('edit previews normalize provider argument formats and stay bounded', () => {
   for (const [name, input] of [

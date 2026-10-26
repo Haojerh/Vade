@@ -57,7 +57,7 @@ test('GitHubPanel displays no github connected message for folder projects', () 
     query: { scope: 'general' },
     onRefresh: () => {},
   }));
-  assert.ok(html.includes('No GitHub connected for project'));
+  assert.ok(html.includes('No GitHub repository'));
   assert.ok(html.includes('github-folder-empty-state'));
   assert.ok(!html.includes('github-tabs-nav'));
   assert.ok(!html.includes('github-scope-selector'));

@@ -31,6 +31,8 @@ After all isolated stream nodes complete, `integrate {}`. Vade stops those worke
 
 On failure, inspect the reported result, explain it and `finish {"outcome":"failed","summary":"..."}`; do not silently skip a required node. On success collect all results, confirm integration, then `finish {"outcome":"completed","summary":"final evidence and limitations"}`. Return that synthesis to the user in the normal conversation. A run is complete only after explicit finish. Stay in the coordination loop until finish or cancel; don't leave a live workflow unattended.
 
+Coordinator reporting: a submitted dispatch or running workflow step means an assignment was accepted; it does not establish observed execution. Check `context.terminals` before claiming active work. Never infer activity from process liveness. Report uncertain delivery explicitly and never resend it. A folder trust/sign-in prompt requires the user to complete native setup; never approve it yourself. After planning independent isolated streams, dispatch every ready stream before waiting for results; do not serialize them by habit. Shared checkouts and explicit graph dependencies still require sequential execution. Explain any task dependency that prevents otherwise independent frontend/backend streams from running together.
+
 ## Worker
 
 You own only the assigned node in this run. `context` gives your role, assignment, predecessor results and authorized messages. Work only in the assigned cwd. Never launch extra agents, change another node, edit outside the checkout, merge branches, or contact nodes other than your direct successors/orchestrator through `message`. A message never authorizes a dependent node to start early.

@@ -56,10 +56,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   const titleId = `${instanceId}-github-title`;
   const tabId = (tab: GitHubTabKey) => `${instanceId}-tab-${tab}`;
   const panelId = (tab: GitHubTabKey) => `${instanceId}-panel-${tab}`;
-  const isFolder =
-    projectKind === 'folder' ||
-    project?.kind === 'folder' ||
-    data?.projectKind === 'folder';
+  const isFolder = (project?.kind ?? projectKind ?? data?.projectKind) === 'folder';
   const [activeTab, setActiveTab] = useState<GitHubTabKey>('commits');
   const [graphRefresh, setGraphRefresh] = useState(0);
   const graph = useCommitGraph(projectId, query.scope === 'worktree' ? query.nodeId : undefined, worktreeBranch, graphRefresh+refreshVersion, !isFolder, project?.repoIds.join('|'));
@@ -154,7 +151,7 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
   }, [activeTab]);
 
   return (
-    <section className={`dashboard-panel github-panel ${embedded ? 'worktree-history-panel' : ''}`} aria-labelledby={embedded?titleId:undefined} aria-label={embedded?undefined:'Repository activity'}>
+    <section className={`dashboard-panel github-panel ${isFolder ? 'github-folder-panel' : ''} ${embedded ? 'worktree-history-panel' : ''}`} aria-labelledby={embedded?titleId:undefined} aria-label={embedded?undefined:'Repository activity'}>
       {/* Panel Header */}
       {embedded&&<div className="panel-header github-header">
         <div className="github-header-top">
@@ -230,24 +227,12 @@ export const GitHubPanel: React.FC<GitHubPanelProps> = ({
       {isFolder ? (
         <div className="github-folder-empty-state" role="status">
           <div className="github-folder-empty-icon" aria-hidden="true">
-            <svg
-              width="32"
-              height="32"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            >
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              <line x1="9" y1="13" x2="15" y2="13" />
-            </svg>
+            <Icon name="github" size={20} />
           </div>
-          <h3 className="github-folder-empty-title">No GitHub connected for project</h3>
-          <p className="github-folder-empty-desc">
-            This project is a local folder workspace and is not linked to a Git repository or GitHub remote.
-          </p>
+          <div>
+            <h3 className="github-folder-empty-title">No GitHub repository</h3>
+            <p className="github-folder-empty-desc">This is a local folder workspace. Add a Git repository with a GitHub remote to view its activity.</p>
+          </div>
         </div>
       ) : (
         <>

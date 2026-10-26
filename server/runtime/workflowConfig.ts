@@ -12,7 +12,9 @@ export function bounded(value: unknown, max: number, label: string, multiline = 
   return value.trim();
 }
 export function validateOrganization(value: OrganizationConfig): OrganizationConfig {
-  fields(value, ['version', 'enabled', 'isolatedWorktrees', 'nodes', 'edges', 'orchestratorPosition']);
+  fields(value, ['version', 'enabled', 'isolatedWorktrees', 'nodes', 'edges', 'orchestratorPosition', 'closeWorkersOnCompletion', 'removeWorktreesOnCompletion']);
+  for (const key of ['closeWorkersOnCompletion', 'removeWorktreesOnCompletion'] as const) if (value[key] !== undefined && typeof value[key] !== 'boolean') invalid('Invalid workflow cleanup option');
+  if (value.removeWorktreesOnCompletion && !value.closeWorkersOnCompletion) invalid('Close worker tabs before removing workflow worktrees');
   if (value.orchestratorPosition !== undefined) {
     fields(value.orchestratorPosition, ['x', 'y']);
     if (![value.orchestratorPosition.x, value.orchestratorPosition.y].every(v => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 10000)) invalid('Invalid orchestrator position');
