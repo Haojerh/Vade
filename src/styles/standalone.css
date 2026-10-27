@@ -171,6 +171,7 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .project-shortcut-copy small { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text-muted); font: 10px/1.4 var(--font-mono); }
 .project-shortcut-action-button { flex: 0 0 28px; justify-content: center; width: 28px; height: 28px; padding: 0 !important; border-radius: 6px; color: var(--text-muted) !important; }
 .project-shortcut-action-button:hover { background: transparent; color: var(--text-main) !important; }
+.project-shortcut-remove-button { margin-right: 3px; }
 .project-shortcut-row button.text-danger, .project-shortcut-action-button.text-danger:hover { color: var(--state-failed-text) !important; }
 .project-shortcut-add { display: flex; align-items: center; gap: 7px; width: calc(100% - 16px); margin: 0 8px 8px; padding: 9px 7px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font: inherit; text-align: left; cursor: pointer; }
 .project-shortcut-add:hover:not(:disabled) { background: var(--surface-active); color: var(--text-main); }
