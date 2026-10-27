@@ -42,6 +42,8 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [refresh, setRefresh] = useState(0);
+  const catalogRetries = useRef(0);
   const effortRequests = useRef(new Set<string>());
   useEffect(() => () => { request.current?.abort(); mutation.current?.abort(); }, []);
   useEffect(() => {
@@ -62,7 +64,14 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : 'Unable to load agent settings.');
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
-  }, [overlay.present, overlay.closing, projectId, nodeId, runId, cacheKey]);
+  }, [overlay.present, overlay.closing, projectId, nodeId, runId, cacheKey, refresh]);
+
+  useEffect(() => {
+    if (!overlay.present || overlay.closing) { catalogRetries.current = 0; return; }
+    if (loading || saving || error || options?.provider !== 'dsh' || options.models.length || catalogRetries.current >= 15) return;
+    const timer = setTimeout(() => { catalogRetries.current++; setRefresh(value => value + 1); }, 1000);
+    return () => clearTimeout(timer);
+  }, [overlay.present, overlay.closing, loading, saving, error, options]);
 
   async function change(key: SetAgentChatOptionRequest['key'], value: string) {
     if (saving || (loading && !options) || disabled || overlay.closing) return;
@@ -119,7 +128,7 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
             <span><strong>{item.label}</strong>{item.description && <span className="text-muted">{item.description}</span>}</span>
             {current?.model === item.id && <Icon name="check" size={16} />}
           </button>)}
-          {!models.length && <p className="agent-settings-message">{options?.models.length ? 'No matching models.' : ['codebuddy','opencode','opencode2','kilo'].includes(options?.provider ?? '') ? 'Change model and effort in Terminal. Current settings appear after a recorded turn.' : 'No model catalog available.'}</p>}
+          {!models.length && <p className="agent-settings-message">{options?.models.length ? 'No matching models.' : options?.provider === 'dsh' ? 'Waiting for the native DSH model catalog. Finish setup in Terminal; reopen this picker to retry.' : ['codebuddy','opencode','opencode2','kilo'].includes(options?.provider ?? '') ? 'Change model and effort in Terminal. Current settings appear after a recorded turn.' : 'No model catalog available.'}</p>}
         </div>
         {options?.controls.providerPicker && options.provider !== 'codebuddy' && <button type="button" className="agent-settings-native" disabled={locked} onClick={() => void change('providerPicker', 'open')}>Open model picker in Terminal</button>}
         {options?.controls.effort && !!selected?.efforts.length && <div className="agent-chat-option-row"><span>Effort</span><SegmentedControl key={selected.id} label="Effort" choices={selected.efforts.map(item => ({ ...item, label: item.value === 'medium' ? 'Med' : item.label }))} value={current?.effort} disabled={locked} onChange={value => void change('effort', value)} /></div>}

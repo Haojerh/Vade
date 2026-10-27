@@ -1,6 +1,6 @@
 import type { ConversationMessage } from '../../shared/contracts.js';
 import { publicTranscriptRecord } from './shared.js';
-import { hashId,isSystemInjectedUserText,toIsoOrNull } from './transcriptUtils.js';
+import { hashId,isCodexTurnAbortedNotice,isSystemInjectedUserText,toIsoOrNull } from './transcriptUtils.js';
 
 export function parseCoordinatorTranscriptLine(
   line: string,
@@ -30,7 +30,8 @@ export function parseCoordinatorTranscriptLine(
     for (const b of contentBlocks) {
       if ((b.type === 'output_text' || b.type === 'input_text' || b.type === 'text') && typeof b.text === 'string') {
         const trimmed = b.text.trim();
-        if (role === 'user' && isSystemInjectedUserText(trimmed, false)) {
+        if (role === 'user' && (isSystemInjectedUserText(trimmed, false)
+          || (provider === 'codex' && isCodexTurnAbortedNotice(trimmed)))) {
           omitted = true;
           continue;
         }

@@ -94,6 +94,32 @@ export class TerminalScreen {
       && this.composerEmpty(false, true);
   }
 
+  dshPromptReady(): boolean {
+    const screen = this.viewportText();
+    return !/Welcome to dsh|Step \d of \d|skip the guide|starting|session browser/i.test(screen)
+      && this.dshComposerText() === '';
+  }
+
+  private dshComposerText(): string | null {
+    const buffer = this.terminal.buffer.active, cursor = buffer.baseY + buffer.cursorY;
+    const rows: string[] = [];
+    for (let row = cursor; row >= Math.max(buffer.baseY, cursor - 100); row--) {
+      const line = buffer.getLine(row)?.translateToString(true) ?? '';
+      if (/^\s*╭─{3,}/.test(line)) {
+        const first = rows[0];
+          if (!first || !/^\s*(?:⌸\s*)?❯/.test(first)) return null;
+          return rows.join('\n').replace(/^\s*(?:⌸\s*)?❯\s?/, '').replace(/\s+/g, ' ').trim();
+      }
+      if (/^\s*╰─{3,}/.test(line)) return null;
+      rows.unshift(line.replace(/\s*⛶\s*$/, '').replace(/^\s*│|│\s*$/g, ''));
+    }
+    return null;
+  }
+
+  dshComposerHasText(expected: string): boolean {
+    return this.dshComposerText() === expected.replace(/\s+/g, ' ').trim();
+  }
+
   composerEmpty(antigravity = false, codebuddy = false): boolean {
     const buffer = this.terminal.buffer.active;
     const row = codebuddy && this.nativeCaret ? this.nativeCaret.row : buffer.baseY + buffer.cursorY;

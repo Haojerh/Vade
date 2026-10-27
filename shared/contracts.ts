@@ -70,7 +70,7 @@ export interface UsageData {
 }
 
 export interface LocalConnection {
-  id: 'github' | 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo';
+  id: 'github' | 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh';
   label: string;
   installed: boolean;
   connected: boolean | null;
@@ -163,8 +163,8 @@ export interface AgentStatus { state: State; source: 'provider-hook' | 'provider
 
 export type AgentPermissionMode = 'manual' | 'auto' | 'yolo';
 export interface AgentPreferences {
-  defaultAgent: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo';
-  providers: Record<'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo', { enabled: boolean; mode: AgentPermissionMode }>;
+  defaultAgent: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh';
+  providers: Record<'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh', { enabled: boolean; mode: AgentPermissionMode }>;
 }
 export interface AgentInteraction {
   id: string;
@@ -544,7 +544,7 @@ export interface LocalFolders {
   folders: { name: string; path: string }[];
   limited: boolean;
 }
-export type AdeProvider = 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'terminal';
+export type AdeProvider = 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' | 'terminal';
 export interface AgentHistorySession {
   id: string;
   provider: Exclude<AdeProvider, 'terminal'>;
@@ -574,7 +574,7 @@ export interface AgentHistoryPage {
   warnings: string[];
 }
 export interface ResumeHistoryRequest { sessionId: string; worktreeId: string }
-export interface ProjectShortcut { id: string; label: string; action: 'terminal' | 'agent'; command: string; appendEnter: boolean; agent: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' }
+export interface ProjectShortcut { id: string; label: string; action: 'terminal' | 'agent'; command: string; appendEnter: boolean; agent: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' }
 export interface RunProjectShortcutResponse { nodeId: string; staged: boolean; message: string }
 export interface TerminalPage {
   cols?: number;
@@ -659,8 +659,9 @@ export interface StartSpeechResponse { sessionId: string }
 export interface WorkspaceEntry { path: string; name: string; directory: boolean; symlink: boolean; status: string | null }
 export interface WorkspaceRoot { id: string; label: string; path: string; branch: string | null }
 export interface SessionHandoff { sourceId: string; context: 'focused' | 'full'; delivery: 'pending' | 'submitted' | 'uncertain' }
-export interface HandoffSessionRequest { agentId: string; context: 'focused' | 'full' }
+export interface HandoffSessionRequest { agentId: string; context: 'focused' | 'full'; worktreeId: string }
 export interface HandoffSessionResponse { nodeId: string; handoff: SessionHandoff }
+export interface HandoffWorktree { id: string; label: string; branch: string | null; path: string; main: boolean; locked: boolean; current: boolean }
 export interface DesktopUpdateStatus {
   state: 'unsupported' | 'idle' | 'checking' | 'current' | 'available' | 'downloading' | 'ready' | 'installing' | 'error';
   currentVersion: string;

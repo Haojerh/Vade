@@ -17,7 +17,7 @@ import { DialogActions } from '../../components/ui/DialogActions';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { arrangeOrganization, connectionCreatesCycle as cycle } from './organizationGraph';
 
-const labels: Record<WorkflowProvider, string> = { codex: 'Codex', claude: 'Claude Code', antigravity: 'Antigravity', codebuddy: 'CodeBuddy', opencode: 'OpenCode', opencode2: 'OpenCode 2', kilo: 'Kilo Code' };
+const labels: Record<WorkflowProvider, string> = { codex: 'Codex', claude: 'Claude Code', antigravity: 'Antigravity', codebuddy: 'CodeBuddy', opencode: 'OpenCode', opencode2: 'OpenCode 2', kilo: 'Kilo Code', dsh: 'DeepSeek Harness' };
 
 function NodeEditor({ node, graph, onDependencyChange, onChange, onRemove }: { node: OrganizationNode; graph: OrganizationConfig; onDependencyChange: (source: string, enabled: boolean) => void; onChange: (patch: Partial<OrganizationNode>) => void; onRemove: () => void }) {
   const [models, setModels] = useState<WorkflowModel[]>([]), [loading, setLoading] = useState(false), [error, setError] = useState<string | null>(null), [revision, setRevision] = useState(0);
@@ -35,7 +35,7 @@ function NodeEditor({ node, graph, onDependencyChange, onChange, onRemove }: { n
     <div className="organization-provider-field"><span>Agent provider</span><AgentPicker agents={catalog?.installed.filter(agent => agent.id in labels) ?? []} value={node.provider} loading={detecting} error={detectionError} onRetry={() => void refresh()} onChange={provider => onChange({ provider: provider as WorkflowProvider, model: null, effort: null })} /></div>
     <label>Model<WorkflowModelPicker key={node.provider} models={models} value={node.model ?? ''} disabled={loading} onChange={value => onChange({ model: value || null, effort: null })} /></label>
     {node.provider !== 'antigravity' && <label>Effort / Thinking<Select value={node.effort ?? ''} disabled={!model?.efforts.length && !node.effort} onChange={event => onChange({ effort: event.target.value || null })}><option value="">Provider default</option>{node.effort && !model?.efforts.includes(node.effort) && <option value={node.effort} disabled>{node.effort} · unverified</option>}{model?.efforts.map(effort => <option key={effort} value={effort}>{effort}</option>)}</Select></label>}
-    <p className="organization-note">{loading ? 'Reading provider model catalog…' : model && !model.efforts.length ? 'This model advertises no separate effort choices.' : 'Model-specific choices from the native provider. Selections apply when this node launches.'}</p>
+    <p className="organization-note">{loading ? 'Reading provider model catalog…' : error ? 'The provider catalog could not be refreshed.' : model && !model.efforts.length ? 'This model advertises no separate effort choices.' : 'Model-specific choices from the native provider. Selections apply when this node launches.'}</p>
     {error && <div className="organization-note" role="status">{error} <button className="btn btn-secondary btn-xs" onClick={() => setRevision(value => value + 1)}>Retry catalog</button></div>}
     <fieldset className="organization-dependency-picker"><legend>Wait for</legend><p>Start after every selected agent finishes. Leave empty to start from the orchestrator.</p>{graph.nodes.filter(candidate => candidate.id !== node.id).map(candidate => {
       const checked = graph.edges.some(edge => edge.source === candidate.id && edge.target === node.id);

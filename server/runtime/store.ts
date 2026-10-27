@@ -21,7 +21,11 @@ export interface SessionRecord {
   statusToken?: string;
   shell?: TerminalShell;
   workflowLaunch?: { model: string | null; effort: string | null };
-  handoff?: import('../../shared/contracts.js').SessionHandoff & { prompt: string; launchToken: string | undefined };
+  handoff?: import('../../shared/contracts.js').SessionHandoff & {
+    prompt: string; launchToken: string | undefined;
+    sourceThreadId: string | undefined; sourceLaunchToken: string | undefined;
+    sourceWorktreeId?: string; sourceCwd?: string;
+  };
 }
 
 export function adeDataDirectory(): string {

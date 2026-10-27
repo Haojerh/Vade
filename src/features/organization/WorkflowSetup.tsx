@@ -26,7 +26,7 @@ export function WorkflowSetup() {
       else void workflowRequest('setup-terminal/close', { projectId: next.projectId, nodeId: next.nodeId }).catch(() => {});
     } catch (error) { if (mounted.current) setError((error as Error).message); } finally { if (mounted.current) setOpening(false); }
   }
-  const agents = catalog?.installed.filter(agent => ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(agent.id)) ?? [];
+  const agents = catalog?.installed.filter(agent => ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh'].includes(agent.id)) ?? [];
   return <section className="organization-setup">
     <DesktopUpdateSettings />
     {error && <p role="alert" className="organization-error">{error}</p>}

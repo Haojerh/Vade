@@ -4,8 +4,10 @@ import path from 'node:path';
 import type { AdeProvider, AgentStatus, Section } from '../../shared/contracts.js';
 import type { SessionRecord } from './store.js';
 import { CliError } from '../integrations/cli.js';
+import { dshStatus } from './dsh.js';
 
 export const STATUS_EVENTS = {
+  dsh: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'],
   codex: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Stop', 'Interrupt'],
   claude: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure'],
   codebuddy: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'PermissionRequest', 'Notification', 'Stop', 'StopFailure'],
@@ -82,7 +84,7 @@ process.stdin.on('end',()=>process.exit(0)); process.stdin.on('error',()=>proces
 export function statusFile(directory: string, id: string): string { return path.join(directory, 'status', id + '.json'); }
 
 export function installStatusHooks(directory: string, provider: AdeProvider, node: string, configFile?: string): void {
-  if (provider === 'terminal' || provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') return;
+  if (provider === 'terminal' || provider === 'dsh' || provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') return;
   const script = path.join(directory, 'ade-status-hook.cjs');
   if (/["%\r\n]/.test(node + script)) throw new CliError('INVALID_ARGUMENT', 'Runtime path cannot be used for provider status hooks');
   fs.mkdirSync(path.join(directory, 'status'), { recursive: true, mode: 0o700 });
@@ -131,8 +133,8 @@ export function readAgentStatus(directory: string, record: SessionRecord, live: 
     issue: { code: 'RUNTIME_UNAVAILABLE', message: live ? 'No verified provider status event yet. Resume a new ADE session and enable its status hooks if the provider requests trust.' : 'Terminal is stopped; no current agent status is available.', retryable: true } } };
   if (!record.statusToken || record.provider === 'terminal') return missing;
   try {
-    const file = statusFile(directory, record.id); if (fs.statSync(file).size > 4096) return missing;
-    const event = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const file = statusFile(directory, record.id); if (record.provider !== 'dsh' && fs.statSync(file).size > 4096) return missing;
+    const event = record.provider === 'dsh' ? dshStatus(directory, record) : JSON.parse(fs.readFileSync(file, 'utf8'));
     if (event.token !== record.statusToken || event.provider !== record.provider || event.id !== record.providerThreadId || !STATUS_EVENTS[record.provider].includes(event.event as never)
       || !['working','waiting','idle','completed','failed','interrupted','unknown'].includes(event.state) || !Number.isFinite(Date.parse(event.at)) || Date.parse(event.at) > Date.now() + 5000) return missing;
     const toolCall = typeof event.toolCall?.name === 'string' && event.toolCall.name.length <= 80 && typeof event.toolCall?.summary === 'string' && event.toolCall.summary.length <= 1000 ? event.toolCall : undefined;

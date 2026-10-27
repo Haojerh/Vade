@@ -39,10 +39,22 @@ export async function fetchAgentHistory(query: { scope: string; projectId?: stri
   return handleResponse(await fetch(`/api/agent-history?${params}`, { signal }));
 }
 export async function resumeHistorySession(projectId: string, request: ResumeHistoryRequest): Promise<{ projectId: string; nodeId: string }> {
-  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/resume-history`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }));
+  const revision = tabCloseRevision;
+  const result = await handleResponse<{ projectId: string; nodeId: string }>(await fetch(`/api/projects/${encodeURIComponent(projectId)}/resume-history`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) }));
+  const key = `${result.projectId}:${result.nodeId}`;
+  // Resume reuses the original node ID. Retire its old close marker, but never
+  // undo another close performed while this request was in flight.
+  if ((closedTabs.get(key) ?? 0) <= revision) {
+    closedTabs.delete(key);
+    if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('ade:session-created', { detail: { projectId: result.projectId } }));
+  }
+  return result;
 }
 export async function handoffSession(projectId: string, nodeId: string, request?: import('../../shared/contracts').HandoffSessionRequest): Promise<import('../../shared/contracts').HandoffSessionResponse | import('../../shared/contracts').SessionHandoff> {
   return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/${request ? 'handoff' : 'handoff-message'}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request ?? {}) }));
+}
+export async function fetchHandoffWorktrees(projectId: string, nodeId: string, signal?: AbortSignal): Promise<import('../../shared/contracts').HandoffWorktree[]> {
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/handoff`, { headers: { Accept: 'application/json' }, signal }));
 }
 import type { AgentPreferences, AgentInteraction, AnswerAgentRequest } from '../../shared/contracts';
 
@@ -245,9 +257,10 @@ export async function fetchSnapshot(
   return withoutClosedTabs(await handleResponse<DashboardSnapshot>(res));
 }
 
-const closedTabs = new Map<string, true>();
+let tabCloseRevision = 0;
+const closedTabs = new Map<string, number>();
 export function markTabClosed(projectId: string, nodeId: string): void {
-  closedTabs.set(`${projectId}:${nodeId}`, true);
+  closedTabs.set(`${projectId}:${nodeId}`, ++tabCloseRevision);
   if (closedTabs.size > 2000) closedTabs.delete(closedTabs.keys().next().value!);
   if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('ade:session-closed', { detail: { projectId, nodeId } }));
 }

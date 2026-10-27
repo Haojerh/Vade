@@ -8,6 +8,29 @@ import { codexRequest } from './codexThread.js';
 import { CliError } from '../integrations/cli.js';
 import { invalid } from './workflowConfig.js';
 import { OpenCodeChatControls } from './openCodeChatControls.js';
+import { dshCatalog } from './dshCatalog.js';
+import { dshOptions } from './dsh.js';
+import type { AdeStore } from './store.js';
+
+const dshCacheKey = 'workflow-models:dsh';
+
+function dshModels(value: unknown): WorkflowModel[] {
+  if (!Array.isArray(value)) return [];
+  const safe = (id: unknown): id is string => typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,199}$/.test(id);
+  return value.slice(0, 200).flatMap((row: any) => {
+    if (!safe(row?.id) || typeof row.label !== 'string') return [];
+    const efforts = Array.isArray(row.efforts) ? [...new Set<string>(row.efforts.flatMap((effort: unknown) => safe(effort) ? [effort] : []))].slice(0, 16) : [];
+    return [{ id: row.id, label: row.label.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 160), efforts }];
+  });
+}
+
+export function mergeDshModels(fresh: WorkflowModel[], observed: WorkflowModel[]): WorkflowModel[] {
+  const details = new Map(observed.map(model => [model.id, model]));
+  return fresh.map(model => {
+    const native = details.get(model.id);
+    return native ? { ...model, label: native.label || model.label, efforts: native.efforts } : model;
+  });
+}
 
 /** Fixed metadata-only ACP exchange; never prompt, authenticate or mutate a live session. */
 export function codeBuddyWorkflowCatalog(resolved: { executable: string; args: string[] }): Promise<WorkflowModel[]> {
@@ -73,15 +96,31 @@ function listing(resolved: { executable: string; args: string[] }, args: string[
   });
 }
 export class WorkflowModels {
+  constructor(private store?: AdeStore) {}
   private openCode = new OpenCodeChatControls();
   private cache = new Map<WorkflowProvider, { at: number; models: WorkflowModel[] }>();
   private pending = new Map<WorkflowProvider, Promise<WorkflowModel[]>>();
   async list(provider: WorkflowProvider): Promise<WorkflowModel[]> {
+    let dshObserved: WorkflowModel[] = [];
+    if (provider === 'dsh') {
+      for (const project of this.store?.projects() ?? []) for (const record of this.store!.sessions(project.id)) {
+        if (record.provider !== 'dsh') continue;
+        try {
+          const options = dshOptions(this.store!.directory, record);
+          if (!options.models.length) continue;
+          dshObserved = options.models.map(model => ({ id: model.id, label: model.label, efforts: model.efforts.map(effort => effort.value) }));
+          if (!record.closed) { this.rememberDsh(dshObserved); return dshObserved; }
+        } catch { /* Closed or setup-pending sessions retain the last complete observation below. */ }
+      }
+      if (dshObserved.length) this.rememberDsh(dshObserved);
+      dshObserved = dshObserved.length ? dshObserved : this.rememberedDsh();
+    }
     const cached = this.cache.get(provider);
     if (cached && Date.now() - cached.at < 60000) return cached.models;
     const reusable = cached && Date.now() - cached.at < 300000 ? cached.models : undefined;
     const previous = this.pending.get(provider); if (previous) return reusable ?? previous;
-    const request = this.discover(provider).then(models => {
+    const request = this.discover(provider).then(discovered => {
+      const models = provider === 'dsh' ? mergeDshModels(discovered, dshObserved) : discovered;
       if (!models.length) throw new CliError('RUNTIME_UNAVAILABLE', 'This provider did not expose a model catalog. Use its default model or update the provider.');
       this.cache.set(provider, { at: Date.now(), models }); return models;
     }).finally(() => this.pending.delete(provider));
@@ -89,7 +128,20 @@ export class WorkflowModels {
     if (reusable) { void request.catch(() => {}); return reusable; }
     return request;
   }
+  private rememberedDsh(): WorkflowModel[] {
+    try {
+      const row = this.store?.db.prepare("SELECT value FROM preferences WHERE key = ?").get(dshCacheKey);
+      if (!row || typeof row.value !== 'string' || row.value.length > 256 * 1024) return [];
+      return dshModels(JSON.parse(String(row.value)));
+    } catch { return []; }
+  }
+  private rememberDsh(models: WorkflowModel[]): void {
+    if (!this.store || !models.length) return;
+    try { this.store.db.prepare('INSERT OR REPLACE INTO preferences VALUES (?, ?)').run(dshCacheKey, JSON.stringify(dshModels(models))); }
+    catch { /* The fresh provider-owned observation remains usable if persistence fails. */ }
+  }
   private async discover(provider: WorkflowProvider): Promise<WorkflowModel[]> {
+    if (provider === 'dsh') return dshCatalog();
     if (provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') {
       return (await this.openCode.catalog(provider, process.cwd())).map(model => ({ id: model.id, label: model.label, efforts: model.efforts.map(effort => effort.value) }));
     }

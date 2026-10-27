@@ -1329,6 +1329,21 @@ dialog.handoff-dialog .worktree-dialog-heading, dialog.handoff-dialog .worktree-
 .handoff-source { display:flex; flex-direction:column; gap:5px; border:1px solid var(--border-main); border-radius:8px; padding:12px; background:var(--surface-2); margin:0; }
 .handoff-source span { color:var(--text-secondary); font-size:12px; }
 .handoff-description { line-height:1.6; margin:8px 0 0; }
+.handoff-destination { display:flex; flex-direction:column; gap:14px; padding:14px; border:1px solid var(--border-main); border-radius:9px; background:var(--canvas-bg); }
+.handoff-destination-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:12px; }
+.handoff-destination-heading strong { color:var(--text-main); font-size:13px; }
+.handoff-destination-heading p { margin:4px 0 0; color:var(--text-muted); font-size:11px; line-height:1.45; }
+.handoff-destination-heading .btn-icon { flex-shrink:0; width:26px; height:26px; padding:0; }
+.handoff-destination-details { display:flex; flex-direction:column; gap:6px; min-width:0; padding-top:12px; border-top:1px solid var(--border-subtle); font-size:11px; }
+.handoff-destination-details > span { display:flex; align-items:center; gap:6px; min-width:0; color:var(--text-secondary); }
+.handoff-destination-details > span > strong { overflow:hidden; color:var(--text-main); text-overflow:ellipsis; white-space:nowrap; }
+.handoff-destination-details em { flex-shrink:0; padding:1px 5px; border-radius:4px; background:var(--surface-active); color:var(--text-secondary); font-size:10px; font-style:normal; }
+.handoff-destination-details em.is-locked { background:var(--state-failed-bg); color:var(--state-failed-text); }
+.handoff-destination-details code { overflow:hidden; color:var(--text-muted); font:10px/1.45 var(--font-mono); text-overflow:ellipsis; white-space:nowrap; }
+.handoff-locked { margin:0; color:var(--state-failed-text); font-size:11px; line-height:1.45; }
+.handoff-worktree-error { display:flex; align-items:center; gap:10px; color:var(--state-failed-text); font-size:11px; line-height:1.45; }
+.handoff-worktree-error > span { flex:1; min-width:0; overflow-wrap:anywhere; }
+.handoff-empty { margin:0; }
 .handoff-path { color:var(--text-main); overflow-wrap:anywhere; }
 .handoff-notice { margin:0 0 12px; font-size:12px; }
 .handoff-notice p { margin:5px 0 10px; line-height:1.5; color:var(--text-secondary); }

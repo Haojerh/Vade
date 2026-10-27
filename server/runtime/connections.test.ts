@@ -43,7 +43,7 @@ test('provider account detection skips GitHub probes and shares concurrent reads
   assert.equal(first, second);
   assert.equal(first.data?.connections.some(connection => connection.id === 'github'), false);
   assert.deepEqual(first.data?.connections.map(connection => connection.id), [
-    'codex', 'claude', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'antigravity',
+    'codex', 'claude', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh', 'antigravity',
   ]);
 });
 

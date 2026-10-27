@@ -1200,8 +1200,8 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     assert.equal((await fetch(base + projectRoute + `/nodes/${nodeId}/terminal?cursor=-1`)).status, 400);
     assert.equal((await fetch(base + projectRoute + '/commit-graph?nodeId=foreign')).status, 404);
     const catalog = await (await fetch(base + '/api/agents/catalog')).json();
-    assert.deepEqual(catalog.available.map((item: { id: string }) => item.id), ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'terminal']);
-    assert.ok(catalog.installed.every((item: { command: string }) => ['codex', 'claude', 'agy', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'terminal'].includes(item.command)));
+    assert.deepEqual(catalog.available.map((item: { id: string }) => item.id), ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh', 'terminal']);
+    assert.ok(catalog.installed.every((item: { command: string }) => ['codex', 'claude', 'agy', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh-tui', 'terminal'].includes(item.command)));
     assert.ok(['ready', 'unavailable'].includes((await (await fetch(base + '/api/usage')).json()).meta.availability));
     const refreshes: boolean[] = [];
     const readUsage = f.runtime.connectionsService.usage.bind(f.runtime.connectionsService);
@@ -1222,6 +1222,14 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     assert.equal((await fetch(base + '/api/projects/folders')).status, 200);
     assert.equal((await fetch(base + projectRoute, { method: 'DELETE', headers: { Origin: 'https://evil.example' } })).status, 403);
     f.runtime.store.saveSession({ id: 'test-session', projectId: project.id, worktreeId: nodeId, cwd: f.repo, provider: 'codex', title: 'Test', createdAt: new Date().toISOString(), closed: false });
+    const handoffWorktrees = await fetch(base + projectRoute + '/nodes/test-session/handoff');
+    assert.equal(handoffWorktrees.status, 200);
+    const destinations = await handoffWorktrees.json();
+    assert.equal(destinations.length, 1);
+    assert.equal(destinations[0].id, nodeId);
+    assert.equal(destinations[0].current, true);
+    assert.equal(destinations[0].locked, false);
+    assert.equal((await fetch(base + projectRoute + '/nodes/test-session/handoff?path=foreign')).status, 400);
     assert.equal((await fetch(base + projectRoute + '/nodes/test-session/resume')).status, 405);
     assert.equal((await post(projectRoute + '/nodes/test-session/resume', { threadId: 'forged' })).status, 400);
     assert.equal((await post(projectRoute + '/nodes/test-session/resume', {})).status, 400);

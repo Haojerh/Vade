@@ -56,10 +56,12 @@ dialog.kanban-dialog.kanban-dragging { opacity: 0; pointer-events: none; animati
 .kanban-error { padding: 6px 14px; color: var(--state-failed-text); font-size: 12px; display: flex; align-items: center; gap: 8px; }
 .kanban-error .btn-close { margin-left: auto; flex-shrink: 0; }
 dialog.node-modal-dialog.kanban-create-dialog:not(.confirmation-dialog) { width: min(560px, calc(100vw - 24px)); height: fit-content; min-height: 0; max-height: 85dvh; }
+.desktop-custom-titlebar dialog.node-modal-dialog.kanban-create-dialog:not(.confirmation-dialog) { min-height: 0; }
 dialog.kanban-create-dialog[open] { display: flex; flex-direction: column; }
 .kanban-create-dialog .modal-dialog-header { flex-direction: row; align-items: center; padding: 16px 20px; }
 .kanban-create-dialog>.modal-dialog-header>.overlay-close-button { position:absolute; top:50%; right:16px; transform:translateY(-50%); margin:0; }
 .kanban-create-dialog .modal-dialog-body { flex: 0 1 auto; gap: 16px; padding: 20px; }
+.kanban-create-dialog-manual .modal-dialog-body { padding-bottom: 12px; }
 .kanban-create-dialog .worktree-field { margin: 0; gap: 8px; }
 .kanban-create-dialog textarea { width: 100%; min-width: 0; box-sizing: border-box; padding: 11px 12px; border: 1px solid var(--border-main); border-radius: 9px; background: var(--surface-2); color: var(--text-main); font: inherit; line-height: 1.5; resize: vertical; min-height: 120px; max-height: 40dvh; }
 .kanban-create-dialog textarea:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }

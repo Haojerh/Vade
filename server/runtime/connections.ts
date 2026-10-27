@@ -107,6 +107,7 @@ const definitions: Omit<LocalConnection, 'installed' | 'connected' | 'message'>[
   { id: 'opencode', label: 'OpenCode Go', installUrl: 'https://opencode.ai/docs/', loginCommand: 'opencode auth login --provider opencode-go' },
   { id: 'opencode2', label: 'OpenCode 2', installUrl: 'https://opencode.ai/docs/', loginCommand: 'opencode2 auth login' },
   { id: 'kilo', label: 'Kilo Code', installUrl: 'https://kilo.ai/docs/code-with-ai/platforms/cli', loginCommand: 'kilo auth login' },
+  { id: 'dsh', label: 'DeepSeek Harness', installUrl: 'https://deepseek-harness.github.io/deepseek-harness/', loginCommand: 'dsh-tui .' },
   { id: 'antigravity', label: 'Antigravity', installUrl: 'https://antigravity.google/', loginCommand: 'agy' },
 ];
 
@@ -184,7 +185,7 @@ export class LocalConnections {
       const connected = def.id === 'github' ? githubConnected : def.id === 'codex' ? hasCredential('codex', codex, !this.options.accounts || this.options.accounts.selected('codex') === 'system')
         : def.id === 'claude' ? hasCredential('claude', claude)
         : def.id === 'codebuddy' ? Boolean(await codeBuddyCredential())
-        : ['opencode2','kilo'].includes(def.id) ? null
+        : ['opencode2','kilo','dsh'].includes(def.id) ? null
         : def.id === 'opencode' ? hasCredential('opencode', await (this.options.accounts?.openCodeCredentials() ?? readCredentialJson(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json'))))
         : this.cached?.data?.providers.find(p => p.provider === 'antigravity')?.meta.availability === 'ready' ? true : null;
       const accounts = (def.id === 'codex' || def.id === 'claude' || def.id === 'opencode') ? await this.options.accounts?.list(def.id) : undefined;

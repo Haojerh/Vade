@@ -17,6 +17,7 @@ import { isOpenCode, verifyOpenCode, withOpenCode } from './openCodeSessions.js'
 import { readOpenCodePage, readOpenCodeModel } from '../providers/opencode.js';
 import { readOpenCodeV2Page, readOpenCodeV2Model, openCodeV2Tools } from '../providers/openCodeV2.js';
 import { databaseToolActivity, mergeToolActivity, transcriptToolActivity } from '../providers/toolActivity.js';
+import { dshTranscript } from './dsh.js';
 
 /** Exact-session local command records supply settings without entering public chat. */
 export function codeBuddyRecordedSettings(lines: string[], record: SessionRecord): { model?: string | null; effort?: string | null } {
@@ -162,6 +163,7 @@ export function publicMessage(record: SessionRecord, line: string, sourceIdentit
 }
 
 export class AdeConversations {
+  constructor(private directory = process.env.ADE_DATA_DIR || path.join(os.homedir(), '.ade')) {}
   watch(record: SessionRecord, changed: () => void): () => void {
     let watcher: fs.FSWatcher | undefined, timer: ReturnType<typeof setTimeout> | undefined;
     try {
@@ -178,6 +180,7 @@ export class AdeConversations {
   private paths = new Map<string, string>();
 
   private resolve(record: SessionRecord): { file: string; root: string } {
+    if (record.provider === 'dsh') return dshTranscript(this.directory, record);
     if (isOpenCode(record.provider)) { const file = verifyOpenCode(record); return { file, root: path.dirname(file) }; }
     if (!validCodexThreadId(record.providerThreadId)) throw new Error('No verified provider conversation binding');
     const id = record.providerThreadId;
@@ -257,7 +260,7 @@ export class AdeConversations {
           try {
             const row = JSON.parse(line);
             if (row.sessionId && row.sessionId !== id) return {};
-            if (record.provider === 'codex') return row.type === 'turn_context'
+            if (record.provider === 'codex' || record.provider === 'dsh') return row.type === 'turn_context'
               ? { model: row.payload?.model, effort: row.payload?.effort } : {};
             if (record.provider === 'codebuddy') return { model: row.providerData?.model, effort: row.providerData?.effort };
             const effort = record.provider === 'claude' ? claudeLocalCommandEffort(row) : undefined;
@@ -330,7 +333,7 @@ export class AdeConversations {
       });
       const messages = result.lines.flatMap(line => { const message = parse(line); return message ? [message] : []; });
       const now = new Date().toISOString();
-      return { data: { messages, source: 'transcript', sourceIdentity, provider: record.provider, cursor: query.cursor ?? null, nextCursor, limited: result.hasMore || result.limited, truncated: false, warnings: [] },
+      return { data: { messages, source: 'transcript', sourceIdentity, provider: record.provider, cursor: query.cursor ?? null, nextCursor, limited: result.hasMore || result.limited || record.provider === 'dsh', truncated: false, warnings: record.provider === 'dsh' ? ['DSH history is a bounded public projection of this Vade-owned session.'] : [] },
         meta: { availability: messages.length ? 'ready' : 'empty', observedAt: now, attemptedAt: now, partial: result.hasMore || result.limited, stale: false, issue: null } };
     } catch (error) {
       if (error instanceof CliError) throw error;

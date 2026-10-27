@@ -1,6 +1,31 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { subscribeConversationEvents, subscribeProjectEvents } from '../api/client';
+import { subscribeConversationEvents, subscribeProjectEvents, markTabClosed, resumeHistorySession, withoutClosedTabs } from '../api/client';
+import type { DashboardSnapshot } from '../../shared/contracts';
+
+test('history resume restores its closed node while preserving failed resumes and newer closes', async () => {
+  const priorFetch = globalThis.fetch;
+  const snapshot = { projectId: 'resume-project', graph: { data: { nodes: [{ id: 'reused' }, { id: 'other' }], edges: [{ source: 'reused', target: 'other' }] } } } as DashboardSnapshot;
+  const ids = () => withoutClosedTabs(snapshot).graph.data!.nodes.map(node => node.id);
+  const request = { sessionId: 'history-id', worktreeId: 'worktree' };
+  const response = () => new Response(JSON.stringify({ projectId: 'resume-project', nodeId: 'reused' }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  try {
+    markTabClosed('resume-project', 'reused');markTabClosed('resume-project', 'other');
+    assert.deepEqual(ids(), []);
+    globalThis.fetch = async () => response();
+    await resumeHistorySession('resume-project', request);
+    assert.deepEqual(ids(), ['reused']);
+    markTabClosed('resume-project', 'reused');
+    globalThis.fetch = async () => { throw Error('Resume failed'); };
+    await assert.rejects(resumeHistorySession('resume-project', request), /Resume failed/);
+    assert.deepEqual(ids(), []);
+    let settle!: (response: Response) => void;
+    globalThis.fetch = () => new Promise(resolve => { settle = resolve; });
+    const pending = resumeHistorySession('resume-project', request);
+    markTabClosed('resume-project', 'reused');settle(response());await pending;
+    assert.deepEqual(ids(), [], 'a newer close wins over the older resume response');
+  } finally { globalThis.fetch = priorFetch; }
+});
 
 test('project SSE pauses while hidden, restores snapshots and ignores replaced streams', () => {
   const priorDocument = Object.getOwnPropertyDescriptor(globalThis, 'document'), priorSource = Object.getOwnPropertyDescriptor(globalThis, 'EventSource');

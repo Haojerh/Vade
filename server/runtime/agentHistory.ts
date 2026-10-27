@@ -10,6 +10,7 @@ import { validCodexThreadId } from './codexThread.js';
 import { agyConversationSaved } from './agyBinding.js';
 import { CliError } from '../integrations/cli.js';
 import { isPathInsideRoots } from '../providers/transcriptUtils.js';
+import { dshTranscript, dshResumable, validDshId } from './dsh.js';
 
 type Provider = Exclude<AdeProvider, 'terminal'>;
 interface Indexed { id: string; provider: Provider; threadId: string; cwd: string | null; title: string; lastMessage: string | null; messageCount: number; limited: boolean; updatedAt: string; model: string | null; file: string; root: string }
@@ -36,7 +37,7 @@ export class AgentHistory {
         const value = JSON.parse(String(row.value));
         const valid = (entry: Indexed | null) => {
           if (!entry) return true;
-          const root = entry.provider === 'codex' ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions')
+          const root = entry.provider === 'dsh' && isPathInsideRoots(entry.file, [path.join(store.directory,'dsh')]) ? path.dirname(entry.file) : entry.provider === 'codex' ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions')
             : entry.provider === 'claude' ? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') : entry.provider === 'antigravity' ? path.join(agyRoot(), 'brain') : entry.provider === 'codebuddy' ? path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'projects') : isOpenCode(entry.provider) ? path.dirname(openCodeFile(entry.provider)) : null;
           return root && typeof entry.file === 'string' && entry.file.length <= 4096 && entry.root === root && path.isAbsolute(entry.file)
             && path.relative(root, entry.file).split(path.sep)[0] !== '..' && validProviderSessionId(entry.provider, entry.threadId) && entry.id === opaque(`${entry.provider}:${entry.threadId}`);
@@ -90,6 +91,14 @@ export class AgentHistory {
     if (this.closed) return;
     const entries = new Map<string, Indexed>(), owned = this.store.projects().flatMap(project => this.store.sessions(project.id));
     const workspaces = await this.agyWorkspaces();
+    for (const record of owned.filter(record => record.provider === 'dsh').slice(0,200)) {
+      try {
+        if (!dshResumable(this.store.directory,record)) continue;
+        const {file,root}=dshTranscript(this.store.directory,record),stat=fs.statSync(file);
+        const row=await this.parse({file,root,provider:'dsh',size:stat.size,mtime:stat.mtimeMs},Math.min(stat.size,1024*1024),workspaces);
+        if(row)entries.set(row.id,row);
+      } catch { /* Missing exact owned DSH observations do not index another session. */ }
+    }
     const selected = candidates.slice(0, 2000);
     for (let offset = 0; offset < selected.length; offset += 4) {
       const rows = await Promise.all(selected.slice(offset, offset + 4).map(async candidate => {
@@ -157,14 +166,14 @@ export class AgentHistory {
     } else {
       for (const line of lines.slice(0, 100)) {
         try {
-          const row = JSON.parse(line), metadata = provider === 'codex' ? row.type === 'session_meta' ? row.payload : null : row;
-          const id = provider === 'codex' ? metadata?.id : metadata?.sessionId;
-          if (validCodexThreadId(id) && typeof metadata.cwd === 'string' && path.isAbsolute(metadata.cwd) && metadata.cwd.length <= 4096) { threadId = id; cwd = path.resolve(metadata.cwd); break; }
+          const row = JSON.parse(line), metadata = provider === 'codex' || provider === 'dsh' ? row.type === 'session_meta' ? row.payload : null : row;
+          const id = provider === 'codex' || provider === 'dsh' ? metadata?.id : metadata?.sessionId;
+          if ((provider === 'dsh' ? validDshId(id) : validCodexThreadId(id)) && typeof metadata.cwd === 'string' && path.isAbsolute(metadata.cwd) && metadata.cwd.length <= 4096) { threadId = id; cwd = path.resolve(metadata.cwd); break; }
         } catch { /* Incomplete/non-metadata rows do not establish identity. */ }
       }
     }
     if (!threadId) return null;
-    if (provider !== 'antigravity' && !path.basename(file).endsWith(`${threadId}.jsonl`)) return null;
+    if (provider !== 'dsh' && provider !== 'antigravity' && !path.basename(file).endsWith(`${threadId}.jsonl`)) return null;
     const id = opaque(`${provider}:${threadId}`), record = { provider, providerThreadId: threadId } as SessionRecord;
     let title = '', lastMessage: string | null = null, updatedAt = new Date(candidate.mtime).toISOString(), model: string | null = null;
     const messages = new Set<string>();
@@ -182,11 +191,11 @@ export class AgentHistory {
         const row = JSON.parse(line);
         if (['claude','codebuddy'].includes(provider) && row.sessionId && row.sessionId !== threadId) continue;
         if (row.type === 'custom-title' && typeof row.customTitle === 'string') title = clean(row.customTitle, 120);
-        const observed = provider === 'codex' && row.type === 'turn_context' ? row.payload?.model : provider === 'claude' ? row.message?.model : provider === 'codebuddy' ? row.providerData?.model : null;
+        const observed = (provider === 'codex' || provider === 'dsh') && row.type === 'turn_context' ? row.payload?.model : provider === 'claude' ? row.message?.model : provider === 'codebuddy' ? row.providerData?.model : null;
         if (typeof observed === 'string' && observed !== '<synthetic>') model = clean(observed, 200);
       } catch { /* Malformed rows are not public history. */ }
     }
-    return { id, provider, threadId, cwd, title: title || (provider === 'codebuddy' ? 'CodeBuddy' : provider === 'claude' ? 'Claude Code' : provider === 'codex' ? 'Codex' : 'Antigravity'), lastMessage, messageCount: messages.size, limited, updatedAt, model, file, root };
+    return { id, provider, threadId, cwd, title: title || (provider === 'dsh' ? 'DeepSeek Harness' : provider === 'codebuddy' ? 'CodeBuddy' : provider === 'claude' ? 'Claude Code' : provider === 'codex' ? 'Codex' : 'Antigravity'), lastMessage, messageCount: messages.size, limited, updatedAt, model, file, root };
   }
 
   private async agyWorkspaces(): Promise<Map<string, string | null>> {

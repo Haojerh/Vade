@@ -2,7 +2,7 @@
   "name": "ade",
   "description": "Vade desktop agent development environment",
   "main": "desktop/main.cjs",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "private": true,
   "type": "module",
   "scripts": {
@@ -16,7 +16,7 @@
     "desktop": "npm run build:desktop && electron .",
     "package:desktop": "npm run build:desktop && node scripts/package-desktop.mjs",
     "package:release": "npm run build:desktop && node scripts/package-desktop.mjs --release",
-    "test": "node --import tsx --test server/http/speechRoutes.test.ts src/tests/localDictation.test.ts src/tests/modalScrollLock.test.ts src/tests/terminalSurface.test.ts server/http/terminalViewports.test.ts src/tests/terminalTouch.test.ts server/http/phoneOrigin.test.ts src/tests/conversationEvents.test.ts src/tests/dictation.test.ts src/tests/kanban.test.ts src/tests/inbox.test.ts src/tests/github.test.ts src/tests/notifications.test.ts src/tests/notificationClient.test.ts src/tests/workflow.test.ts src/tests/dialogsAndUi.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/githubAccounts.test.ts server/providers/transcripts.test.ts server/services/progress.test.ts server/services/attachments.test.ts src/tests/commitGraph.test.ts server/runtime/localRuntime.test.ts server/runtime/connections.test.ts server/runtime/notificationState.test.ts server/runtime/providerAccounts.test.ts server/runtime/agentHistory.test.ts server/runtime/organization.test.ts server/runtime/providerChatControls.test.ts server/runtime/speech.test.ts server/providers/transcriptUtils.test.ts"
+    "test": "node --import tsx --test server/http/speechRoutes.test.ts src/tests/localDictation.test.ts src/tests/modalScrollLock.test.ts src/tests/terminalSurface.test.ts server/http/terminalViewports.test.ts src/tests/terminalTouch.test.ts server/http/phoneOrigin.test.ts src/tests/conversationEvents.test.ts src/tests/dictation.test.ts src/tests/kanban.test.ts src/tests/inbox.test.ts src/tests/github.test.ts src/tests/notifications.test.ts src/tests/notificationClient.test.ts src/tests/workflow.test.ts src/tests/dialogsAndUi.test.ts server/integrations/cli.test.ts server/integrations/github.test.ts server/integrations/githubAccounts.test.ts server/providers/transcripts.test.ts server/services/progress.test.ts server/services/attachments.test.ts src/tests/commitGraph.test.ts server/runtime/localRuntime.test.ts server/runtime/connections.test.ts server/runtime/notificationState.test.ts server/runtime/dsh.test.ts server/runtime/sessionHandoff.test.ts server/runtime/providerAccounts.test.ts server/runtime/agentHistory.test.ts server/runtime/organization.test.ts server/runtime/providerChatControls.test.ts server/runtime/speech.test.ts server/providers/transcriptUtils.test.ts"
   },
   "build": {
     "appId": "dev.ade.desktop",

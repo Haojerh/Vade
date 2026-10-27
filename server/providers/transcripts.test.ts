@@ -133,6 +133,22 @@ test('Claude, Pi and OMP expose public text and omit tools, thinking and injecte
   }
 });
 
+test('Codex interruption bookkeeping is omitted without hiding ordinary turn-aborted text', () => {
+  const interrupted = '<turn_aborted>\nThe user interrupted the previous turn on purpose. Any running unified exec processes may still be running in the background. If any tools/commands were aborted, they may have partially executed.\n</turn_aborted>';
+  assert.equal(publicMessage({ provider: 'codex', providerThreadId: 'session' } as SessionRecord,
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', id: 'interrupt', content: [{ type: 'input_text', text: interrupted }] } }), 'session'), null);
+  for (const ordinary of [
+    'Please explain what <turn_aborted> means.',
+    '<turn_aborted> is a marker in the transcript.',
+    '<turn_aborted>\nThis is my own note.\n</turn_aborted>',
+  ]) {
+    assert.equal(publicMessage({ provider: 'codex', providerThreadId: 'session' } as SessionRecord,
+      JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', id: 'ordinary', content: [{ type: 'input_text', text: ordinary }] } }), 'session')?.text, ordinary);
+  }
+  assert.equal(publicMessage({ provider: 'claude', providerThreadId: 'session' } as SessionRecord,
+    JSON.stringify({ type: 'user', sessionId: 'session', message: { role: 'user', content: [{ type: 'text', text: interrupted }] } }), 'session')?.text, interrupted);
+});
+
 test('effective transcript settings include Claude effort and Pi/OMP changes but exclude synthetic errors', () => {
   assert.deepEqual(transcriptSettings({ message: { role: 'assistant', model: 'claude-opus-5-5' }, effort: 'medium' }),
     { model: 'claude-opus-5-5', effort: 'medium' });

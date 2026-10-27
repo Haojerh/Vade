@@ -100,7 +100,7 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
     <KanbanTaskDetails card={cards.find(card => card.id === taskDetails.data) ?? null} isOpen={taskDetails.present} isClosing={taskDetails.closing} onClose={taskDetails.close}
       onUnqueue={board.unqueue}
       onOpenAgent={card => { taskDetails.close(); onOpenAgent(card); }} />
-    <Modal isOpen={create.present} isClosing={create.closing} busy={busy} onClose={create.close} className="kanban-create-dialog" aria-labelledby="kanban-create-title">
+    <Modal isOpen={create.present} isClosing={create.closing} busy={busy} onClose={create.close} className={`kanban-create-dialog${board.automatic ? '' : ' kanban-create-dialog-manual'}`} aria-labelledby="kanban-create-title">
       <header className="modal-dialog-header"><h2 id="kanban-create-title">New task</h2><OverlayCloseButton onClick={create.close} disabled={busy} aria-label="Close new task" /></header>
       <div className="modal-dialog-body">
         <label className="worktree-field">Title<input value={title} onChange={event => setTitle(event.target.value)} placeholder="e.g. Fix mobile navigation layout" maxLength={240} autoFocus disabled={busy} /></label>

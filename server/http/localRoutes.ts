@@ -118,7 +118,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
     }
     if (pathname === '/api/workflow/models') {
       requireMethod('GET'); queryKeys('provider'); const provider = query.get('provider');
-      if (!['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(provider ?? '')) throw new CliError('INVALID_ARGUMENT', 'Select a supported provider');
+      if (!['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh'].includes(provider ?? '')) throw new CliError('INVALID_ARGUMENT', 'Select a supported provider');
       sendJson(200, await runtime.organization.models.list(provider as import('../../shared/contracts.js').WorkflowProvider)); return;
     }
     if (pathname === '/api/workflow/runs') {
@@ -387,9 +387,12 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       if (!['model', 'effort', 'fastMode', 'serviceTier', 'providerPicker', 'fastToggle'].includes(request.key) || typeof request.value !== 'string' || !request.value.length || request.value.length > 200 || /[\x00-\x1f\x7f]/.test(request.value)) throw new CliError('INVALID_ARGUMENT', 'Select a supported model setting');
       sendJson(200, await runtime.chatOptions(projectId, nodeId, request)); return;
     }
+    if (action === 'handoff' && (req.method === 'GET' || req.method === 'HEAD')) {
+      queryKeys(); sendJson(200, await runtime.handoffWorktrees(projectId, nodeId)); return;
+    }
     requireMethod(action === 'worktree' ? 'DELETE' : 'POST');
     if (action === 'handoff') {
-      queryKeys(); const request = await body<import('../../shared/contracts.js').HandoffSessionRequest>(['agentId','context']);
+      queryKeys(); const request = await body<import('../../shared/contracts.js').HandoffSessionRequest>(['agentId','context','worktreeId']);
       sendJson(200, await runtime.handoffs.start(projectId, nodeId, request)); return;
     } else if (action === 'handoff-message') {
       queryKeys(); await body<{}>([]); sendJson(200, await runtime.handoffs.deliver(projectId, nodeId)); return;

@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { ConversationPage, DashboardSnapshot, Graph, Node, NodeDetails, NodeDetailsQuery, Section, SourceMeta, SetAgentChatOptionRequest } from '../../shared/contracts.js';
+import type { ConversationPage, DashboardSnapshot, Graph, HandoffWorktree, Node, NodeDetails, NodeDetailsQuery, Section, SourceMeta, SetAgentChatOptionRequest } from '../../shared/contracts.js';
 import { CliError, type CommandRunner, defaultCommandRunner } from '../integrations/cli.js';
 import { taskProgress } from '../services/progress.js';
 import { AdeStore } from './store.js';
@@ -29,7 +29,7 @@ export function section<T>(data: T | null, availability: SourceMeta['availabilit
 export class LocalRuntime {
   readonly git: AdeGit;
   readonly sessions: AdeSessions;
-  readonly conversations = new AdeConversations();
+  readonly conversations: AdeConversations;
   readonly connectionsService: LocalConnections;
   readonly accounts: ProviderAccounts;
   readonly resources = new ResourceReader();
@@ -50,6 +50,7 @@ export class LocalRuntime {
   readonly streams = new Set<() => void>();
 
   constructor(readonly store = new AdeStore(), runner: CommandRunner = defaultCommandRunner, connectionsService?: LocalConnections) {
+    this.conversations = new AdeConversations(store.directory);
     this.git = new AdeGit(store, runner);
     this.files = new WorkspaceFiles(store, this.git);
     this.fileActions = new WorkspaceActions(store, this.files);
@@ -109,6 +110,22 @@ export class LocalRuntime {
       return { projectId, revision: previous?.revision ?? 'unavailable', generatedAt: new Date().toISOString(), runtime: section({ version: 'ADE v1', runtimeId: this.id }),
         graph: { data: previous?.graph.data ?? null, meta: { ...section(null, 'unavailable').meta, observedAt: previous?.graph.meta.observedAt ?? null, stale: Boolean(previous), issue } } };
     }
+  }
+
+  async handoffWorktrees(projectId: string, nodeId: string): Promise<HandoffWorktree[]> {
+    const source = this.sessions.require(projectId, nodeId);
+    this.handoffs.assertSourceAvailable(source);
+    const project = this.store.project(projectId);
+    const trees = await this.git.worktrees(project);
+    return trees.map(tree => ({
+      id: tree.id,
+      label: this.store.title(tree.id, tree.main ? project.name : tree.branch || 'Detached worktree'),
+      branch: tree.branch,
+      path: tree.path,
+      main: tree.main,
+      locked: tree.locked,
+      current: tree.id === source.worktreeId,
+    }));
   }
 
   async chatOptions(projectId: string, nodeId: string, request?: SetAgentChatOptionRequest) {

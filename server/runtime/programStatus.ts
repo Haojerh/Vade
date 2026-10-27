@@ -3,6 +3,7 @@ import type { AdeProvider, AgentStatus } from '../../shared/contracts.js';
 // OSC 7501 is a structured provider report, not a title/spinner/text heuristic.
 // Observed on Codex 0.163.0; child records and other applications cannot set its root status.
 export function programStatusReader(onStatus: (status: AgentStatus) => void, onQuery: () => void, provider: AdeProvider = 'codex'): (chunk: string) => void {
+  if (provider === 'dsh') return () => {}; // DSH Session events own outcomes; child CLIs cannot report for it.
   const prefix = '\x1b]7501;';
   let pending = '';
   return chunk => {

@@ -70,6 +70,10 @@ export function isSystemInjectedUserText(trimmed: string, includeUserSettingsCha
   return includeUserSettingsChange && trimmed.startsWith('<USER_SETTINGS_CHANGE>');
 }
 
+export function isCodexTurnAbortedNotice(text: string): boolean {
+  return /^<turn_aborted>\s+The user interrupted the previous turn on purpose\. Any running unified exec processes may still be running in the background\. If any tools\/commands were aborted, they may have partially executed\.\s*<\/turn_aborted>$/.test(text.trim());
+}
+
 export function getAllowedTranscriptRoots(): string[] {
   const roots: string[] = [];
   const userHome = process.env.USERPROFILE || process.env.HOME || '';

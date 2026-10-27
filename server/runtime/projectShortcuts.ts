@@ -20,7 +20,7 @@ export function saveProjectShortcuts(store: AdeStore, projectId: string, value: 
       || typeof row.id !== 'string' || !/^[a-zA-Z0-9_-]{1,80}$/.test(row.id) || ids.has(row.id)
       || typeof row.label !== 'string' || !row.label.trim() || row.label.length > 80 || /[\x00-\x1f\x7f]/.test(row.label)
       || typeof row.command !== 'string' || !row.command.trim() || row.command.length > 10000 || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(row.command)
-      || !['terminal', 'agent'].includes(row.action) || !['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(row.agent) || typeof row.appendEnter !== 'boolean') invalid();
+      || !['terminal', 'agent'].includes(row.action) || !['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh'].includes(row.agent) || typeof row.appendEnter !== 'boolean') invalid();
     ids.add(row.id);
   }
   store.db.prepare('INSERT OR REPLACE INTO preferences VALUES (?, ?)').run(`shortcuts:${projectId}`, JSON.stringify(rows));

@@ -18,13 +18,14 @@ type Identity = { runId: string; sessionId: string; token: string; file: string;
 type LaunchIdentity = { projectId: string; sessionId: string; token: string; file: string; launchToken?: string };
 export class OrganizationRuntime {
   readonly setup: WorkflowSetup;
-  readonly models = new WorkflowModels();
+  readonly models: WorkflowModels;
   private identities = new Map<string, Identity>();
   private launchIdentities = new Map<string, LaunchIdentity>();
   private locks = new Set<string>();
   private startingCheckouts = new Set<string>();
   private endpoint: string | null = null;
   constructor(readonly store: AdeStore, readonly git: AdeGit, private readonly sessionSource: AdeSessions | (() => AdeSessions)) {
+    this.models = new WorkflowModels(store);
     this.setup = new WorkflowSetup(store);
     // Live terminal leases do not survive runtime restarts. Never replay uncertain assignments.
     for (const run of this.runs()) if (!terminal(run)) { run.state = 'failed'; run.error = 'Runtime restarted. Old workflow identities were revoked; inspect retained worktrees before starting a new run.'; this.save(run); }
@@ -178,7 +179,7 @@ export class OrganizationRuntime {
       }
       if (request.action === 'models') {
         fields(request, ['action', 'sessionId', 'provider']);
-        if (!['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo'].includes(request.provider)) invalid('Choose an installed provider');
+        if (!['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh'].includes(request.provider)) invalid('Choose an installed provider');
         return { provider: request.provider, models: await this.models.list(request.provider) };
       }
       if (request.action === 'context' && !active) {

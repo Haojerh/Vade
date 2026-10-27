@@ -1,4 +1,4 @@
-export const localTranscriptProviders = ['codex', 'codebuddy', 'claude', 'omp', 'pi', 'opencode', 'opencode2', 'kilocode', 'kilo'];
+export const localTranscriptProviders = ['codex', 'dsh', 'codebuddy', 'claude', 'omp', 'pi', 'opencode', 'opencode2', 'kilocode', 'kilo'];
 
 export function sameTranscriptProvider(a: string, b: string): boolean {
   return a === b || (['kilo', 'kilocode'].includes(a) && ['kilo', 'kilocode'].includes(b));
@@ -17,7 +17,7 @@ export function publicTranscriptRecord(line: string, provider: string): any | nu
     if (record.type !== 'message' || !['user','assistant'].includes(record.role) || record.providerData?.skipRun || record.isMeta || record.isSynthetic) return null;
     return { type: 'response_item', timestamp: record.timestamp, payload: { type: 'message', role: record.role, id: record.id, content: Array.isArray(record.content) ? record.content.filter((p: any) => ['input_text','output_text','text'].includes(p.type) && typeof p.text === 'string') : [] } };
   }
-  if (provider === 'codex' || provider === 'opencode' || provider === 'opencode2' || provider === 'kilo' || provider === 'kilocode') return record;
+  if (provider === 'codex' || provider === 'dsh' || provider === 'opencode' || provider === 'opencode2' || provider === 'kilo' || provider === 'kilocode') return record;
   if (provider === 'claude' && !['user', 'assistant'].includes(record.type)) return null;
   if (['pi', 'omp'].includes(provider) && record.type !== 'message') return null;
   const message = record.message;

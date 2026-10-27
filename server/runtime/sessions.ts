@@ -22,6 +22,7 @@ import { codeBuddyCommandOutput } from './conversation.js';
 import { AntigravityChatControls } from './antigravityChatControls.js';
 import { AgentWorkClock } from './agentWorkClock.js';
 import type { ChatControlIO } from './chatControlTypes.js';
+import { prepareDsh, dshBinding, dshOptions, dshReady, dshResumable, applyDshOption } from './dsh.js';
 
 const PROVIDERS: { id: AdeProvider; name: string; command: string; package?: string; entry?: string }[] = [
   { id: 'codex', name: 'Codex', command: 'codex', package: '@openai/codex', entry: 'bin/codex.js' },
@@ -31,6 +32,7 @@ const PROVIDERS: { id: AdeProvider; name: string; command: string; package?: str
   { id: 'opencode', name: 'OpenCode', command: 'opencode', package: 'opencode-ai', entry: 'bin/opencode' },
   { id: 'opencode2', name: 'OpenCode 2', command: 'opencode2', package: 'opencode-ai', entry: 'bin/opencode2' },
   { id: 'kilo', name: 'Kilo Code', command: 'kilo', package: '@kilocode/cli', entry: 'bin/kilo' },
+  { id: 'dsh', name: 'DeepSeek Harness', command: 'dsh-tui', package: '@deepseek-harness-tui/dsh-tui', entry: 'bin/dsh-tui.js' },
   { id: 'terminal', name: 'Terminal', command: 'terminal' },
 ];
 const MAX_BUFFER = 1024 * 1024;
@@ -79,6 +81,7 @@ export function resolveAgent(provider: AdeProvider, shell?: TerminalShell): { ex
   }
   const definition = PROVIDERS.find(item => item.id === provider);
   if (!definition) return null;
+  if (provider === 'dsh' && !executableOnPath('dsh') && !(process.env.PATH ?? '').split(path.delimiter).some(dir => fs.existsSync(path.join(dir.replace(/^"|"$/g, ''), 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js')))) return null;
   const native = executableOnPath(definition.command);
   if (native) return { executable: native, args: [] };
   if (provider === 'claude') {
@@ -351,13 +354,15 @@ export class AdeSessions {
     const record = this.require(projectId, id);
     if (record.provider !== 'terminal' && !validProviderSessionId(record.provider, record.providerThreadId)) throw new CliError('INVALID_ARGUMENT', 'This session has no exact provider recovery binding');
     if (record.provider === 'antigravity' && !this.savedAgy(record)) throw new CliError('RUNTIME_UNAVAILABLE', 'Antigravity has not saved this conversation yet. Empty sessions cannot be resumed; start a new agent.');
+    if (record.provider === 'dsh' && !dshResumable(this.store.directory, record)) throw new CliError('RUNTIME_UNAVAILABLE', 'DSH has not saved this empty session yet. Start a new agent.');
     if (this.live.get(id)?.live) throw new CliError('INVALID_ARGUMENT', 'This terminal is already running');
     const resolved = this.resolve(record.provider, record.shell);
     if (!resolved) throw new CliError('CLI_MISSING', 'This agent is not installed');
     return this.start(record, resolved);
   }
 
-  async resumeHistory(projectId: string, worktreeId: string, cwd: string, source: { provider: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo'; threadId: string; cwd: string | null; title: string }): Promise<SessionRecord> {
+  async resumeHistory(projectId: string, worktreeId: string, cwd: string, source: { provider: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh'; threadId: string; cwd: string | null; title: string }): Promise<SessionRecord> {
+    if (source.provider === 'dsh' && (!source.cwd || path.relative(path.resolve(cwd), path.resolve(source.cwd)) !== '')) throw new CliError('INVALID_ARGUMENT', 'Resume DSH in its original workspace. Use Hand Off to start a new session in another checkout.');
     const key = `${source.provider}:${source.threadId}`;
     if (!validProviderSessionId(source.provider, source.threadId) || this.historyStarting.has(key)) throw new CliError('INVALID_ARGUMENT', 'This session is already resuming or has no verified provider identity');
     this.historyStarting.add(key);
@@ -370,6 +375,7 @@ export class AdeSessions {
         throw new CliError('INVALID_ARGUMENT', 'This session is running in another worktree. Stop it in Terminal before moving it.');
       }
       const previous = matches.find(record => !record.closed) ?? matches[0];
+      if (source.provider === 'dsh' && previous && !dshResumable(this.store.directory, previous)) throw new CliError('RUNTIME_UNAVAILABLE', 'DSH has not saved this empty session yet. Start a new agent; there is no saved conversation to resume.');
       if (!previous && this.store.sessions(projectId).length >= 200) throw new CliError('RATE_LIMITED', 'Project session history has reached the 200 session limit');
       const resolved = this.resolve(source.provider);
       if (!resolved) throw new CliError('CLI_MISSING', 'Install this agent before resuming');
@@ -394,10 +400,11 @@ export class AdeSessions {
     // Even a new Codex thread starts through the native resume path below.
     const initializingCodex = record.provider === 'codex';
     const initializeVariant = isOpenCode(record.provider) && !record.providerThreadId && Boolean(record.workflowLaunch?.effort);
+    const initializeDsh = record.provider === 'dsh' && !record.providerThreadId && Boolean(record.workflowLaunch?.model);
     try {
       const node = executableOnPath('node');
       if (!node) throw new CliError('CLI_MISSING', 'Node.js is required for provider status hooks');
-      if (record.provider !== 'terminal') this.prepareStatus(this.store.directory, record.provider, node);
+      if (record.provider !== 'terminal' && record.provider !== 'dsh') this.prepareStatus(this.store.directory, record.provider, node);
       record = { ...record, statusToken: crypto.randomBytes(32).toString('hex') };
       if (record.provider === 'codex') {
         record = { ...record, providerThreadId: await this.bindCodex(resolved, record.cwd, record.title, record.providerThreadId, this.shutdown.signal, record.sourceCwd ?? record.cwd) };
@@ -420,6 +427,9 @@ export class AdeSessions {
         else record = { ...record, providerThreadId: await createOpenCodeSession(resolved, record.cwd, record.title, this.shutdown.signal, record.provider === 'opencode2' ? 2 : 1) };
         verifyOpenCode(record);
         resolved = { ...resolved, args: [...resolved.args, ...(record.provider === 'opencode2' ? ['--standalone'] : []), '--session', record.providerThreadId!] };
+      } else if (record.provider === 'dsh') {
+        const patch = prepareDsh(this.store.directory, record);
+        resolved = { ...resolved, args: [...resolved.args, '--patch', patch, '--backend', 'dsh', ...(record.providerThreadId ? ['--resume', record.providerThreadId] : ['.'])] };
       } else if (record.provider === 'antigravity') {
         const node = executableOnPath('node');
         if (!node) throw new CliError('CLI_MISSING', 'Node.js is required for Antigravity session recovery');
@@ -431,8 +441,8 @@ export class AdeSessions {
         const preference = readAgentPreferences(this.store).providers[record.provider];
         resolved = { ...resolved, args: [...resolved.args, ...permissionArgs[record.provider][preference.mode]!] };
         const options = record.workflowLaunch;
-        if (options?.model) resolved.args.push('--model', options.model);
-        if (options?.effort && !isOpenCode(record.provider)) resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
+        if (options?.model && record.provider !== 'dsh') resolved.args.push('--model', options.model);
+        if (options?.effort && record.provider !== 'dsh' && !isOpenCode(record.provider)) resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
       }
       if (this.shutdown.signal.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
       const started = await this.startTerminal(record, resolved, initializingCodex);
@@ -440,8 +450,25 @@ export class AdeSessions {
       // once through the same fenced, acknowledged picker used by live Chat.
       // Resuming a session must not replay its original settings commands.
       if (initializeVariant) await this.initializeOpenCodeVariant(started);
+      if (initializeDsh) await this.initializeDshSettings(started);
       return started;
     } finally { this.starting.delete(record.id); }
+  }
+
+  private async initializeDshSettings(record: SessionRecord): Promise<void> {
+    const live = this.live.get(record.id), revision = live?.inputRevision, deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      if (!live?.live || this.shutdown.signal.aborted || this.live.get(record.id) !== live || live.inputRevision !== revision) throw new CliError('RUNTIME_UNAVAILABLE', 'The DSH terminal changed during startup. Select its settings in Chat; no command was replayed.');
+      const current = this.require(record.projectId, record.id);
+      await live.screen?.settled();
+      if (dshReady(this.store.directory, current) && live.screen?.dshPromptReady()) {
+        await this.setChatOption(record.projectId, record.id, { key: 'model', value: record.workflowLaunch!.model! }, {});
+        if (record.workflowLaunch?.effort) await this.setChatOption(record.projectId, record.id, { key: 'effort', value: record.workflowLaunch.effort }, {});
+        return;
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    throw new CliError('RUNTIME_UNAVAILABLE', 'DSH started but its native session is not ready. Finish setup in Terminal, select the settings in Chat, then dispatch again. No task was sent.');
   }
 
   private async initializeOpenCodeVariant(record: SessionRecord): Promise<void> {
@@ -614,7 +641,7 @@ export class AdeSessions {
     this.store.project(projectId);
     const record = this.store.sessions(projectId).find(session => session.id === id && !session.closed);
     if (!record) throw new CliError('NODE_NOT_FOUND', 'Agent session does not belong to this project');
-    const observedId = readAgyBinding(this.store.directory, record);
+    const observedId = record.provider === 'dsh' ? dshBinding(this.store.directory, record) : readAgyBinding(this.store.directory, record);
     if (observedId !== record.providerThreadId) {
       const updated = { ...record, providerThreadId: observedId }; this.store.saveSession(updated); return updated;
     }
@@ -623,15 +650,17 @@ export class AdeSessions {
 
   messagePromptReady(projectId: string, id: string): boolean {
     const record = this.require(projectId, id);
+    if (record.provider === 'dsh') return dshReady(this.store.directory, record) && this.live.get(id)?.screen?.dshPromptReady() === true;
     if (record.provider === 'codex') return this.live.get(id)?.screen?.composerEmpty() === true;
     return !isOpenCode(record.provider) || this.live.get(id)?.screen?.openCodePromptReady() === true;
   }
   handoffPromptReady(projectId: string, id: string): boolean {
     const record = this.require(projectId, id), live = this.live.get(id);
     if (!live?.live || this.sending.has(id) || record.provider === 'terminal') return false;
+    if (record.provider === 'dsh' && !dshReady(this.store.directory, record)) return false;
     const state = this.status(projectId, id).data?.state;
     if (['working','waiting','blocked'].includes(state ?? '')) return false;
-    const empty = isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
+    const empty = record.provider === 'dsh' ? live.screen?.dshPromptReady() : isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
     const native = isOpenCode(record.provider) ? empty : record.provider === 'codebuddy' ? live.screen?.codeBuddyPromptReady() : record.provider === 'antigravity' && antigravityPromptReady(live.screen?.text() ?? '');
     return Boolean(empty && (['idle','completed','failed','interrupted'].includes(state ?? '') || native));
   }
@@ -639,7 +668,7 @@ export class AdeSessions {
   page(projectId: string, id: string, cursor = 0, checkpoint = false): TerminalPage {
     const session = this.live.get(id);
     const record = this.require(projectId, id);
-    const resumable = validProviderSessionId(record.provider, record.providerThreadId) && !session?.live && !this.starting.has(id) && (record.provider !== 'antigravity' || this.savedAgy(record));
+    const resumable = validProviderSessionId(record.provider, record.providerThreadId) && !session?.live && !this.starting.has(id) && (record.provider !== 'antigravity' || this.savedAgy(record)) && (record.provider !== 'dsh' || dshResumable(this.store.directory, record));
     const restartable = record.provider === 'terminal' && !session?.live && !this.starting.has(id);
     if (!session) return { data: '', cursor: 0, reset: cursor !== 0, live: false, exitCode: null, resumable, recoverable: resumable || restartable, restartable };
     const reset = cursor < session.start || cursor > session.start + session.buffer.length;
@@ -663,7 +692,7 @@ export class AdeSessions {
     const record = this.require(projectId, id), live = this.live.get(id);
     if (record.provider === 'terminal') throw new CliError('INVALID_ARGUMENT', 'Shell terminals do not have model settings');
     const current = record.provider === 'codebuddy' ? { ...live?.chatCurrent, ...observed } : { ...observed, ...live?.chatCurrent };
-    const options = record.provider === 'codebuddy' ? await this.codeBuddyControls.read(current, record.cwd, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.read(record.provider, record.cwd, current, live?.screen?.text() ?? '') : record.provider === 'antigravity' ? await this.antigravityControls.read(current, () => live?.screen?.text() ?? '')
+    const options = record.provider === 'dsh' ? dshOptions(this.store.directory, record) : record.provider === 'codebuddy' ? await this.codeBuddyControls.read(current, record.cwd, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.read(record.provider, record.cwd, current, live?.screen?.text() ?? '') : record.provider === 'antigravity' ? await this.antigravityControls.read(current, () => live?.screen?.text() ?? '')
       : await this.chatControls.read(record.provider, current, () => live?.screen?.text() ?? '', record.cwd);
     if (this.require(projectId, id).statusToken !== record.statusToken || this.live.get(id) !== live) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent changed while reading its settings. Reopen the picker.');
     if (!live?.live) options.controls = { model: false, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false };
@@ -673,6 +702,7 @@ export class AdeSessions {
   async setChatOption(projectId: string, id: string, request: SetAgentChatOptionRequest, observed: { model?: string | null; effort?: string | null }): Promise<AgentChatOptions> {
     const record = this.require(projectId, id), live = this.live.get(id);
     if (!live?.live || record.provider === 'terminal') throw new CliError('RUNTIME_UNAVAILABLE', 'Open the running agent terminal before changing settings');
+    if (record.provider === 'dsh' && !dshReady(this.store.directory, record)) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait for DSH to finish opening its session before changing settings');
     if (this.sending.has(id)) throw new CliError('RATE_LIMITED', 'Input is already being sent to this agent');
     let wrote = false;
     const verify = () => {
@@ -690,13 +720,13 @@ export class AdeSessions {
     // A failed setting confirmation can leave this conservative flag set even
     // after the provider has returned to its visibly empty native prompt.
     // Reconcile observed screen state; never resend the earlier operation.
-    const composerEmpty = isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
+    const composerEmpty = record.provider === 'dsh' ? live.screen?.dshPromptReady() : isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
     if (live.draftInput && composerEmpty && !/(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) live.draftInput = false;
     if (live.draftInput) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the draft in Terminal before changing settings');
     if (!composerEmpty) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal before changing settings');
     // Codex and CodeBuddy can omit their optional shortcuts footer. Their
     // owned idle process and empty native composer still fence these commands.
-    if ((!isOpenCode(record.provider) && record.provider !== 'codex' && record.provider !== 'codebuddy' && !/(?:\? for shortcuts|context left|context remaining)/i.test(initial)) || /(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Open Terminal and wait for the agent prompt before changing settings');
+    if ((!isOpenCode(record.provider) && record.provider !== 'dsh' && record.provider !== 'codex' && record.provider !== 'codebuddy' && !/(?:\? for shortcuts|context left|context remaining)/i.test(initial)) || /(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Open Terminal and wait for the agent prompt before changing settings');
     if (record.provider === 'antigravity' && !antigravityPromptReady(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the Antigravity prompt before changing settings');
     this.sending.add(id);
     const start = live.start + live.buffer.length;
@@ -717,7 +747,7 @@ export class AdeSessions {
     };
     try {
       const options = await this.chatOptions(projectId, id, observed); verify();
-      const result = record.provider === 'codebuddy' ? await this.codeBuddyControls.apply(options, request, { ...io, output: codeBuddyCommandOutput(record) }, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.apply(options, request, io) : record.provider === 'antigravity' ? await this.antigravityControls.apply(options, request, io) : await this.chatControls.apply(options, request, io);
+      const result = record.provider === 'dsh' ? await applyDshOption(this.store.directory, record, request, io) : record.provider === 'codebuddy' ? await this.codeBuddyControls.apply(options, request, { ...io, output: codeBuddyCommandOutput(record) }, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.apply(options, request, io) : record.provider === 'antigravity' ? await this.antigravityControls.apply(options, request, io) : await this.chatControls.apply(options, request, io);
       if (!result.unconfirmed) live.chatCurrent = result.current;
       this.changed(id); this.statusChanged(projectId, record);
       return result;
@@ -740,7 +770,7 @@ export class AdeSessions {
     // Separate writes avoid parsing two adjacent bytes as an Alt/Escape key.
     const armed = /\besc(?:ape)?\s+again to interrupt\b/i.test(session.screen?.viewportText().split('\n').slice(-8).join('\n')??'');
     const outputBefore=session.start+session.buffer.length;
-    const first = this.input(projectId,id,'\x1b');
+    const first = this.input(projectId,id,record.provider === 'dsh' ? '\x03' : '\x1b');
     if (!isOpenCode(record.provider) || armed) { await first; return; }
     this.sending.add(id);
     try {
@@ -792,6 +822,7 @@ export class AdeSessions {
     const initialNativeReady = record.provider === 'antigravity' && antigravityPromptReady(session?.screen?.text() ?? session?.buffer ?? '');
     const initialCodeBuddyReady = record.provider === 'codebuddy' && session?.screen?.codeBuddyPromptReady() === true;
     const initialCodexReady = record.provider === 'codex' && session?.screen?.composerEmpty() === true;
+    const initialDshReady = record.provider === 'dsh' && dshReady(this.store.directory, record) && session?.screen?.dshPromptReady() === true;
     const openCodeReady = !isOpenCode(record.provider) || session?.screen?.openCodePromptReady() === true;
     if (typeof request.message !== 'string' || request.message.length > (internalWorkflow ? 48000 : 10000) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(request.message)) throw new CliError('INVALID_ARGUMENT', 'Message exceeds the allowed length or contains terminal control codes');
     const uploads = decodeAttachments(request.attachments);
@@ -800,6 +831,7 @@ export class AdeSessions {
     const writable = () => {
       if (!session?.live || this.live.get(id) !== session) throw new CliError('RUNTIME_UNAVAILABLE', 'This session is stopped. Open Terminal to resume it before sending.');
       if (!openCodeReady) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal and finish native setup before sending.');
+      if (record.provider === 'dsh' && !initialDshReady) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait for the DSH session and leave an empty prompt. Finish native setup in Terminal before sending.');
       if (record.provider === 'codex' && !initialCodexReady) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty Codex prompt and finish native trust/sign-in setup in Terminal before sending.');
       const status = this.status(projectId, id);
       if (request.requireIdle && status.data?.state === 'working') throw new CliError('RUNTIME_UNAVAILABLE', 'The agent started working. This queued task was not submitted.');
@@ -833,6 +865,14 @@ export class AdeSessions {
           if (Date.now() >= deadline) throw new CliError('CLI_TIMEOUT', 'The agent has not rendered the pasted message. Inspect Terminal before submitting; no Enter was sent.');
           await new Promise(resolve => setTimeout(resolve, 40));
         }
+      } else if (record.provider === 'dsh') {
+        const deadline = Date.now() + 5000;
+        for (;;) {
+          await session!.screen?.settled(); writable();
+          if (session!.screen?.dshComposerHasText(prompt)) break;
+          if (Date.now() >= deadline) throw new CliError('CLI_TIMEOUT', 'DSH has not rendered the pasted draft. Inspect Terminal; no Enter was sent.');
+          await new Promise(resolve => setTimeout(resolve, 40));
+        }
       } else await new Promise(resolve => setTimeout(resolve, 300));
       writable();
       if (submit) {
@@ -840,7 +880,7 @@ export class AdeSessions {
         let beforeOutput = session!.start + session!.buffer.length;
         if (session!.resumeTurnObserved === false) session!.resumePromptSubmitted = true;
         await this.command(session!, { type: 'input', data: '\r' });
-        if (record.provider === 'codebuddy' || record.provider === 'codex') {
+        if (record.provider === 'codebuddy' || record.provider === 'codex' || record.provider === 'dsh') {
           const started = Date.now(), deadline = started + 5000;
           let retried = false, lastOutput = beforeOutput, stableSince = started;
           for (;;) {
@@ -850,7 +890,7 @@ export class AdeSessions {
             const freshActivity = observed.meta.availability === 'ready' && !observed.meta.stale && observed.meta.observedAt
               && observed.meta.observedAt !== beforeSubmit && ['working', 'waiting', 'blocked', 'completed', 'failed', 'interrupted'].includes(observed.data?.state ?? '');
             const output = session!.start + session!.buffer.length, now = Date.now();
-            if (freshActivity || output !== beforeOutput && session!.screen?.composerEmpty(false, record.provider === 'codebuddy')) break;
+            if (freshActivity || record.provider !== 'dsh' && output !== beforeOutput && session!.screen?.composerEmpty(false, record.provider === 'codebuddy')) break;
             if (output !== lastOutput) { lastOutput = output; stableSince = now; }
             // One user-authorized recovery Enter, only after a fresh, stable
             // redraw still proves this exact draft is unsubmitted and idle.

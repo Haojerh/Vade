@@ -143,7 +143,7 @@ export function transcriptToolActivity(provider: string, session: string, line: 
       }
       return item ? [item] : [];
     }
-    if (provider === 'codex') {
+    if (provider === 'codex' || provider === 'dsh') {
       const p = record.payload;
       if (record.type !== 'response_item' || !['function_call', 'custom_tool_call'].includes(p?.type)) return [];
       const item = toolActivityFromCall(session, p.call_id, p.name, p.arguments ?? p.input, record.timestamp);

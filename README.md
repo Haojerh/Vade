@@ -1,5 +1,7 @@
 # ADE
 
+DeepSeek Harness (`dsh-tui`) supports Vade-owned Chat history, native turn status and work timing, model/effort selection, guarded sending, interruption, exact-session resume and workflows. Complete native setup in Terminal. See [DSH integration and verification limits](docs/dsh-integration.md).
+
 ### Local workspace controls
 
 The Source Control sidebar supports per-file or all-file stage/unstage, staged commits, commit and push/sync, fetch, publish, push, pull, fast-forward, rebase and force-with-lease push. Click a changed file for its staged or working-tree diff; **View all** opens lazy multi-file review with inline/side-by-side, wrapping and whitespace controls. The options menu switches between list/tree and selects the branch comparison base. Feature branches expose **Create PR** here and in the PR tab, with title/body review before submission. See [Source control](docs/source-control.md).
