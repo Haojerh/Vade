@@ -4,6 +4,7 @@ import { CliError } from '../integrations/cli.js';
 import { resolveAgent } from './sessions.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import { openCodeV2Models } from './openCodeSessions.js';
+import { nativeModelContextWindow } from './providerContext.js';
 
 const clean = (value: string) => value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, 160);
 const normalized = (value: string) => value.toLowerCase().replace(/[^\p{L}\p{N}]/gu, '');
@@ -85,7 +86,8 @@ export class OpenCodeChatControls {
             if (model.status === 'deprecated' || typeof model.name !== 'string' || !clean(model.name).trim()) continue;
             const variants = model.variants && typeof model.variants === 'object' && !Array.isArray(model.variants)
               ? Object.keys(model.variants).filter(value => /^[a-zA-Z0-9_-]{1,80}$/.test(value) && model.variants[value]?.disabled !== true).slice(0, 32) : [];
-            models.push({ id, label: clean(model.name), description: clean(String(model.providerID ?? id.split('/')[0])), efforts: variants.length ? ['default', ...variants.filter(value => value !== 'default')].map(value => ({ value, label: value === 'default' ? 'Default' : value })) : [] });
+            const contextWindow = nativeModelContextWindow(model);
+            models.push({ id, label: clean(model.name), description: clean(String(model.providerID ?? id.split('/')[0])), ...(contextWindow ? { contextWindow } : {}), efforts: variants.length ? ['default', ...variants.filter(value => value !== 'default')].map(value => ({ value, label: value === 'default' ? 'Default' : value })) : [] });
             if (models.length >= 500) break;
           }
           if (!models.length) throw new Error();

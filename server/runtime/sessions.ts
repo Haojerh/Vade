@@ -362,7 +362,8 @@ export class AdeSessions {
   }
 
   async resumeHistory(projectId: string, worktreeId: string, cwd: string, source: { provider: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh'; threadId: string; cwd: string | null; title: string }): Promise<SessionRecord> {
-    if (source.provider === 'dsh' && (!source.cwd || path.relative(path.resolve(cwd), path.resolve(source.cwd)) !== '')) throw new CliError('INVALID_ARGUMENT', 'Resume DSH in its original workspace. Use Hand Off to start a new session in another checkout.');
+    if (source.provider === 'dsh' && !source.cwd) throw new CliError('INVALID_ARGUMENT', 'DSH continuation requires its verified source workspace.');
+    const dshContinuation = source.provider === 'dsh' && path.relative(path.resolve(cwd), path.resolve(source.cwd!)) !== '';
     const key = `${source.provider}:${source.threadId}`;
     if (!validProviderSessionId(source.provider, source.threadId) || this.historyStarting.has(key)) throw new CliError('INVALID_ARGUMENT', 'This session is already resuming or has no verified provider identity');
     this.historyStarting.add(key);
@@ -376,10 +377,16 @@ export class AdeSessions {
       }
       const previous = matches.find(record => !record.closed) ?? matches[0];
       if (source.provider === 'dsh' && previous && !dshResumable(this.store.directory, previous)) throw new CliError('RUNTIME_UNAVAILABLE', 'DSH has not saved this empty session yet. Start a new agent; there is no saved conversation to resume.');
-      if (!previous && this.store.sessions(projectId).length >= 200) throw new CliError('RATE_LIMITED', 'Project session history has reached the 200 session limit');
+      if ((!previous || dshContinuation) && this.store.sessions(projectId).length >= 200) throw new CliError('RATE_LIMITED', 'Project session history has reached the 200 session limit');
       const resolved = this.resolve(source.provider);
       if (!resolved) throw new CliError('CLI_MISSING', 'Install this agent before resuming');
       const record: SessionRecord = { id: previous?.id ?? crypto.randomUUID(), projectId, worktreeId, cwd, provider: source.provider, title: previous ? this.store.title(previous.id, source.title) : source.title, createdAt: previous?.createdAt ?? new Date().toISOString(), closed: false, providerThreadId: source.threadId, ...(source.cwd ? { sourceCwd: source.cwd } : {}) };
+      if (dshContinuation) {
+        record.id = crypto.randomUUID();
+        record.providerThreadId = crypto.randomUUID();
+        record.createdAt = new Date().toISOString();
+        record.dshContinuation = { threadId: source.threadId, cwd: source.cwd! };
+      }
       if (source.provider === 'antigravity' && !this.savedAgy(record)) throw new CliError('RUNTIME_UNAVAILABLE', 'Antigravity no longer has this saved conversation');
       try {
         const started = await this.start(record, resolved);

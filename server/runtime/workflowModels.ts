@@ -72,7 +72,8 @@ export function codeBuddyWorkflowCatalog(resolved: { executable: string; args: s
             seen.add(row.modelId);
             const efforts = Array.isArray(row._meta?.effortOptions) ? [...new Set<string>(row._meta.effortOptions.flatMap((option: any) => typeof option?.value === 'string' && /^(?:minimal|low|medium|high|xhigh|max)$/.test(option.value) ? [option.value] : []))] : [];
             // Native display names can be identical for distinct routing IDs.
-            models.push({ id: row.modelId, label: row.modelId, efforts });
+            const window = row._meta?.maxInputTokens;
+            models.push({ id: row.modelId, label: row.modelId, efforts, ...(Number.isSafeInteger(window) && window > 0 && window <= 1e12 ? { contextWindow: window } : {}) });
           }
           finish(models);
         }

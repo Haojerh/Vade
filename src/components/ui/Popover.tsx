@@ -17,7 +17,7 @@ interface PopoverProps extends React.HTMLAttributes<HTMLDivElement> {
   focusOnOpen?: boolean;
   floating?: boolean;
   floatingWidth?: number;
-  placement?: 'auto' | 'top' | 'bottom';
+  placement?: 'auto' | 'top' | 'bottom' | 'left';
 }
 export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, portal = false, focusOnOpen = false, floating = false, floatingWidth, placement = 'auto', className = '', children, style, ...props }: PopoverProps) {
   const fallbackRef = useRef<HTMLDivElement>(null);
@@ -32,6 +32,12 @@ export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, po
       if (!anchor) return;
       const width = Math.min(floatingWidth ?? anchor.width, window.innerWidth - 24);
       const topInset = window.adeDesktop?.customTitleBar ? 48 : 12;
+      if (placement === 'left') {
+        const modal = triggerRef.current?.closest('dialog[open]')?.getBoundingClientRect();
+        const bounds = { left: Math.max(12, (modal?.left ?? 0) + 12), right: Math.min(window.innerWidth - 12, (modal?.right ?? window.innerWidth) - 12), top: Math.max(topInset, (modal?.top ?? 0) + 12), bottom: Math.min(window.innerHeight - 12, (modal?.bottom ?? window.innerHeight) - 12) };
+        setPosition(sidePopoverPosition(anchor, floatingWidth ?? 280, content.scrollHeight, bounds));
+        return;
+      }
       const height = Math.min(content.scrollHeight, window.innerHeight - topInset - 12);
       const below = window.innerHeight - anchor.bottom - 12;
       const above = anchor.top - topInset;
@@ -56,4 +62,12 @@ export function Popover({ isOpen, isClosing, onClose, triggerRef, contentRef, po
   if (!isOpen) return null;
   const content = <div {...props} ref={ref} popover={floating ? 'manual' : undefined} role="dialog" tabIndex={-1} className={`${className} ${isClosing ? 'is-closing' : ''}`} style={{ ...style, ...(floating ? position : {}) }}>{children}</div>;
   return portal ? createPortal(content, popoverPortalHost(triggerRef.current, document.body)) : content;
+}
+
+export function sidePopoverPosition(anchor: { left: number; top: number; height: number }, preferredWidth: number, contentHeight: number, bounds: { left: number; right: number; top: number; bottom: number }): React.CSSProperties {
+  const width = Math.max(1, Math.min(preferredWidth, bounds.right - bounds.left));
+  const maxHeight = Math.max(1, bounds.bottom - bounds.top), height = Math.min(contentHeight, maxHeight);
+  return { position:'fixed', inset:'auto', margin:0, boxSizing:'border-box', width, maxHeight, overflowY:'auto',
+    left:Math.max(bounds.left, Math.min(anchor.left - width - 10, bounds.right - width)),
+    top:Math.max(bounds.top, Math.min(anchor.top + anchor.height / 2 - height / 2, bounds.bottom - height)) };
 }

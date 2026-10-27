@@ -17,6 +17,8 @@ export interface SessionRecord {
   closed: boolean;
   providerThreadId?: string;
   sourceCwd?: string;
+  /** Full native DSH continuation into another checkout; source stays intact. */
+  dshContinuation?: { threadId: string; cwd: string };
   bindingToken?: string;
   statusToken?: string;
   shell?: TerminalShell;

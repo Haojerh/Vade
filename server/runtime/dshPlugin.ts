@@ -4,9 +4,60 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 export const name = 'vade-dsh-observer';
+// The native header cwd is immutable. Materialize a separate native log through
+// the installed persistence API before the TUI reads its preset/route or resumes.
+export function installContinuation(ctx, config) {
+  const { continuation: source, expected, cwd, continuationReceipt: receipt } = config;
+  if (!source) return;
+  const valid = id => typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,119}$/.test(id);
+  if (!valid(source.threadId) || !valid(expected) || source.threadId === expected || !path.isAbsolute(source.cwd) || !path.isAbsolute(cwd) || !path.isAbsolute(receipt)) throw new Error('Invalid DSH continuation binding');
+  const norm = p => process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p);
+  ctx.inject(['sessionPersistence'], child => {
+    const persistence = child.get('sessionPersistence'), original = persistence.open;
+    let pending;
+    const identity = { source: source.threadId, sourceCwd: source.cwd, target: expected, cwd };
+    const save = complete => { const temp=receipt+'.tmp';fs.writeFileSync(temp,JSON.stringify({...identity,complete}),{mode:0o600});fs.renameSync(temp,receipt); };
+    const materialize = async options => {
+      if (fs.existsSync(receipt)) {
+        if(fs.statSync(receipt).size>4096)throw new Error('Invalid DSH continuation receipt');
+        const stamp=JSON.parse(fs.readFileSync(receipt,'utf8'));
+        if (!stamp.complete || Object.keys(identity).some(k=>stamp[k]!==identity[k])) throw new Error('DSH continuation delivery is uncertain; inspect Terminal before retrying');
+        return;
+      }
+      // No fallback on corrupt/unreadable destination logs, and no overwrite.
+      let existing;
+      try { existing=await original.call(persistence,expected,'read',options); }
+      catch(error) { if(error?.name!=='SessionPersistenceNotFoundError'||error.sessionId!==expected)throw error; }
+      if(existing){await existing.close();throw new Error('DSH continuation destination already exists without a completion receipt');}
+      let input, output;
+      try {
+        // Hold the native single-writer lease while taking the snapshot, so a
+        // session mounted outside Vade is refused too. Never append to source.
+        input=await original.call(persistence,source.threadId,'write',options);
+        const header=input.header;
+        if(header.id!==source.threadId || typeof header.cwd!=='string' || norm(header.cwd)!==norm(source.cwd) || header.parentSession || header.origin==='subagent')throw new Error('DSH continuation source workspace or identity changed');
+        const page=await input.read(0,4001,options), events=page.events;
+        if(!Array.isArray(events)||events.length>4000||Buffer.byteLength(JSON.stringify(events))>16*1024*1024)throw new Error('DSH session exceeds the native continuation limit; use Hand Off instead');
+        // Mark intent before taking a native writer. A failed/uncertain attempt
+        // never replays a partially appended log on restart.
+        save(false);
+        output=await persistence.create({...header,id:expected,cwd,createdAt:Date.now()},{...options,inheritedEventCount:input.inheritedEventCount});
+        await output.append(events,options);await output.flush(options);await output.close();output=undefined;
+        save(true);
+      } finally { try { await output?.close(); } finally { await input?.close(); } }
+    };
+    const wrapped = async function(id, access, options) {
+      if(id===expected){pending??=materialize(options);await pending;}
+      return original.call(this,id,access,options);
+    };
+    persistence.open=wrapped;
+    child.on('dispose',()=>{if(persistence.open===wrapped)persistence.open=original;});
+  });
+}
 export function apply(ctx, config) {
   const { directory, token, cwd, expected } = config;
   if (!path.isAbsolute(directory) || !path.isAbsolute(cwd) || !/^[a-f0-9]{64}$/.test(token)) return;
+  installContinuation(ctx,config);
   const norm = value => process.platform === 'win32' ? path.resolve(value).toLowerCase() : path.resolve(value);
   const safe = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,199}$/.test(value);
   const write = (name, value) => {
@@ -14,6 +65,7 @@ export function apply(ctx, config) {
     try { fs.writeFileSync(temp, JSON.stringify(value), {mode:0o600}); fs.renameSync(temp,file); } finally {try{fs.unlinkSync(temp)}catch{}}
   };
   let bound, channel, off, registryOff, lastState, saved, active=false, disposed=false, loading=false, models=[], catalogAt=0;
+  let contextModel, rejectedUsage, lastContext, invalidContext=false;
   const projected=new Set();
   const base = () => ({token,id:bound,cwd,at:new Date().toISOString()});
   const status = (state,event,attention) => {
@@ -100,6 +152,19 @@ export function apply(ctx, config) {
       const value='unbound';if(lastState===value)return;lastState=value;write('options.json',{...base(),current:{},models:[],ready:false});return;
     }
     const current={model:safe(channel.provider)&&safe(channel.model)?channel.provider+'/'+channel.model:undefined,effort:safe(channel.reasoningEffort)?channel.reasoningEffort:undefined};
+    const usage=channel.lastUsage;
+    if(contextModel && contextModel!==current.model){rejectedUsage=usage;invalidContext=true;}
+    if(invalidContext && rejectedUsage!==usage)invalidContext=false;
+    contextModel=current.model;
+    const count=value=>Number.isSafeInteger(value)&&value>=0&&value<=1e12?value:undefined;
+    const input=usage!==rejectedUsage?count(usage?.input):undefined,read=count(usage?.cacheRead),cacheWrite=count(usage?.cacheWrite);
+    const occupancy=!invalidContext?channel.contextOccupancy:undefined;
+    const nativeUsed=['projection','backend','sample'].includes(occupancy?.source)&&Number.isFinite(occupancy.usedTokens)&&occupancy.usedTokens>=0&&occupancy.usedTokens<=1e12?Math.round(occupancy.usedTokens):undefined;
+    const context={usedTokens:nativeUsed??(input===undefined?null:input+(read??0)+(cacheWrite??0)),windowTokens:count(occupancy?.contextWindow)??count(channel.contextWindow)??null,
+      measurement:nativeUsed!==undefined&&occupancy.source!=='sample'?'reported':'last-request',estimated:nativeUsed!==undefined&&occupancy.source==='projection',
+      ...(input===undefined?{}:{inputTokens:input,outputTokens:count(usage?.output),cacheReadTokens:read,cacheWriteTokens:cacheWrite})};
+    const contextKey=JSON.stringify(context);
+    if(contextKey!==lastContext){lastContext=contextKey;transcript({type:'context_usage',timestamp:new Date().toISOString(),payload:context});}
     const ready=channel.ready===true;
     const value=JSON.stringify({current,models,ready});if(value===lastState)return;lastState=value;
     write('options.json',{...base(),current,models,ready});

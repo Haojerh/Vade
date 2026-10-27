@@ -10,6 +10,7 @@ import type { AdeProvider } from '../../shared/contracts.js';
 import type { SessionRecord } from './store.js';
 import { CliError } from '../integrations/cli.js';
 import { isPathInsideRoots } from '../providers/transcriptUtils.js';
+import { nativeModelContextWindow } from './providerContext.js';
 
 export const isOpenCode = (provider: string): provider is 'opencode' | 'opencode2' | 'kilo' => provider === 'opencode' || provider === 'opencode2' || provider === 'kilo';
 export function validProviderSessionId(provider: AdeProvider, id: unknown): id is string {
@@ -73,7 +74,8 @@ export async function openCodeV2Models(resolved: { executable: string; args: str
       const id = model.providerID + '/' + model.id;
       if (!/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.:/@+-]{1,200}$/.test(id)) return [];
       const variants: string[] = Array.isArray(model.variants) ? model.variants.slice(0,32).flatMap((variant: any) => typeof variant?.id === 'string' && /^[a-zA-Z0-9_-]{1,80}$/.test(variant.id) ? [variant.id] : []) : [];
-      return [{ id, label: model.name.replace(/[\x00-\x1f\x7f]/g, '').slice(0,160), description: model.providerID.slice(0,160), efforts: variants.length ? ['default', ...variants.filter(value => value !== 'default')].map(value => ({ value, label: value === 'default' ? 'Default' : value })) : [] }];
+      const contextWindow = nativeModelContextWindow(model);
+      return [{ id, label: model.name.replace(/[\x00-\x1f\x7f]/g, '').slice(0,160), description: model.providerID.slice(0,160), ...(contextWindow ? { contextWindow } : {}), efforts: variants.length ? ['default', ...variants.filter(value => value !== 'default')].map(value => ({ value, label: value === 'default' ? 'Default' : value })) : [] }];
     }).slice(0,500);
   });
 }

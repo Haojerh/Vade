@@ -38,7 +38,8 @@ export function prepareDsh(directory: string, record: SessionRecord): string {
       if (fs.existsSync(candidate)) { registry = fs.realpathSync(candidate); break; }
     } catch { /* Try the next fixed installed package root. */ }
   }
-  const patches: object[] = [{ insert: [{ id: 'vade-dsh-observer', name: plugin.replaceAll('\\','/'), config: { directory: root, statusFile: path.join(directory, 'status', record.id + '.json'), token: record.statusToken, cwd: record.cwd, expected: record.providerThreadId, registry } }] }];
+  const patches: object[] = [{ insert: [{ id: 'vade-dsh-observer', name: plugin.replaceAll('\\','/'), config: { directory: root, statusFile: path.join(directory, 'status', record.id + '.json'), token: record.statusToken, cwd: record.cwd, expected: record.providerThreadId, registry,
+    ...(record.dshContinuation ? { continuation: record.dshContinuation, continuationReceipt: path.join(directory, 'dsh', record.id, 'continuation.json') } : {}) } }] }];
   if (!record.providerThreadId && record.workflowLaunch?.model) {
     const split = record.workflowLaunch.model.indexOf('/');
     if (split < 1) throw new CliError('INVALID_ARGUMENT', 'DSH models require an exact provider route');

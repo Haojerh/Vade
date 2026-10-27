@@ -5,6 +5,24 @@ import { renderToStaticMarkup, renderToReadableStream } from 'react-dom/server';
 import { latestAgentMessage } from '../features/workflow/conversation';
 import { MessageMarkdown } from '../features/workflow/MessageMarkdown';
 import { ConversationHistory, mergeConversationMessages, mergeLiveConversation } from '../features/workflow/ConversationHistory';
+import { ContextUsageMeter, contextPercentage } from '../features/workflow/ContextUsageMeter';
+import type { AgentContextUsage } from '../../shared/contracts';
+
+test('context meter distinguishes unknown capacity, zero usage and over-limit readings without inventing a window', () => {
+  const usage: AgentContextUsage = { usedTokens: 25100, windowTokens: 258400, observedAt: null, source: 'Native', measurement: 'reported' };
+  assert.ok(Math.abs(contextPercentage(usage)! - 9.713622) < .00001);
+  assert.equal(contextPercentage({ ...usage, windowTokens: null }), null);
+  assert.equal(contextPercentage({ ...usage, usedTokens: 0 }), 0);
+  assert.equal(contextPercentage({ ...usage, usedTokens: 300000, windowTokens: 200000 }), 150);
+  const props = { projectId: 'p', nodeId: 'n', runId: null, provider: 'codex' };
+  const known = renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, usage }));
+  assert.match(known, /Context: 25.1k of 258.4k tokens, 10% used/);
+  const unknown = renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, usage: { ...usage, windowTokens: null } }));
+  assert.match(unknown, /capacity unknown/);
+  assert.doesNotMatch(unknown, /NaN|0% used/);
+  assert.equal(renderToStaticMarkup(createElement(ContextUsageMeter, props)), '');
+  assert.equal(renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, usage: { ...usage, usedTokens: null } })), '');
+});
 import { bindWorkflowPinch } from '../features/workflow/workflowTouch';
 import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
 import { separateWorkflowBoxes } from '../features/workflow/workflowCollision';
@@ -16,6 +34,45 @@ import type { ConversationMessage } from '../../shared/contracts';
 import type { OrganizationConfig } from '../../shared/contracts';
 import { arrangeOrganization, connectionCreatesCycle } from '../features/organization/organizationGraph';
 import { deferHistoryRendering } from '../hooks/useHistoryRendering';
+import { conversationPositions, conversationPositionTicks, conversationPositionKey, conversationViewport, jumpToConversationPosition } from '../features/workflow/conversationNavigation';
+import { sidePopoverPosition } from '../components/ui/Popover';
+
+test('chat navigator centers above a visible composer and keeps its preview inside the modal', () => {
+  assert.equal(conversationViewport(100,900,0,700).center,400);
+  assert.equal(conversationViewport(100,900,0,1100).center,500);
+  assert.equal(conversationViewport(100,900,200,700).center,450);
+  const bounds={left:30,right:370,top:80,bottom:700};
+  const position=sidePopoverPosition({left:350,top:680,height:10},280,200,bounds);
+  assert.equal(position.left,60);assert.equal(position.top,500);
+  const narrow=sidePopoverPosition({left:80,top:10,height:10},280,200,{left:20,right:180,top:50,bottom:200});
+  assert.equal(narrow.left,20);assert.equal(narrow.width,160);assert.equal(narrow.top,50);assert.equal(narrow.maxHeight,150);
+});
+
+test('conversation navigation ties each prompt preview to its own first public reply and samples long history without losing focus', () => {
+  const message = (id: string, role: ConversationMessage['role'], text: string): ConversationMessage => ({ id, role, text, at: null });
+  const items = conversationPositions([message('before', 'agent', 'Earlier reply'), message('u1', 'user', 'First prompt'), message('a1', 'agent', 'First response'), message('a2', 'agent', 'Follow-up'), message('u2', 'user', 'Second prompt'), message('a3', 'agent', 'Second response'), message('u3', 'user', '')]);
+  assert.deepEqual(items.map(({ id, reply }) => ({ id, reply })), [{ id: 'u1', reply: 'First response' }, { id: 'u2', reply: 'Second response' }, { id: 'u3', reply: '' }]);
+  const long = conversationPositions(Array.from({ length: 1000 }, (_, index) => message(String(index), 'user', 'Prompt ' + index)));
+  const ticks = conversationPositionTicks(long, '571', '572', 32);
+  assert.ok(ticks.length <= 32);
+  for (const id of ['0', '999', '571', '572']) assert.ok(ticks.some(item => item.id === id));
+  assert.ok(ticks.every((item, index) => index === 0 || Number(item.id) > Number(ticks[index - 1].id)));
+  assert.equal(conversationPositionKey('ArrowDown', 571, long.length), 572, 'Keyboard navigation walks every prompt, including sampled-out ticks');
+  assert.equal(conversationPositionKey('ArrowUp', 0, long.length), 0);
+  assert.equal(conversationPositionKey('End', 0, long.length), 999);
+  assert.equal(conversationPositionKey('Home', 999, long.length), 0);
+  assert.equal(conversationPositionKey('Enter', 0, long.length), null);
+});
+
+test('chat history jumps use local pane geometry, focus without page scrolling and respect reduced motion', () => {
+  const calls: unknown[] = [];
+  const container = { scrollTop: 400, getBoundingClientRect: () => ({ top: 100 }), scrollTo: (value: unknown) => calls.push(value) } as unknown as HTMLElement;
+  const row = { getBoundingClientRect: () => ({ top: 50 }), focus: (value: unknown) => calls.push(value) } as unknown as HTMLElement;
+  jumpToConversationPosition(container, row, true);
+  assert.deepEqual(calls, [{ top: 334, behavior: 'auto' }, { preventScroll: true }]);
+  calls.length = 0; jumpToConversationPosition(container, row, false);
+  assert.deepEqual(calls[0], { top: 334, behavior: 'smooth' });
+});
 
 test('history rendering measures real heights, follows replaced rows and releases observers', () => {
   const previous = { ResizeObserver: globalThis.ResizeObserver, MutationObserver: globalThis.MutationObserver, CSS: globalThis.CSS };

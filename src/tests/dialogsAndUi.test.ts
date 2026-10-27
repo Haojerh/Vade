@@ -9,6 +9,17 @@ import { TopBar } from '../app/TopBar';
 import { ProviderActivity } from '../features/workflow/ProviderActivity';
 import type { Node } from '../../shared/contracts';
 import { readAgentDraft, writeAgentDraft } from '../hooks/useAgentDraft';
+import { handoffNoticeKey, handoffNoticeDismissed, dismissHandoffNotice } from '../features/workflow/handoffNotices';
+
+test('uncertain handoff notice dismissal is scoped to its project, target and source without changing delivery state', () => {
+  const key=handoffNoticeKey('notice-project','target','source');
+  const info={sourceId:'source',context:'focused',delivery:'uncertain'};
+  assert.equal(handoffNoticeDismissed(key),false);dismissHandoffNotice(key);
+  assert.equal(handoffNoticeDismissed(key),true);
+  assert.equal(handoffNoticeDismissed(handoffNoticeKey('other-project','target','source')),false);
+  assert.equal(handoffNoticeDismissed(handoffNoticeKey('notice-project','another-target','source')),false);
+  assert.equal(info.delivery,'uncertain');
+});
 
 test('unsent drafts survive overlay remounts, isolate agents and clear only the submitted draft', () => {
   const first = JSON.stringify(['draft-project', 'first']), second = JSON.stringify(['draft-project', 'second']);

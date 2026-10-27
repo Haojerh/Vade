@@ -23,7 +23,7 @@ export class CodeBuddyChatControls {
     const pending = this.pending.get(cwd); if (pending) return pending;
     const resolved = resolveAgent('codebuddy');
     if (!resolved) throw new CliError('CLI_MISSING', 'Install CodeBuddy Code before choosing a model');
-    const request = new Promise<AgentChatModel[]>((resolve, reject) => {
+    const helpCatalog = () => new Promise<AgentChatModel[]>((resolve, reject) => {
       const child = spawn(resolved.executable, [...resolved.args, '--help'], { cwd, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
       let output = '', bytes = 0, settled = false;
       const finish = (success: boolean) => {
@@ -36,7 +36,8 @@ export class CodeBuddyChatControls {
       child.stdout.setEncoding('utf8');
       child.stdout.on('data', (chunk: string) => { bytes += Buffer.byteLength(chunk); if (bytes > 1024 * 1024) finish(false); else output += chunk; });
       child.on('error', () => finish(false)); child.on('exit', code => finish(code === 0));
-    }).then(models => {
+    });
+    const request = import('./workflowModels.js').then(module => module.codeBuddyWorkflowCatalog(resolved)).then(models => models.map(model => ({ id:model.id, label:model.label, efforts:[], ...(model.contextWindow ? { contextWindow:model.contextWindow } : {}) } as AgentChatModel))).catch(helpCatalog).then(models => {
       if (this.catalogs.size >= 32) this.catalogs.delete(this.catalogs.keys().next().value!);
       this.catalogs.set(cwd, { at: Date.now(), models }); return models;
     }).finally(() => this.pending.delete(cwd));

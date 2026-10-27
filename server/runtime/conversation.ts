@@ -18,6 +18,9 @@ import { readOpenCodePage, readOpenCodeModel } from '../providers/opencode.js';
 import { readOpenCodeV2Page, readOpenCodeV2Model, openCodeV2Tools } from '../providers/openCodeV2.js';
 import { databaseToolActivity, mergeToolActivity, transcriptToolActivity } from '../providers/toolActivity.js';
 import { dshTranscript } from './dsh.js';
+import { isContextRecord, transcriptContextUsage, unknownContext } from '../providers/contextUsage.js';
+import type { AgentContextUsage } from '../../shared/contracts.js';
+import { readDatabaseContext } from './providerContext.js';
 
 /** Exact-session local command records supply settings without entering public chat. */
 export function codeBuddyRecordedSettings(lines: string[], record: SessionRecord): { model?: string | null; effort?: string | null } {
@@ -229,9 +232,9 @@ export class AdeConversations {
     } catch { return this.readMetadata(record); }
   }
 
-  private async readMetadata(record: SessionRecord): Promise<{ preview: string | null; model: string | null; effort: string | null; toolActivity: Section<ToolActivity[]>; providerActivity: Section<ProviderActivity[]> }> {
+  private async readMetadata(record: SessionRecord): Promise<{ preview: string | null; model: string | null; effort: string | null; contextUsage: AgentContextUsage; toolActivity: Section<ToolActivity[]>; providerActivity: Section<ProviderActivity[]> }> {
     const now = new Date().toISOString();
-    const result = { preview: null as string | null, model: null as string | null, effort: null as string | null, providerActivity: {
+    const result = { preview: null as string | null, model: null as string | null, effort: null as string | null, contextUsage: unknownContext(record.provider), providerActivity: {
       data: null, meta: { availability: 'unavailable', attemptedAt: now, observedAt: null, partial: true, stale: false, issue: null },
     } as Section<ProviderActivity[]>, toolActivity: {
       data: null, meta: { availability: 'unavailable', attemptedAt: now, observedAt: null, partial: true, stale: false,
@@ -245,17 +248,22 @@ export class AdeConversations {
       result.preview = latest.lines.length ? publicMessage(record, latest.lines[0], id)?.text.replace(/\s+/g, ' ').trim().slice(0, 300) || null : null;
       let tools: ToolActivity[];
       if (isOpenCode(record.provider)) {
+        result.contextUsage = { ...readDatabaseContext(record, file), cacheAccounting: 'separate' };
         Object.assign(result, (record.provider === 'opencode2' ? readOpenCodeV2Model : readOpenCodeModel)(file, id) ?? {});
         tools = (record.provider === 'opencode2' ? openCodeV2Tools : databaseToolActivity)(file, id);
         const data = databaseProviderActivity(file, id, record.provider === 'opencode2');
         result.providerActivity = { data, meta: { availability: data.length ? 'ready' : 'empty', attemptedAt: now, observedAt: now, partial: true, stale: false, issue: null } };
       } else if (record.provider === 'antigravity') {
         const allowed = (file: string) => isPathInsideRoots(file, [root]);
+        const contextFile = path.join(root, 'conversations', `${id}.db`);
+        if (allowed(contextFile)) result.contextUsage = readDatabaseContext(record, contextFile);
         const model = readAntigravityModel(id, allowed);
         if (model) Object.assign(result, model);
         tools = readAntigravityToolActivity(id, allowed);
         result.providerActivity.meta.availability = 'unsupported';
       } else {
+        const contextRows = await readOlderTranscriptLines(file, fs.statSync(file).size, 200, 4 * 1024 * 1024, false, isContextRecord);
+        result.contextUsage = transcriptContextUsage(record.provider, id, contextRows.lines);
         const settings = (line: string) => {
           try {
             const row = JSON.parse(line);

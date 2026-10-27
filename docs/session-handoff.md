@@ -8,4 +8,8 @@ The agent overlay's **Hand Off** action starts a fresh detected, enabled coding 
 
 Active source agents, active peer writers and active workflows in the source or destination checkout prevent handoff. Handing off does not create an orchestration run, alter task outcomes, change provider settings or bypass native sign-in/trust. Handoff is standalone-only.
 
+An uncertain-delivery notice is shown for the current overlay visit and is dismissed when that overlay closes. Its presentation state is bounded and browser-local in memory; the backend's persisted uncertain-delivery guard is preserved, so reopening never sends context again. Pending context retains its explicit send action.
+
+DSH folds large native pastes into a chip at six lines or 600 characters. The send witness accepts its exact line and UTF-16 character counts plus the first-line preview when shown, inside the owned composer after a locked paste into an empty prompt. It submits one Enter and requires fresh native turn evidence. Mismatched or historical chips receive no Enter; uncertain delivery is never retried automatically.
+
 Reference: Orca's [continuation dialog](https://github.com/stablyai/orca/blob/main/src/renderer/src/components/agent-session-continuation/AgentSessionContinuationDialog.tsx), [prompt construction](https://github.com/stablyai/orca/blob/main/src/renderer/src/lib/agent-session-continuation.ts), and [readiness-aware launch](https://github.com/stablyai/orca/blob/main/src/renderer/src/lib/launch-agent-session-continuation.ts). Vade uses its existing shared UI and owned session API with public transcript exports rather than terminal captures or an Orca runtime dependency.

@@ -117,7 +117,17 @@ export class TerminalScreen {
   }
 
   dshComposerHasText(expected: string): boolean {
-    return this.dshComposerText() === expected.replace(/\s+/g, ' ').trim();
+    const text = this.dshComposerText(), normalized = expected.replace(/\r\n?/g, '\n');
+    if (text === normalized.replace(/\s+/g, ' ').trim()) return true;
+    if (!text || normalized.length < 600 && normalized.split('\n').length < 6) return false;
+    // DSH 0.17 folds large pastes into a native chip. Counts describe the
+    // entire pasted span; the preview (when there is room) is its first line.
+    // Used only after a locked paste into an observed empty composer.
+    const chip = /^▸\s*(\d+)\s*(?:lines|行)\s*・\s*(\d+)\s*(?:chars|字)\s*・(?:\s*(.*?)\s*・)?\s*(?:hover to peek|悬停查看)$/.exec(text);
+    if (!chip || Number(chip[1]) !== normalized.split('\n').length || Number(chip[2]) !== normalized.length) return false;
+    if (!chip[3]) return true;
+    const preview = chip[3].trim().replace(/…$/, ''), first = normalized.split('\n')[0].replace(/\s+/g, ' ').trim();
+    return preview.length >= Math.min(8, first.length) && first.startsWith(preview);
   }
 
   composerEmpty(antigravity = false, codebuddy = false): boolean {

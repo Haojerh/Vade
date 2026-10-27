@@ -5,6 +5,7 @@ import { MessageMarkdown } from './MessageMarkdown';
 import { ConversationToolCall } from './ConversationToolCall';
 import { ResponseActions,UserMessageMeta } from './ResponseActions';
 import { useHistoryRendering } from '../../hooks/useHistoryRendering';
+import { ConversationPositionRail } from './ConversationPositionRail';
 
 export function conversationTimeline(messages: ConversationMessage[], tools: ToolActivity[], limited: boolean) {
   const first = messages.find(message => message.at)?.at;
@@ -98,13 +99,16 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
     return () => element.removeEventListener('scroll', scroll);
   }, [scrollContainerRef, error, loadOlder]);
 
-  return <div ref={history} className="conversation-history-content" aria-label="Conversation history">
+  const timeline = conversationTimeline(messages, tools, Boolean(cursor));
+  const publicMessages = timeline.flatMap(item => item.message ? [item.message] : []);
+  return <div ref={history} className={`conversation-history-content${scrollContainerRef && messages.some(message => message.role === 'user') ? ' has-position-rail' : ''}`} aria-label="Conversation history">
+    <ConversationPositionRail key={`${projectId}:${nodeId}:${runId}:${page.sourceIdentity}`} messages={publicMessages} historyRef={history} scrollRef={scrollContainerRef} hasOlder={Boolean(cursor)} loadingOlder={busy} onLoadOlder={() => { void loadOlder(); }} />
     {(cursor || error) && <div className="conversation-history-pagination">
       {cursor && <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { void loadOlder(); }}>{busy ? 'Loading…' : error ? 'Retry loading older messages' : 'Load more'}</button>}
       {error && <p role="alert" className="text-xs text-danger">{error}</p>}
     </div>}
     <div className="conversation-thread" role="log" aria-label="Conversation turns" aria-live="off">
-      {conversationTimeline(messages, tools, Boolean(cursor)).map((item, index, timeline) => {
+      {timeline.map((item, index, timeline) => {
         if (item.tool) {
           if (timeline[index - 1]?.tool) return null;
           const group: ToolActivity[] = [];
@@ -115,7 +119,7 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
         }
         const message = item.message;
         if (!message) return null;
-        return <div key={message.id} role="article" aria-label={message.role==='agent'?'Agent response':'Your message'} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
+        return <div key={message.id} role="article" tabIndex={message.role === 'user' ? -1 : undefined} data-conversation-position={message.role === 'user' ? message.id : undefined} aria-label={message.role==='agent'?'Agent response':'Your message'} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
         <div className={`chat-bubble ${message.role === 'agent' ? 'bubble-agent' : 'bubble-user'}`}>
           <div data-history-row className={`chat-bubble-text message-markdown ${message.role==='user'&&message.text.length > 800 && !expanded.has(message.id) ? 'message-collapsed' : ''}`}><MessageMarkdown text={message.text} /></div>
           {message.role==='user'&&message.text.length > 800 && <button type="button" className="btn-read-more" aria-expanded={expanded.has(message.id)} onClick={() => setExpanded(current => {

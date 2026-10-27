@@ -29,8 +29,37 @@ async function fixture(withChannel = false) {
   const session={id:'11234567-1234-1234-1234-123456789abc',header:{id:'11234567-1234-1234-1234-123456789abc',cwd:directory},snapshotEvents:()=>[]};
   let seq=0;
   const emit=(type:string,data:unknown,source=session)=>callbacks.get('session/event')?.(source,{type,data,seq:seq++,time:Date.now()});
-  return {directory,record,root,ctx,callbacks,session,emit,bind(){callbacks.get('session/created')?.(session);record.providerThreadId=dshBinding(directory,record)},close(){callbacks.get('dispose')?.();fs.rmSync(directory,{recursive:true,force:true})}};
+  return {module,directory,record,root,ctx,callbacks,session,emit,bind(){callbacks.get('session/created')?.(session);record.providerThreadId=dshBinding(directory,record)},close(){callbacks.get('dispose')?.();fs.rmSync(directory,{recursive:true,force:true})}};
 }
+
+test('DSH cross-worktree continuation copies the full native log once, preserves source, and fences uncertain attempts',async()=>{
+  const f=await fixture();
+  try {
+    const source='source-session',target='target-session',cwd=path.join(f.directory,'destination');
+    const originalEvents=[{seq:0,type:'user/message',time:1,data:{text:'history'}},{seq:1,type:'tool/result',time:2,data:{text:'native tool context'}}];
+    const logs=new Map<string,any>([[source,{header:{id:source,cwd:f.directory,createdAt:1},events:structuredClone(originalEvents)}]]);
+    let creates=0,lease=false,fail=false,dispose:Function|undefined;
+    const persistence:any={
+      async open(id:string,access:string){const log=logs.get(id);if(!log){const e:any=new Error('missing');e.name='SessionPersistenceNotFoundError';e.sessionId=id;throw e;}if(id===source&&access==='write'){assert.equal(lease,false);lease=true;}return{header:log.header,inheritedEventCount:0,read:async()=>({events:structuredClone(log.events)}),close:async()=>{if(id===source)lease=false;}};},
+      async create(header:any){creates++;assert.equal(lease,true);const log={header,events:[] as any[]};logs.set(header.id,log);return{append:async(events:any[])=>{if(fail)throw Error('write failed');log.events=structuredClone(events);},flush:async()=>{},close:async()=>{}};},
+    };
+    const original=persistence.open;
+    const ctx:any={inject(_keys:any,fn:Function){fn({get:()=>persistence,on:(_name:string,fn:Function)=>{dispose=fn;}});}};
+    const receipt=path.join(f.directory,'continuation.json'),config={continuation:{threadId:source,cwd:f.directory},expected:target,cwd,continuationReceipt:receipt};
+    f.module.installContinuation(ctx,config);
+    await Promise.all([persistence.open(target,'read'),persistence.open(target,'read')]);
+    assert.equal(creates,1);assert.equal(lease,false);assert.deepEqual(logs.get(source).events,originalEvents);
+    assert.equal(logs.get(source).header.cwd,f.directory);assert.equal(logs.get(target).header.cwd,cwd);assert.deepEqual(logs.get(target).events,originalEvents);
+    dispose!();assert.equal(persistence.open,original);
+    f.module.installContinuation(ctx,config);await persistence.open(target,'read');assert.equal(creates,1);dispose!();
+    fail=true;
+    const bad={...config,expected:'failed-target',continuationReceipt:path.join(f.directory,'failed.json')};
+    f.module.installContinuation(ctx,bad);await assert.rejects(persistence.open('failed-target','read'),/write failed/);assert.equal(lease,false);dispose!();
+    f.module.installContinuation(ctx,bad);await assert.rejects(persistence.open('failed-target','read'),/uncertain/);assert.equal(creates,2);dispose!();
+    f.module.installContinuation(ctx,{...config,expected:'foreign-target',continuationReceipt:path.join(f.directory,'foreign.json'),continuation:{threadId:source,cwd}});
+    await assert.rejects(persistence.open('foreign-target','read'),/workspace or identity changed/);assert.equal(creates,2);assert.equal(lease,false);dispose!();
+  }finally{f.close();}
+});
 
 test('DSH observer binds the owned root, projects only public messages, and uses explicit native turn outcomes',async()=>{
   const f=await fixture();
@@ -101,6 +130,21 @@ test('DSH composer readiness excludes setup, side controls and existing drafts',
   }finally{screen.dispose()}
 });
 
+test('DSH folded paste chips witness the exact long draft and reject mismatching or historical chips',async()=>{
+  const screen=new TerminalScreen(()=>{},()=>{});
+  const prompt='Continue from the prior Vade agent session.\n'+Array(12).fill('Historical context for the handoff.').join('\n');
+  const chip=(count=prompt.length,preview='Continue from the…')=>`▸ ${prompt.split('\n').length} lines・${count} chars・${preview}・hover to peek`;
+  const draw=async(text:string)=>{screen.resize(160,20);screen.write(`\x1b[2J\x1b[HDSH\r\n╭──────────────────────────────────────────────────────────────────────────────────────────────╮\r\n⌸ ❯ ${text}\r\n╰──────────────────────────────────────────────────────────────────────────────────────────────╯\r\nmodel · high\x1b[3;${5+text.length}H`);await screen.settled()};
+  try {
+    await draw(chip());assert.equal(screen.dshComposerHasText(prompt),true);assert.equal(screen.dshPromptReady(),false);
+    await draw(chip(prompt.length+1));assert.equal(screen.dshComposerHasText(prompt),false);
+    await draw(chip(prompt.length,'A different prompt…'));assert.equal(screen.dshComposerHasText(prompt),false);
+    await draw(`▸ ${prompt.split('\n').length} 行・${prompt.length} 字・Continue from the…・悬停查看`);assert.equal(screen.dshComposerHasText(prompt),true);
+    await draw('');assert.equal(screen.dshComposerHasText(prompt),false);
+    screen.write('\x1b[H'+chip());await screen.settled();assert.equal(screen.dshComposerHasText(prompt),false);
+  }finally{screen.dispose()}
+});
+
 test('DSH discovers models promptly when the native channel mounts after observer readiness',async()=>{
   const f=await fixture(true);
   try {
@@ -134,6 +178,28 @@ test('DSH workflow catalog retains native efforts after its session tab closes',
   } finally { store.close(); f.close(); }
 });
 
+test('DSH context observes native request input and capacity without double-counting caches after a model change',async()=>{
+  const f=await fixture(true);
+  try {
+    f.ctx.channel.lastUsage={input:100,cacheRead:200,cacheWrite:50,output:20};
+    f.ctx.channel.contextWindow=1000000;
+    f.bind();f.callbacks.get('ready')?.();
+    const deadline=Date.now()+3000;
+    while(!f.ctx.changed){if(Date.now()>deadline)throw Error('Channel did not attach');await new Promise(resolve=>setTimeout(resolve,20));}
+    const reader=new AdeConversations(f.directory);
+    assert.equal((await reader.metadata(f.record)).contextUsage.usedTokens,350);
+    assert.equal((await reader.metadata(f.record)).contextUsage.windowTokens,1000000);
+    f.ctx.channel.model='another-model';f.ctx.channel.contextWindow=undefined;f.ctx.changed();
+    assert.equal((await reader.metadata(f.record)).contextUsage.usedTokens,null);
+    f.ctx.channel.lastUsage={input:20,cacheRead:40,cacheWrite:0,output:10};f.ctx.channel.contextWindow=64000;f.ctx.changed();
+    assert.equal((await reader.metadata(f.record)).contextUsage.usedTokens,60);
+    assert.equal((await reader.metadata(f.record)).contextUsage.windowTokens,64000);
+    f.ctx.channel.contextOccupancy={usedTokens:1234.4,contextWindow:64000,source:'projection'};f.ctx.changed();
+    assert.equal((await reader.metadata(f.record)).contextUsage.usedTokens,1234);
+    assert.equal((await reader.metadata(f.record)).contextUsage.estimated,true);
+  }finally{f.close()}
+});
+
 test('DSH native session or channel replacement revokes send readiness',async()=>{
   const f=await fixture(true);
   try{
@@ -164,13 +230,14 @@ test('owned DSH sends require native readiness, submit once and interrupt with C
   const script=String.raw`
     const fs=require('fs'),path=require('path'),args=process.argv.slice(1),patch=args[args.indexOf('--patch')+1];
     const config=JSON.parse(fs.readFileSync(patch,'utf8'))[0].insert[0].config;
-    const id='11234567-1234-1234-1234-123456789abc',base={token:config.token,id,cwd:config.cwd};let enters=0,cancels=0;
+    const id=config.expected??'11234567-1234-1234-1234-123456789abc',base={token:config.token,id,cwd:config.cwd};let enters=0,cancels=0;
     fs.writeFileSync(path.join(config.directory,'binding.json'),JSON.stringify(base));
     fs.writeFileSync(path.join(config.directory,'options.json'),JSON.stringify({...base,ready:true,current:{},models:[]}));
     const status=(state,event)=>{const value={...base,provider:'dsh',state,event,at:new Date().toISOString()};fs.writeFileSync(path.join(config.directory,'status.json'),JSON.stringify(value));fs.writeFileSync(config.statusFile,JSON.stringify(value))};
     const draw=text=>process.stdout.write('\x1b[2J\x1b[HDSH\r\n╭────────────────────────────────────────╮\r\n❯ '+text+'\r\n╰────────────────────────────────────────╯\r\nmodel · high\x1b[3;'+(3+text.length)+'H');
+    let pending='';
     process.stdin.setRawMode?.(true);status('idle','SessionStart');draw('');process.stdin.on('data',buffer=>{const text=buffer.toString();
-      if(text.includes('\x1b[200~'))draw(text.replace('\x1b[200~','').replace('\x1b[201~',''));
+      if(pending||text.includes('\x1b[200~')){pending+=text;if(pending.includes('\x1b[201~')){const draft=pending.replace('\x1b[200~','').replace('\x1b[201~','');pending='';draw(draft.length>=600?'▸ '+draft.split('\n').length+' lines・'+draft.length+' chars・'+draft.split('\n')[0].slice(0,16)+'…・hover to peek':draft);}}
       if(text==='\r'){enters++;status('working','UserPromptSubmit');draw('');}
       if(text==='\x03'){cancels++;status('interrupted','Stop');draw('');}
       fs.writeFileSync(path.join(config.directory,'counts.json'),JSON.stringify({enters,cancels}));
@@ -183,8 +250,12 @@ test('owned DSH sends require native readiness, submit once and interrupt with C
     const result=await sessions.send(project.id,record.id,{message:'hello'});assert.equal(result.ok,true);
     await sessions.interrupt(project.id,record.id);
     await wait(()=>sessions.status(project.id,record.id).data?.state==='interrupted');
+    const handoff='Continue the previous task.\n'+Array(30).fill('Public handoff context for the next agent.').join('\n');
+    assert.equal((await sessions.send(project.id,record.id,{message:handoff},true,true,true)).ok,true);
+    await sessions.interrupt(project.id,record.id);
+    await wait(()=>sessions.status(project.id,record.id).data?.state==='interrupted');
     const counts=JSON.parse(fs.readFileSync(path.join(dshDirectory(directory,record),'counts.json'),'utf8'));
-    assert.deepEqual(counts,{enters:1,cancels:1});
+    assert.deepEqual(counts,{enters:2,cancels:2});
     const file=path.join(dshDirectory(directory,record),'options.json'),options=JSON.parse(fs.readFileSync(file,'utf8'));options.ready=false;fs.writeFileSync(file,JSON.stringify(options));
     await assert.rejects(sessions.send(project.id,record.id,{message:'do not submit'}),/finish native setup/i);
     assert.deepEqual(JSON.parse(fs.readFileSync(path.join(dshDirectory(directory,record),'counts.json'),'utf8')),counts);
@@ -199,5 +270,17 @@ test('owned DSH sends require native readiness, submit once and interrupt with C
     await wait(()=>sessions.messagePromptReady(project.id,resumed.id));
     assert.equal(resumed.id,record.id);assert.equal(resumed.providerThreadId,source.threadId);
     assert.equal(fs.existsSync(path.join(dshDirectory(directory,resumed),'counts.json')),false,'resume never replays the previous message');
+    const destination=path.join(directory,'destination');fs.mkdirSync(destination);
+    await assert.rejects(sessions.resumeHistory(project.id,'destination',destination,source),/running in another worktree/);
+    sessions.closeSession(project.id,resumed.id);
+    const continued=await sessions.resumeHistory(project.id,'destination',destination,source);
+    await wait(()=>sessions.messagePromptReady(project.id,continued.id));
+    assert.notEqual(continued.id,record.id);assert.notEqual(continued.providerThreadId,source.threadId);
+    assert.equal(continued.cwd,destination);assert.equal(continued.worktreeId,'destination');
+    assert.deepEqual(continued.dshContinuation,{threadId:source.threadId,cwd:directory});
+    const original=store.sessions(project.id).find(row=>row.id===record.id)!;
+    assert.equal(original.cwd,directory,'original registry entry stays in source checkout');
+    assert.equal(original.providerThreadId,source.threadId);assert.equal(original.closed,true);
+    assert.equal(fs.existsSync(path.join(dshDirectory(directory,continued),'counts.json')),false,'continuation submits no input');
   }finally{sessions.close();store.close();await fs.promises.rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:100})}
 });

@@ -16,6 +16,7 @@ import { sendNodeMessage, interruptAgent, openChatTerminal, resumeTerminal } fro
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
 import { AgentChatControls } from './AgentChatControls';
+import { ContextUsageMeter } from './ContextUsageMeter';
 import { DictationButton } from './DictationButton';
 import { appendDictation } from './dictation';
 import { HandoffDialog, HandoffNotice } from './HandoffDialog';
@@ -345,6 +346,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                                 {attachButton}
                               </div>
                               {projectId && <AgentChatControls projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} model={node.model} effort={node.effort} disabled={chatSending || isClosing || ['working', 'waiting', 'blocked'].includes(node.state)} />}
+                              {projectId && <ContextUsageMeter key={`context:${projectId}:${node.id}:${selectedRunId ?? ''}`} projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} provider={node.agentType} usage={node.contextUsage} />}
                               <DictationButton iconOnly key={`dictation:${projectId}:${node.id}:${selectedRunId ?? ''}`} disabled={chatSending || isClosing}
                                 onText={(text) => setChatMessage((draft) => appendDictation(draft, text))} onActiveChange={setDictating} />
                               <button

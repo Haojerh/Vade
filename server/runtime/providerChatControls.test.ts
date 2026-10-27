@@ -79,7 +79,7 @@ test('workflow CodeBuddy reads exact native model effort metadata without prompt
       if (m.method === 'initialize') send({jsonrpc:'2.0',id:m.id,result:{protocolVersion:1}});
       else if (m.method === 'session/new' && m.params.cwd === process.cwd() && m.params.mcpServers.length === 0) send({jsonrpc:'2.0',id:99,method:'session/request_permission',params:{}});
       else if (m.id === 99 && m.error?.code === -32601) send({jsonrpc:'2.0',id:2,result:{models:{availableModels:[
-        {modelId:'deepseek-v4.1-flash',name:'DeepSeek',_meta:{effortOptions:[{value:'low'},{value:'high'},{value:'max'},{value:'invented'}],apiKey:'never expose'}},
+        {modelId:'deepseek-v4.1-flash',name:'DeepSeek',_meta:{maxInputTokens:300000,effortOptions:[{value:'low'},{value:'high'},{value:'max'},{value:'invented'}],apiKey:'never expose'}},
         {modelId:'deepseek-v4.1-flash-sg',name:'DeepSeek',_meta:{effortOptions:[{value:'high'}]}},
         {modelId:'plain-model',name:'Plain'}, {modelId:'../bad',name:'Invalid'}
       ]}}});
@@ -87,7 +87,7 @@ test('workflow CodeBuddy reads exact native model effort metadata without prompt
     });`;
   const models = await codeBuddyWorkflowCatalog({ executable: process.execPath, args: ['-e', script, '--'] });
   assert.deepEqual(models, [
-    {id:'deepseek-v4.1-flash',label:'deepseek-v4.1-flash',efforts:['low','high','max']},
+    {id:'deepseek-v4.1-flash',label:'deepseek-v4.1-flash',efforts:['low','high','max'],contextWindow:300000},
     {id:'deepseek-v4.1-flash-sg',label:'deepseek-v4.1-flash-sg',efforts:['high']},
     {id:'plain-model',label:'plain-model',efforts:[]},
   ]);

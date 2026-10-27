@@ -1,3 +1,5 @@
+@import './conversation-navigation.css';
+@import './context-usage.css';
 .node-details-chatbox { padding:0; border:0; background:transparent; box-shadow:none; }
 .agent-chatbox-section { margin-top:12px; padding-top:0; border-top:0; }
 .node-details-chatbox .message-attachments { border:1px solid var(--border-main); border-radius:20px; background:var(--surface-2); padding:10px; }
@@ -5,12 +7,13 @@
 .node-details-chatbox .message-attachment-list { margin:0 0 6px; }
 .node-details-chatbox .chatbox-textarea { min-height:70px; max-height:240px; padding:6px 6px 4px; border:0; border-radius:0; background:transparent; font-size:13px; line-height:1.6; box-shadow:none; resize:none; }
 .node-details-chatbox .chatbox-textarea:focus { border:0; box-shadow:none; }
-.node-details-chatbox .message-composer-actions { display:grid; grid-template-columns:minmax(28px,1fr) minmax(0,max-content) auto auto; align-items:center; gap:6px; margin:4px 0 0; }
+.node-details-chatbox .message-composer-actions { display:grid; grid-template-columns:minmax(28px,1fr) minmax(0,max-content) auto auto auto; align-items:center; gap:6px; margin:4px 0 0; }
 .node-details-chatbox .message-composer-actions>.message-attachment-controls { grid-column:1; grid-row:1; justify-self:start; }
 .node-details-chatbox .message-composer-actions>.agent-chat-controls { grid-column:2; grid-row:1; justify-self:end; width:auto; }
 .node-details-chatbox .message-composer-actions .composer-dictation { display:contents; }
-.node-details-chatbox .message-composer-actions .composer-dictation>button { grid-column:3; grid-row:1; }
-.node-details-chatbox .message-composer-actions>.btn-chat-send { grid-column:4; grid-row:1; }
+.node-details-chatbox .message-composer-actions>.context-usage-control { grid-column:3; grid-row:1; }
+.node-details-chatbox .message-composer-actions .composer-dictation>button { grid-column:4; grid-row:1; }
+.node-details-chatbox .message-composer-actions>.btn-chat-send { grid-column:5; grid-row:1; }
 .node-details-chatbox .message-composer-actions :is(.composer-attach-icon,.composer-dictation>button) { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; min-width:32px; min-height:32px; padding:0; border:0; border-radius:9px; background:transparent; box-shadow:none; color:var(--text-secondary); }
 .node-details-chatbox .message-composer-actions .composer-attach-icon svg { width:18px; height:18px; }
 .node-details-chatbox .message-composer-actions .composer-dictation>.btn-danger { color:var(--state-failed-text); background:transparent; }
@@ -60,7 +63,7 @@
 .conversation-tool-action { flex:0 1 auto; overflow:hidden; text-overflow:ellipsis; font:500 12px/1.5 var(--font-sans, sans-serif); }
 .conversation-tool-target { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:11px/1.5 Consolas,'Cascadia Mono',monospace; opacity:.8; }
 .conversation-tool-group .conversation-tool-call-plain { padding:5px 0; }
-.conversation-tool-details { max-height:260px; overflow:auto; overscroll-behavior:contain; margin:2px 4px 6px 22px; padding:2px 0 2px 12px; border-left:1px solid var(--border-subtle); }
+.conversation-tool-details { overflow:visible; margin:2px 4px 6px 22px; padding:2px 0 2px 12px; border-left:1px solid var(--border-subtle); }
 .conversation-tool-group .conversation-tool-input { margin:3px 0; }
 .conversation-tool-group .tool-edit-caption { font-size:10px; opacity:.7; }
 .conversation-tool-group .tool-edit-path { font:11px/1.5 Consolas,'Cascadia Mono',monospace; overflow-wrap:anywhere; }

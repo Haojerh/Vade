@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { MessageSquarePlus } from 'lucide-react';
 import type { HandoffWorktree, Node, SessionHandoff } from '../../../shared/contracts';
 import { fetchHandoffWorktrees, handoffSession } from '../../api/client';
+import { dismissHandoffNotice, handoffNoticeDismissed, handoffNoticeKey } from './handoffNotices';
 import { useAgentCatalog } from '../../hooks/useAgentCatalog';
 import { AgentPicker } from '../../components/ui/AgentPicker';
 import { Icon } from '../../components/ui/Icon';
@@ -76,7 +77,13 @@ export function HandoffNotice({ projectId, nodeId, info, onRefresh }: { projectI
   const lock = useRef(false), alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const current = result ?? info;
-  if (current.delivery === 'submitted') return null;
+  const noticeKey = handoffNoticeKey(projectId, nodeId, info.sourceId);
+  const [hidden] = useState(() => handoffNoticeDismissed(noticeKey));
+  useEffect(() => {
+    if (current.delivery !== 'uncertain' || hidden) return;
+    return () => dismissHandoffNotice(noticeKey);
+  }, [noticeKey, current.delivery, hidden]);
+  if (current.delivery === 'submitted' || current.delivery === 'uncertain' && hidden) return null;
   const send = async () => {
     if (lock.current) return; lock.current = true; setBusy(true); setError(null);
     try { const next = await handoffSession(projectId, nodeId); if (alive.current && !('nodeId' in next)) { setResult(next); onRefresh(); } }

@@ -147,6 +147,24 @@ export interface Node {
   effort?: string | null;
   toolActivity?: Section<ToolActivity[]>;
   providerActivity?: Section<ProviderActivity[]>;
+  contextUsage?: AgentContextUsage;
+}
+
+/** Exact-session native measurement. A missing capacity never implies a model default. */
+export interface AgentContextUsage {
+  model?: string;
+  estimated?: boolean;
+  cacheAccounting?: 'included-in-input' | 'separate';
+  usedTokens: number | null;
+  windowTokens: number | null;
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  observedAt: ISO | null;
+  source: string;
+  measurement: 'reported' | 'last-request';
+  reason?: string;
 }
 
 /** Native errors and reasoning presence only; never reasoning text or tool results. */
@@ -386,6 +404,7 @@ export interface AdhocOrchestrationRequest {
 }
 
 export interface AgentChatModel {
+  contextWindow?: number;
   id: string;
   label: string;
   description?: string;
@@ -615,7 +634,7 @@ export interface OrganizationConfig {
   orchestratorPosition?: { x: number; y: number };
   nodes: OrganizationNode[]; edges: { source: string; target: string }[];
 }
-export interface WorkflowModel { id: string; label: string; efforts: string[]; effortModels?: Record<string, string> }
+export interface WorkflowModel { id: string; label: string; efforts: string[]; effortModels?: Record<string, string>; contextWindow?: number }
 export interface WorkflowSetupStatus { ready: boolean; cli: boolean; skill: boolean; cliSkill: boolean; cliPath: string; version: string; error: string | null }
 export interface WorkflowStep {
   nodeId: string; state: 'pending' | 'starting' | 'running' | 'completed' | 'failed' | 'interrupted' | 'skipped';

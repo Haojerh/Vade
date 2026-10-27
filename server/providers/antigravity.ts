@@ -12,17 +12,21 @@ import { hashId,isSystemInjectedUserText,toIsoOrNull } from './transcriptUtils.j
 // CortexStepGeneratorMetadata.chat_model = 1;
 // ChatModelMetadata.response_model = 19.
 // Read only these fields; never search prompt/tool text for model names.
-function protobufField(bytes: Uint8Array, field: number, scalar?: (field: number, value: number) => void): Uint8Array | null {
+export function protobufField(bytes: Uint8Array, field: number, scalar?: (field: number, value: number) => void): Uint8Array | null {
   let offset = 0;
   let value: Uint8Array | null = null;
-  const varint = () => {
+  const varint = (skipWide = false) => {
     let result = 0;
     let shift = 0;
-    while (offset < bytes.length && shift < 56) {
+    while (offset < bytes.length && shift < 70) {
       const byte = bytes[offset++];
+      if (shift === 63 && byte > 1) throw new Error('Invalid protobuf integer');
       result += (byte & 127) * 2 ** shift;
       if (!(byte & 128)) {
-        if (!Number.isSafeInteger(result)) throw new Error('Invalid protobuf integer');
+        if (!Number.isSafeInteger(result)) {
+          if (skipWide) return NaN;
+          throw new Error('Invalid protobuf integer');
+        }
         return result;
       }
       shift += 7;
@@ -35,8 +39,10 @@ function protobufField(bytes: Uint8Array, field: number, scalar?: (field: number
     const wire = tag % 8;
     if (number < 1) throw new Error('Invalid protobuf field');
     if (wire === 0) {
-      const integer = varint();
-      scalar?.(number, integer);
+      // Native metadata contains signed int64 sentinels such as -1 (ten-byte
+      // varints). Skip those without rounding them into public numeric facts.
+      const integer = varint(true);
+      if (Number.isSafeInteger(integer)) scalar?.(number, integer);
     } else if (wire === 2) {
       const size = varint();
       if (offset + size > bytes.length) throw new Error('Invalid protobuf length');
