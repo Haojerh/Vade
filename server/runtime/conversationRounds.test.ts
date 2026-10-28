@@ -126,6 +126,22 @@ test('Antigravity groups ordered user, progress and final responses only after t
   assert.equal(antigravityNativeRounds(withTrailingTool.map(value=>JSON.stringify(value)),source).length,0);
 });
 
+test('Antigravity starts a new turn after a long inactive interruption without inventing a duration',()=>{
+  const source='source';
+  const rows=[
+    {step_index:1,source:'USER_EXPLICIT',type:'USER_INPUT',status:'DONE',created_at:'2026-10-28T12:00:00Z',content:'<USER_REQUEST>\nInterrupted\n</USER_REQUEST>'},
+    {step_index:2,source:'USER_EXPLICIT',type:'USER_INPUT',status:'DONE',created_at:'2026-10-28T12:31:00Z',content:'<USER_REQUEST>\nNext day\n</USER_REQUEST>'},
+    {step_index:3,source:'SYSTEM',type:'SYSTEM_MESSAGE',status:'DONE',created_at:'2026-10-28T12:31:00Z',content:'System metadata'},
+    {step_index:4,source:'MODEL',type:'PLANNER_RESPONSE',status:'DONE',created_at:'2026-10-28T12:31:01Z',content:'Answer'},
+  ];
+  const record={provider:'antigravity'} as SessionRecord;
+  const messages=rows.flatMap(value=>{const message=publicMessage(record,JSON.stringify(value),source);return message?[message.id]:[]});
+  const rounds=antigravityNativeRounds(rows.map(value=>JSON.stringify(value)),source);
+  assert.equal(rounds.length,1);
+  assert.equal(rounds[0].workedMs,1000);
+  assert.deepEqual(rounds[0].messageIds,messages.slice(1));
+});
+
 test('OpenCode and Kilo v1 rounds use parent-linked terminal assistant metadata',()=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ade-round-opencode-v1-')),file=path.join(dir,'kilo.db'),db=new DatabaseSync(file);
   try{
@@ -161,5 +177,39 @@ test('OpenCode v2 rounds use native idle outcomes and include steering prompts',
     const rounds=openCodeV2NativeRounds(file,'native','source');
     assert.equal(rounds.length,2);assert.equal(rounds[0].outcome,'completed');assert.equal(rounds[0].workedMs,34000);assert.equal(rounds[0].messageIds?.length,4);
     assert.equal(rounds[1].outcome,'interrupted');assert.equal(rounds[1].workedMs,5000);
+  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('OpenCode v2 closes completed turns when historical idle rows are absent',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ade-round-opencode-v2-no-idle-')),file=path.join(dir,'opencode.db'),db=new DatabaseSync(file);
+  try{
+    db.exec('CREATE TABLE session_message(id TEXT,session_id TEXT,seq INTEGER,type TEXT,time_created INTEGER,data TEXT)');
+    const insert=db.prepare('INSERT INTO session_message VALUES(?,?,?,?,?,?)');
+    insert.run('u1','native',1,'user',1793000000000,JSON.stringify({text:'Initial',time:{created:1793000000000}}));
+    insert.run('p1','native',2,'assistant',1793000010000,JSON.stringify({content:[],time:{created:1793000010000,completed:1793000011000},finish:'tool-calls'}));
+    insert.run('u2','native',3,'user',1793000020000,JSON.stringify({text:'Steering',time:{created:1793000020000}}));
+    insert.run('a1','native',4,'assistant',1793000030000,JSON.stringify({content:[{type:'text',text:'First answer'}],time:{created:1793000030000,completed:1793000033000},finish:'stop'}));
+    insert.run('u3','native',5,'user',1793000040000,JSON.stringify({text:'Second turn',time:{created:1793000040000}}));
+    insert.run('a3','native',6,'assistant',1793000050000,JSON.stringify({content:[{type:'text',text:'Second answer'}],time:{created:1793000050000,completed:1793000051000},finish:'stop'}));
+    const rounds=openCodeV2NativeRounds(file,'native','source');
+    assert.equal(rounds.length,2);
+    assert.equal(rounds[0].outcome,'completed');assert.equal(rounds[0].workedMs,33000);assert.equal(rounds[0].messageIds?.length,3);
+    assert.equal(rounds[1].outcome,'completed');assert.equal(rounds[1].workedMs,11000);assert.equal(rounds[1].messageIds?.length,2);
+  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('OpenCode v2 breaks stale inactive prompts when historical idle rows are absent',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ade-round-opencode-v2-stale-')),file=path.join(dir,'opencode.db'),db=new DatabaseSync(file);
+  try{
+    db.exec('CREATE TABLE session_message(id TEXT,session_id TEXT,seq INTEGER,type TEXT,time_created INTEGER,data TEXT)');
+    const insert=db.prepare('INSERT INTO session_message VALUES(?,?,?,?,?,?)');
+    insert.run('u1','native',1,'user',1793000000000,JSON.stringify({text:'Interrupted',time:{created:1793000000000}}));
+    insert.run('p1','native',2,'assistant',1793000001000,JSON.stringify({content:[],time:{created:1793000001000,completed:1793000002000},finish:'tool-calls'}));
+    insert.run('u2','native',3,'user',1793001860000,JSON.stringify({text:'New turn',time:{created:1793001860000}}));
+    insert.run('a2','native',4,'assistant',1793001861000,JSON.stringify({content:[{type:'text',text:'Answer'}],time:{created:1793001861000,completed:1793001862000},finish:'stop'}));
+    const rounds=openCodeV2NativeRounds(file,'native','source');
+    assert.equal(rounds.length,1);
+    assert.equal(rounds[0].workedMs,2000);
+    assert.equal(rounds[0].messageIds?.length,2);
   }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

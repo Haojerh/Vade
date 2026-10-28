@@ -71,6 +71,8 @@ export function codexNativeRounds(sessionId:string,lines:string[],sourceIdentity
 }
 
 const MAX_NATIVE_ROUND_MS=7*24*60*60*1000;
+/** Providers without exact boundaries must not absorb prompts from a later idle period. */
+const NATIVE_USER_CONTINUITY_MS=30*60*1000;
 function nativeRound(id:string,startedAt:string|null,endedAt:string|null,outcome:ConversationRound['outcome'],messageIds:string[]):ConversationRound|undefined{
   if(!startedAt||!endedAt)return;
   const duration=Date.parse(endedAt)-Date.parse(startedAt);
@@ -136,22 +138,24 @@ export function codeBuddyNativeRounds(sessionId:string,lines:string[],sourceIden
 /** Antigravity closes a turn only after a final planner response with no later tool call. */
 export function antigravityNativeRounds(lines:string[],sourceIdentity?:string):ConversationRound[]{
   const rounds:ConversationRound[]=[];
-  let active:{firstId:string;startedAt:string;messages:string[];answerAt?:string}|undefined;
+  let active:{firstId:string;startedAt:string;lastActivityAt:string;messages:string[];answerAt?:string}|undefined;
   const close=()=>{
     if(!active?.answerAt)return;
     const round=nativeRound(hashId('round',`antigravity:${sourceIdentity??''}:${active.firstId}`),active.startedAt,active.answerAt,'ended',active.messages);
     if(round)rounds.push(round);
   };
   for(const line of lines){try{
-    const row=JSON.parse(line);
+    const row=JSON.parse(line),activityAt=toIsoOrNull(row.created_at);
     if(row.type==='USER_INPUT'){
       const message=parseAntigravityTranscriptLine(line,sourceIdentity??'').message;
       if(!message||message.role!=='user'||!message.at)continue;
-      if(active?.answerAt){close();active=undefined;}
-      active??={firstId:message.id,startedAt:message.at,messages:[]};
+      if(active?.answerAt||active&&Date.parse(message.at)-Date.parse(active.lastActivityAt)>NATIVE_USER_CONTINUITY_MS){close();active=undefined;}
+      active??={firstId:message.id,startedAt:message.at,lastActivityAt:message.at,messages:[]};
       active.messages.push(message.id);
+      active.lastActivityAt=message.at;
       continue;
     }
+    if(active&&activityAt)active.lastActivityAt=activityAt;
     if(!active||row.type!=='PLANNER_RESPONSE')continue;
     if(Array.isArray(row.tool_calls)&&row.tool_calls.length){
       active.answerAt=undefined;
@@ -222,36 +226,41 @@ export function openCodeV2NativeRounds(file:string,sessionId:string,sourceIdenti
       SELECT seq,id,type,time_created,data FROM session_message WHERE session_id=? ORDER BY seq DESC LIMIT 2000
     ) ORDER BY seq`).all(sessionId) as any[];
     const rounds:ConversationRound[]=[];
-    let active:{firstId:string;startedAt:string;messages:string[];lastAssistantAt?:string;lastAssistantFinish?:string;lastAssistantError?:string}|undefined;
+    let active:{firstId:string;startedAt:string;lastActivityAt:string;messages:string[];lastAssistantAt?:string;lastAssistantFinish?:string;lastAssistantError?:string}|undefined;
     const close=(endedAt:string|null,outcome:ConversationRound['outcome'])=>{
       if(!active)return;
       const round=nativeRound(hashId('round',`${sessionId}:opencode2:${active.firstId}`),active.startedAt,endedAt,outcome,active.messages);
       if(round)rounds.push(round);
       active=undefined;
     };
+    const terminalOutcome=()=>active?.lastAssistantError==='MessageAbortedError'?'ended':active?.lastAssistantError?'failed':active?.lastAssistantFinish==='stop'?'completed':'ended';
     for(const row of rows){
       if(typeof row.data!=='string')continue;
       let data:any;try{data=JSON.parse(row.data);}catch{continue;}
       const at=toIsoOrNull(row.time_created)??toIsoOrNull(data.time?.created);
       if(row.type==='user'){
         if(data.synthetic||data.isMeta||data.isApiErrorMessage||!openCodeV2Text(data)||!at)continue;
-        active??={firstId:row.id,startedAt:at,messages:[]};
+        if(active?.lastAssistantAt&&active.lastAssistantFinish&&active.lastAssistantFinish!=='tool-calls')close(active.lastAssistantAt,terminalOutcome());
+        if(active&&Date.parse(at)-Date.parse(active.lastActivityAt)>NATIVE_USER_CONTINUITY_MS)active=undefined;
+        active??={firstId:row.id,startedAt:at,lastActivityAt:at,messages:[]};
         active.messages.push(hashId('msg',`${sourceIdentity}:${row.id}`));
+        active.lastActivityAt=at;
       }else if(row.type==='assistant'&&active){
+        if(at)active.lastActivityAt=at;
         if(data.synthetic||data.isMeta||data.isApiErrorMessage||!openCodeV2Text(data))continue;
         active.messages.push(hashId('msg',`${sourceIdentity}:${row.id}`));
         active.lastAssistantAt=toIsoOrNull(data.time?.completed)??at??undefined;
         active.lastAssistantFinish=typeof data.finish==='string'?data.finish:undefined;
         active.lastAssistantError=typeof data.error?.name==='string'?data.error.name:undefined;
       }else if(row.type==='idle'&&active){
+        if(at)active.lastActivityAt=at;
         const outcome=data.outcome==='succeeded'?'completed':data.outcome==='interrupted'?'interrupted':data.outcome==='failed'?'failed':'ended';
         close(at,outcome);
+      }else if(active&&at){
+        active.lastActivityAt=at;
       }
     }
-    if(active?.lastAssistantAt&&active.lastAssistantFinish!=='tool-calls'){
-      const outcome=active.lastAssistantError==='MessageAbortedError'?'ended':active.lastAssistantError?'failed':active.lastAssistantFinish==='stop'?'completed':'ended';
-      close(active.lastAssistantAt,outcome);
-    }
+    if(active?.lastAssistantAt&&active.lastAssistantFinish!=='tool-calls')close(active.lastAssistantAt,terminalOutcome());
     return rounds.slice(-200);
   }finally{db.close();}
 }
