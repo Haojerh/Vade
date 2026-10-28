@@ -221,11 +221,14 @@ export function publicMessage(record: SessionRecord, line: string, sourceIdentit
   };
   try {
     const row = JSON.parse(line);
+    const codeBuddySummaryCompaction=row.providerData?.isSummary===true&&typeof row.providerData?.compactionId==='string'&&row.providerData?.isCompactInternal!==true&&row.providerData?.isCompactRecovery!==true;
+    const codeBuddyManualCompaction=row.providerData?.isCompacted===true&&typeof row.providerData?.compactionId==='string'&&row.providerData?.compactType==='user-command'&&row.providerData?.compactionKind==='manual'&&row.providerData?.compactionTrigger==='manual'&&row.providerData?.isCompactRecovery!==true;
     const compaction=!row.isSidechain&&!row._fromSubAgent&&(!row.sessionId||row.sessionId===record.providerThreadId)&&(
-      ['codex','dsh','opencode2'].includes(record.provider)&&row.type==='compacted'
+      ['codex','dsh','opencode','kilo','opencode2'].includes(record.provider)&&row.type==='compacted'
       ||record.provider==='claude'&&row.type==='system'&&row.subtype==='compact_boundary'
-      ||record.provider==='codebuddy'&&(row.providerData?.isSummary===true||row.providerData?.isCompacted===true)&&typeof row.providerData?.compactionId==='string'&&row.providerData?.isCompactInternal!==true&&row.providerData?.isCompactRecovery!==true);
+      ||record.provider==='codebuddy'&&(codeBuddySummaryCompaction||codeBuddyManualCompaction));
     if(compaction)return {id:hashId('msg',`${sourceIdentity}:compaction:${row.uuid??row.id??hashId('record',line)}`),role:'agent' as const,kind:'compaction' as const,text:'Context compacted',at:toIsoOrNull(row.timestamp)};
+    if(record.provider==='codebuddy'&&typeof row.providerData?.compactionId==='string'&&(row.providerData?.isCompacted===true||row.providerData?.isSummary===true||row.providerData?.isCompactInternal===true))return null;
     if (record.provider !== 'antigravity') {
       if (['claude','codebuddy'].includes(record.provider) && row.sessionId && row.sessionId !== record.providerThreadId) return null;
       const message=projected(visible(parseCoordinatorTranscriptLine(line, record.provider, sourceIdentity).message));

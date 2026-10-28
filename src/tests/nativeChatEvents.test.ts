@@ -24,6 +24,16 @@ test('only explicit native compaction records create a boundary, without exposin
  const clear=publicMessage({provider:'codebuddy'} as SessionRecord,JSON.stringify({type:'message',role:'system',providerData:{isSessionSeparator:true},content:''}),'source');assert.equal(clear?.kind,undefined,'a native clear is not mislabeled as compaction');
 });
 
+test('CodeBuddy manual compaction accepts the native internal boundary while hiding cb_summary content',()=>{
+ const row={type:'message',role:'user',id:'cmp_native',providerData:{skipRun:false,compactType:'user-command',compactionId:'cmp_native',
+   isCompacted:true,isCompactInternal:true,isSummary:false,compactionSeq:1,compactionKind:'manual',compactionTrigger:'manual',contextTokens:95088},
+   content:[{type:'input_text',text:'<cb_summary>PRIVATE SUMMARY</cb_summary>'}]};
+ const message=publicMessage({provider:'codebuddy',providerThreadId:'native'} as SessionRecord,JSON.stringify(row),'source');
+ assert.equal(message?.kind,'compaction');assert.equal(message?.text,'Context compacted');assert.doesNotMatch(JSON.stringify(message),/cb_summary|PRIVATE SUMMARY/);
+ const recovery={...row,providerData:{...row.providerData,isCompactRecovery:true}};
+ assert.equal(publicMessage({provider:'codebuddy',providerThreadId:'native'} as SessionRecord,JSON.stringify(recovery),'source'),null);
+});
+
 test('confirmed interruption time takes precedence over partial observed-work wording',()=>{
  const node={state:'interrupted',agentStatus:{data:{workTime:{workedMs:34000,partial:true,activeSince:null,endedAt:'2026-10-28T00:00:34Z'}}}} as Node;
  const html=renderToStaticMarkup(createElement(AgentWorkTime,{node}));assert.match(html,/Interrupted after <time>34s<\/time>/);assert.doesNotMatch(html,/Observed work|paused/);

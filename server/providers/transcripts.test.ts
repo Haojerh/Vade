@@ -190,6 +190,31 @@ test('OpenCode reads exact session model, effort and public parts; cursors check
   } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('Kilo maps explicit compaction parts to one divider and hides the private summary turn', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-kilo-compaction-'));
+  const file = path.join(dir, 'kilo.db');
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('CREATE TABLE message(id TEXT,session_id TEXT,time_created INTEGER,data TEXT); CREATE TABLE part(message_id TEXT,session_id TEXT,data TEXT);');
+    const message = db.prepare('INSERT INTO message VALUES(?,?,?,?)');
+    const part = db.prepare('INSERT INTO part VALUES(?,?,?)');
+    message.run('compact', 'exact', 1, JSON.stringify({ role: 'user' }));
+    part.run('compact', 'exact', JSON.stringify({ type: 'compaction', auto: false, tail_start_id: 'previous-message' }));
+    message.run('summary', 'exact', 2, JSON.stringify({ role: 'assistant', summary: true, mode: 'compaction' }));
+    part.run('summary', 'exact', JSON.stringify({ type: 'text', text: 'PRIVATE COMPACTION SUMMARY' }));
+    message.run('reply', 'exact', 3, JSON.stringify({ role: 'assistant', mode: 'code' }));
+    part.run('reply', 'exact', JSON.stringify({ type: 'text', text: 'Public reply' }));
+    message.run('foreign', 'other', 4, JSON.stringify({ role: 'user' }));
+    part.run('foreign', 'other', JSON.stringify({ type: 'compaction', auto: false, tail_start_id: 'foreign-message' }));
+
+    const page = readOpenCodePage(file, 'exact', null, 20);
+    assert.equal(page.lines.length, 2);
+    assert.equal(publicMessage({ provider: 'kilo' } as SessionRecord, page.lines[0], 'source')?.kind, 'compaction');
+    assert.equal(publicMessage({ provider: 'kilo' } as SessionRecord, page.lines[1], 'source')?.text, 'Public reply');
+    assert.doesNotMatch(page.lines.join('\n'), /PRIVATE|foreign/);
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('OpenCode older pages walk full exact-session history 20 turns at a time', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'orca-opencode-older-'));
   const file = path.join(dir, 'history.db');

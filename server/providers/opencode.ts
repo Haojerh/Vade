@@ -26,19 +26,32 @@ export function readOpenCodePage(
       if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
 
       const message = JSON.parse(row.data);
+      // OpenCode/Kilo stores the generated summary as a private assistant turn immediately
+      // after an explicit compaction part. Keep that body out of public chat.
+      if (message.summary === true && message.mode === 'compaction') return null;
       if (!['user', 'assistant'].includes(message.role)) return null;
 
       const parts = db.prepare(`SELECT CASE WHEN length(CAST(data AS BLOB)) <= 2097152 THEN data END AS data
         FROM part WHERE session_id = ? AND message_id = ? ORDER BY rowid LIMIT 1001`).all(sessionId, row.id) as any[];
       if (parts.length > 1000) throw new Error('Provider message exceeds part limit');
 
+      let compacted = false;
       const content = parts.flatMap((part) => {
         if (!part.data) return [];
         bytes += Buffer.byteLength(part.data);
         if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
         const value = JSON.parse(part.data);
+        if (value.type === 'compaction' && typeof value.auto === 'boolean' && typeof value.tail_start_id === 'string') {
+          compacted = true;
+          return [];
+        }
         return value.type === 'text' && !value.synthetic && typeof value.text === 'string' && value.text.trim()
           ? [{ type: 'text', text: value.text }] : [];
+      });
+      if (compacted) return JSON.stringify({
+        type: 'compacted',
+        id: row.id,
+        timestamp: new Date(row.time_created).toISOString(),
       });
       if (!content.length) return null;
       return JSON.stringify({
