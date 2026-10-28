@@ -1,7 +1,7 @@
 const { existsSync, writeFileSync, openSync, readSync, closeSync, unlinkSync } = require('node:fs');
 const path = require('node:path');
 
-const RELEASES = { provider: 'github', owner: 'Haojerh', repo: 'ADE', private: false, releaseType: 'release' };
+const RELEASES = { provider: 'github', owner: 'Haojerh', repo: 'Vade', private: false, releaseType: 'release' };
 const INTERVAL = 6 * 60 * 60 * 1000;
 
 /** Fixed public feed. The renderer can never provide URLs, paths or updater options. */
