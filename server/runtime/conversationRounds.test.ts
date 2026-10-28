@@ -117,9 +117,9 @@ test('DSH persists exact turn boundaries and owns steering prompts without expos
 
 test('CodeBuddy settles only request groups whose last public answer has no later tool call',()=>{
   const source='source',record={provider:'codebuddy',providerThreadId:'native'} as SessionRecord;
-  const row=(id:string,timestamp:number,type:string,role:string|undefined,request:string,text:string,status?:string,error?:string)=>({
+  const row=(id:string,timestamp:number,type:string,role:string|undefined,request:string,text:string,status?:string,error?:string,skipRun=false)=>({
     id,parentId:null,timestamp,type,role,content:role?[{type:role==='user'?'input_text':'output_text',text}]:undefined,
-    status,providerData:{conversationRequestId:request,...(error?{error:{message:error}}:{})},sessionId:'native',
+    status,providerData:{conversationRequestId:request,...(skipRun?{skipRun:true}:{}),...(error?{error:{message:error}}:{})},sessionId:'native',
   });
   const rows=[
     row('u1',1793000000000,'message','user','request-1','Initial'),
@@ -130,9 +130,10 @@ test('CodeBuddy settles only request groups whose last public answer has no late
     row('p2',1793000050000,'message','assistant','request-2','Still working','completed'),
     row('call2',1793000051000,'function_call',undefined,'request-2','',undefined),
     row('u3',1793000060000,'message','user','request-3','Stop'),
-    row('a3',1793000064000,'message','assistant','request-3','Interrupted by user','incomplete','Interrupted by user'),
+    row('a3',1793000064000,'message','assistant','request-3','Interrupted by user','incomplete','Interrupted by user',true),
   ].map(value=>JSON.stringify(value));
   const ids=new Set(rows.flatMap(line=>{const message=publicMessage(record,line,source);return message?[message.id]:[]}));
+  assert.equal(publicMessage(record,rows.at(-1)!,source),null);
   const rounds=codeBuddyNativeRounds('native',rows,source);
   assert.equal(rounds.length,2);
   assert.equal(rounds[0].outcome,'completed');assert.equal(rounds[0].workedMs,30000);
@@ -188,10 +189,23 @@ test('OpenCode and Kilo v1 rounds use parent-linked terminal assistant metadata'
     add('u2',1793000040000,{role:'user',time:{created:1793000040000}},'Second');
     add('p2',1793000050000,{role:'assistant',parentID:'u2',time:{created:1793000050000,completed:1793000051000},finish:'tool-calls'},'Still working');
     add('u3',1793000060000,{role:'user',time:{created:1793000060000}},'Abort');
-    add('a3',1793000061000,{role:'assistant',parentID:'u3',time:{created:1793000061000,completed:1793000064000},error:{name:'MessageAbortedError'}},'Stopped');
+    add('a3',1793000061000,{role:'assistant',parentID:'u3',time:{created:1793000061000,completed:1793000064000},error:{name:'MessageAbortedError'}},'');
     const rounds=openCodeNativeRounds(file,'native','source');
     assert.equal(rounds.length,2);assert.equal(rounds[0].outcome,'completed');assert.equal(rounds[0].workedMs,30000);assert.equal(rounds[0].messageIds?.length,3);
-    assert.equal(rounds[1].outcome,'ended');assert.equal(rounds[1].workedMs,4000);
+    assert.equal(rounds[1].outcome,'interrupted');assert.equal(rounds[1].workedMs,4000);
+  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('OpenCode v2 keeps an empty aborted assistant as interruption evidence',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ade-round-opencode-v2-empty-abort-')),file=path.join(dir,'opencode.db'),db=new DatabaseSync(file);
+  try{
+    db.exec('CREATE TABLE session_message(id TEXT,session_id TEXT,seq INTEGER,type TEXT,time_created INTEGER,data TEXT)');
+    const insert=db.prepare('INSERT INTO session_message VALUES(?,?,?,?,?,?)');
+    insert.run('u1','native',1,'user',1793000000000,JSON.stringify({text:'Stop',time:{created:1793000000000}}));
+    insert.run('a1','native',2,'assistant',1793000001000,JSON.stringify({content:[],time:{created:1793000001000,completed:1793000004000},error:{name:'MessageAbortedError'}}));
+    insert.run('idle1','native',3,'idle',1793000004000,JSON.stringify({outcome:'succeeded',time:{created:1793000004000}}));
+    const rounds=openCodeV2NativeRounds(file,'native','source');
+    assert.equal(rounds.length,1);assert.equal(rounds[0].outcome,'interrupted');assert.equal(rounds[0].workedMs,4000);assert.equal(rounds[0].messageIds?.length,1);
   }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });
 

@@ -59,6 +59,10 @@ test('native OpenCode status drop-ins preserve configuration and publish exact-s
       await event('session.status',{sessionID:'ses_exact',status:{type:'busy'}});
       const clock = new AgentWorkClock(), working = readAgentStatus(directory,record,true);
       assert.equal(working.data?.state,'working'); assert.ok(clock.observe(record,working)?.activeSince);
+      await event('session.error',{sessionID:'ses_exact',error:{name:'MessageAbortedError'}});
+      const interrupted=readAgentStatus(directory,record,true);
+      assert.equal(interrupted.data?.state,'interrupted'); assert.ok(clock.observe(record,interrupted)?.endedAt);
+      await event('session.status',{sessionID:'ses_exact',status:{type:'busy'}});
       await event('session.idle',{sessionID:'ses_exact'});
       const completed=readAgentStatus(directory,record,true);
       assert.equal(completed.data?.state,'completed'); assert.ok(clock.observe(record,completed)?.endedAt);

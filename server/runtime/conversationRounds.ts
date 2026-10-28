@@ -147,10 +147,18 @@ export function codeBuddyNativeRounds(sessionId:string,lines:string[],sourceIden
   const groups=new Map<string,Evidence>();
   for(const line of lines){try{
     const row=JSON.parse(line);
-    if(row.sessionId!==sessionId||row.providerData?.skipRun===true||row.isSidechain||row._fromSubAgent)continue;
+    if(row.sessionId!==sessionId||row.isSidechain||row._fromSubAgent)continue;
     const requestId=row.providerData?.conversationRequestId;
     if(typeof requestId!=='string'||!requestId||requestId.length>200)continue;
     let evidence=groups.get(requestId);
+    if(row.providerData?.skipRun===true){
+      const at=toIsoOrNull(row.timestamp),error=typeof row.providerData?.error?.message==='string'?row.providerData.error.message:undefined;
+      if(evidence&&row.type==='message'&&row.role==='assistant'&&at&&error?.trim().toLowerCase()==='interrupted by user'){
+        evidence.lastAnswerAt=at;evidence.lastAnswerStatus=row.status;evidence.lastAnswerError=error;evidence.toolAfterAnswer=false;
+        groups.set(requestId,evidence);
+      }
+      continue;
+    }
     const message=parseCoordinatorTranscriptLine(line,'codebuddy',sourceIdentity??'').message;
     if(message?.role==='user'){
       evidence??= {startedAt:message.at!,messages:[],toolAfterAnswer:false};
@@ -225,14 +233,16 @@ export function openCodeNativeRounds(file:string,sessionId:string,sourceIdentity
     const hasText=openCodeV1HasText(db,sessionId),users=new Map<string,{at:string;id:string}>();
     const assistants=new Map<string,Array<{id:string;at?:string;completedAt?:string;finish?:string;errorName?:string}>>();
     for(const row of rows){
-      if(typeof row.id!=='string'||typeof row.data!=='string'||!hasText.has(row.id))continue;
+      if(typeof row.id!=='string'||typeof row.data!=='string')continue;
       let data:any;try{data=JSON.parse(row.data);}catch{continue;}
       if(data.summary===true&&data.mode==='compaction')continue;
       const at=toIsoOrNull(data.time?.created)??toIsoOrNull(row.time_created);
-      if(data.role==='user'&&at)users.set(row.id,{at,id:row.id});
+      if(data.role==='user'&&at&&hasText.has(row.id))users.set(row.id,{at,id:row.id});
       else if(data.role==='assistant'&&typeof data.parentID==='string'){
+        const errorName=typeof data.error?.name==='string'?data.error.name:undefined;
+        if(!hasText.has(row.id)&&errorName!=='MessageAbortedError')continue;
         const list=assistants.get(data.parentID)??[];
-        list.push({id:row.id,at:at??undefined,completedAt:toIsoOrNull(data.time?.completed)??undefined,finish:typeof data.finish==='string'?data.finish:undefined,errorName:typeof data.error?.name==='string'?data.error.name:undefined});
+        list.push({id:row.id,at:at??undefined,completedAt:toIsoOrNull(data.time?.completed)??undefined,finish:typeof data.finish==='string'?data.finish:undefined,errorName});
         assistants.set(data.parentID,list);
       }
     }
@@ -241,7 +251,7 @@ export function openCodeNativeRounds(file:string,sessionId:string,sourceIdentity
       const final=linked.at(-1)!;
       if(final.finish==='tool-calls')return [];
       const endedAt=final.completedAt??final.at;if(!endedAt)return [];
-      const outcome=final.errorName==='MessageAbortedError'?'ended':final.errorName?'failed':final.finish==='stop'?'completed':'ended';
+      const outcome=final.errorName==='MessageAbortedError'?'interrupted':final.errorName?'failed':final.finish==='stop'?'completed':'ended';
       const messageIds=[hashId('msg',`${sourceIdentity}:${user.id}`),...linked.map(item=>hashId('msg',`${sourceIdentity}:${item.id}`))];
       const round=nativeRound(hashId('round',`${sessionId}:opencode:${parentId}`),user.at,endedAt,outcome,messageIds);
       return round?[round]:[];
@@ -271,7 +281,7 @@ export function openCodeV2NativeRounds(file:string,sessionId:string,sourceIdenti
       if(round)rounds.push(round);
       active=undefined;
     };
-    const terminalOutcome=()=>active?.lastAssistantError==='MessageAbortedError'?'ended':active?.lastAssistantError?'failed':active?.lastAssistantFinish==='stop'?'completed':'ended';
+    const terminalOutcome=()=>active?.lastAssistantError==='MessageAbortedError'?'interrupted':active?.lastAssistantError?'failed':active?.lastAssistantFinish==='stop'?'completed':'ended';
     for(const row of rows){
       if(typeof row.data!=='string')continue;
       let data:any;try{data=JSON.parse(row.data);}catch{continue;}
@@ -285,14 +295,15 @@ export function openCodeV2NativeRounds(file:string,sessionId:string,sourceIdenti
         active.lastActivityAt=at;
       }else if(row.type==='assistant'&&active){
         if(at)active.lastActivityAt=at;
-        if(data.synthetic||data.isMeta||data.isApiErrorMessage||!openCodeV2Text(data))continue;
-        active.messages.push(hashId('msg',`${sourceIdentity}:${row.id}`));
+        const text=openCodeV2Text(data),aborted=data.error?.name==='MessageAbortedError';
+        if(data.synthetic||data.isMeta||data.isApiErrorMessage||(!text&&!aborted))continue;
+        if(text)active.messages.push(hashId('msg',`${sourceIdentity}:${row.id}`));
         active.lastAssistantAt=toIsoOrNull(data.time?.completed)??at??undefined;
         active.lastAssistantFinish=typeof data.finish==='string'?data.finish:undefined;
         active.lastAssistantError=typeof data.error?.name==='string'?data.error.name:undefined;
       }else if(row.type==='idle'&&active){
         if(at)active.lastActivityAt=at;
-        const outcome=data.outcome==='succeeded'?'completed':data.outcome==='interrupted'?'interrupted':data.outcome==='failed'?'failed':'ended';
+        const outcome=active.lastAssistantError==='MessageAbortedError'?'interrupted':data.outcome==='succeeded'?'completed':data.outcome==='interrupted'?'interrupted':data.outcome==='failed'?'failed':'ended';
         close(at,outcome);
       }else if(active&&at){
         active.lastActivityAt=at;
