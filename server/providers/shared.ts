@@ -8,6 +8,22 @@ export function stripAnsiCodes(str: string): string {
   return str.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '');
 }
 
+const claudeInterruptionNotices = new Set([
+  '[Request interrupted by user]',
+  '[Request interrupted by user for tool use]',
+]);
+
+/** Exact Claude interruption bookkeeping, never ordinary prose that mentions it. */
+export function isClaudeInterruptionNotice(record:any):boolean {
+  if (record?.type !== 'user' || record.message?.role !== 'user') return false;
+  const content = record.message.content;
+  if (Array.isArray(content) && !content.every((block:any)=>block?.type === 'text')) return false;
+  const text = typeof content === 'string'
+    ? content.trim()
+    : Array.isArray(content) ? content.map((block:any)=>block.text).join('\n').trim() : '';
+  return claudeInterruptionNotices.has(text);
+}
+
 // Only public user/assistant text is projected. Tool output, thinking, and
 // provider-injected bookkeeping never become conversation turns.
 export function publicTranscriptRecord(line: string, provider: string): any | null {
@@ -28,7 +44,7 @@ export function publicTranscriptRecord(line: string, provider: string): any | nu
   const content = typeof message.content === 'string' ? [{ type: 'text', text: message.content }] : message.content;
   if (provider === 'claude' && message.role === 'user') {
     const text = Array.isArray(content) ? content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('\n').trim() : '';
-    if(text==='[Request interrupted by user]'&&Array.isArray(content)&&content.every((block:any)=>block.type==='text'))return null;
+    if(isClaudeInterruptionNotice(record))return null;
     if (/^<(command-name|command-message|command-args|local-command-stdout|local-command-stderr|local-command-caveat)\b/.test(text)) return null;
   }
   return {

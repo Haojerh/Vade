@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import {DatabaseSync} from 'node:sqlite';
 import {parseCoordinatorTranscriptLine} from '../providers/publicTranscript.js';
 import {parseAntigravityTranscriptLine} from '../providers/antigravity.js';
+import {isClaudeInterruptionNotice} from '../providers/shared.js';
 
 /** Private native timing/parent-link window, independent of public page limits. */
 export function nativeRoundRows(file:string,end:number):string[]{
@@ -30,24 +31,61 @@ export class ConversationRounds {
   }
 }
 
+function claudeParentUuid(row:any):string|undefined {
+  if(typeof row?.parentUuid==='string')return row.parentUuid;
+  return row?.type==='system'&&row?.subtype==='compact_boundary'&&typeof row.logicalParentUuid==='string'?row.logicalParentUuid:undefined;
+}
+
+/** Walk one native turn, bridging the parent reset at a Claude compaction boundary. */
+function claudeAncestors(start:string|undefined,byId:Map<string,any>,notBefore=-Infinity):any[]{
+  const chain:any[]=[],seen=new Set<string>();let parent=start;
+  while(typeof parent==='string'&&!seen.has(parent)&&seen.size<2000){
+    seen.add(parent);const ancestor=byId.get(parent);
+    if(!ancestor)break;
+    const at=Date.parse(ancestor.timestamp);
+    if(Number.isFinite(at)&&at<notBefore)break;
+    if(ancestor.type==='system'&&ancestor.subtype==='turn_duration')break;
+    chain.push(ancestor);
+    if(isClaudeInterruptionNotice(ancestor))break;
+    parent=claudeParentUuid(ancestor);
+  }
+  return chain;
+}
+
 /** Native duration records restore older Claude rounds without invented completion or timing. */
 export function claudeNativeRounds(sessionId:string,lines:string[],sourceIdentity?:string):ConversationRound[]{
   const rows=lines.flatMap(line=>{try{const row=JSON.parse(line);return row.sessionId===sessionId&&!row.isSidechain&&!row._fromSubAgent?[row]:[];}catch{return [];}});
   const byId=new Map(rows.filter(row=>typeof row.uuid==='string').map(row=>[row.uuid,row]));
-  return rows.flatMap(row=>{try{
+  const rounds=rows.flatMap(row=>{try{
     const endedAt=toIsoOrNull(row.timestamp),duration=row.durationMs;
     if(row.sessionId!==sessionId||row.isSidechain||row._fromSubAgent||row.type!=='system'||row.subtype!=='turn_duration'||!endedAt||!Number.isSafeInteger(duration)||duration<0||duration>7*24*3600000||typeof row.uuid!=='string')return [];
     const startedAt=new Date(Date.parse(endedAt)-duration).toISOString(),messageIds:string[]=[];
-    if(sourceIdentity){let parent=row.parentUuid;const seen=new Set<string>();
-      while(typeof parent==='string'&&!seen.has(parent)&&seen.size<2000){seen.add(parent);const ancestor=byId.get(parent);if(!ancestor||Date.parse(ancestor.timestamp)<Date.parse(startedAt))break;
-        if(ancestor.subtype==='turn_duration')break;
+    const ancestors=claudeAncestors(row.parentUuid,byId,Date.parse(startedAt));
+    if(sourceIdentity){
+      for(const ancestor of ancestors){
         const message=parseCoordinatorTranscriptLine(JSON.stringify(ancestor),'claude',sourceIdentity).message;
         if(message)messageIds.unshift(message.id);
-        parent=ancestor.parentUuid;
       }
     }
-    return [{id:hashId('round',`${sessionId}:${row.uuid}`),startedAt,endedAt,workedMs:duration,partial:false,outcome:'ended' as const,measurement:'native-duration' as const,...(messageIds.length?{messageIds:messageIds.slice(-200)}:{})}];
+    const outcome=ancestors.some(isClaudeInterruptionNotice)?'interrupted' as const:'ended' as const;
+    return [{id:hashId('round',`${sessionId}:${row.uuid}`),startedAt,endedAt,workedMs:duration,partial:false,outcome,measurement:'native-duration' as const,...(messageIds.length?{messageIds:messageIds.slice(-200)}:{})}];
   }catch{return [];}}).slice(-200);
+  const interrupted=rows.flatMap(marker=>{try{
+    if(!isClaudeInterruptionNotice(marker)||typeof marker.uuid!=='string')return [];
+    const endedAt=toIsoOrNull(marker.timestamp);
+    if(!endedAt||rounds.some(round=>Date.parse(round.startedAt)<=Date.parse(endedAt)&&Date.parse(round.endedAt)>=Date.parse(endedAt)))return [];
+    const ancestors=claudeAncestors(claudeParentUuid(marker),byId),messages=ancestors.flatMap(ancestor=>{
+      const message=parseCoordinatorTranscriptLine(JSON.stringify(ancestor),'claude',sourceIdentity??'').message;
+      return message?.at?[message]:[];
+    });
+    const startedAt=messages.find(message=>message.role==='user')?.at;
+    if(!startedAt)return [];
+    const workedMs=Date.parse(endedAt)-Date.parse(startedAt);
+    if(!Number.isFinite(workedMs)||workedMs<0||workedMs>7*24*3600000)return [];
+    const messageIds=sourceIdentity?[...new Set(messages.map(message=>message.id))].slice(-200):undefined;
+    return [{id:hashId('round',`${sessionId}:${marker.uuid}`),startedAt,endedAt,workedMs,partial:false,outcome:'interrupted' as const,measurement:'native-duration' as const,...(messageIds?.length?{messageIds}:{})}];
+  }catch{return [];}});
+  return [...rounds,...interrupted].sort((a,b)=>Date.parse(a.endedAt)-Date.parse(b.endedAt)).slice(-200);
 }
 
 /** Codex records explicit turn IDs at both native boundaries. Elapsed time is
@@ -268,5 +306,5 @@ export function openCodeV2NativeRounds(file:string,sessionId:string,sourceIdenti
 /** Prefer explicit owned outcomes over overlapping native elapsed-duration records. */
 export function mergeConversationRounds(saved:ConversationRound[],native:ConversationRound[]):ConversationRound[]{
   const overlaps=(a:ConversationRound,b:ConversationRound)=>a.endedAt===b.endedAt||Date.parse(a.startedAt)<Date.parse(b.endedAt)&&Date.parse(a.endedAt)>Date.parse(b.startedAt);
-  return [...saved.map(round=>{const ids=native.filter(other=>overlaps(round,other)).flatMap(other=>other.messageIds??[]);return ids.length?{...round,messageIds:[...new Set(ids)].slice(-200)}:round;}),...native.filter(round=>!saved.some(other=>overlaps(other,round)))].sort((a,b)=>Date.parse(a.endedAt)-Date.parse(b.endedAt)).slice(-200);
+  return [...saved.map(round=>{const matching=native.filter(other=>overlaps(round,other)),ids=matching.flatMap(other=>other.messageIds??[]),interrupted=matching.some(other=>other.outcome==='interrupted');return {...round,...(ids.length?{messageIds:[...new Set(ids)].slice(-200)}:{}),...(interrupted?{outcome:'interrupted' as const}:{})};}),...native.filter(round=>!saved.some(other=>overlaps(other,round)))].sort((a,b)=>Date.parse(a.endedAt)-Date.parse(b.endedAt)).slice(-200);
 }

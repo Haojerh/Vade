@@ -137,6 +137,7 @@ test('Claude, Pi and OMP expose public text and omit tools, thinking and injecte
 test('Codex interruption bookkeeping is omitted without hiding ordinary turn-aborted text', () => {
   const claudeNotice=(text:string)=>JSON.stringify({type:'user',sessionId:'session',message:{role:'user',content:[{type:'text',text}]}});
   assert.equal(publicMessage({provider:'claude',providerThreadId:'session'} as SessionRecord,claudeNotice('[Request interrupted by user]'),'source'),null);
+  assert.equal(publicMessage({provider:'claude',providerThreadId:'session'} as SessionRecord,claudeNotice('[Request interrupted by user for tool use]'),'source'),null);
   assert.equal(publicMessage({provider:'claude',providerThreadId:'session'} as SessionRecord,claudeNotice('Please explain [Request interrupted by user]'),'source')?.text,'Please explain [Request interrupted by user]');
   const interrupted = '<turn_aborted>\nThe user interrupted the previous turn on purpose. Any running unified exec processes may still be running in the background. If any tools/commands were aborted, they may have partially executed.\n</turn_aborted>';
   assert.equal(publicMessage({ provider: 'codex', providerThreadId: 'session' } as SessionRecord,

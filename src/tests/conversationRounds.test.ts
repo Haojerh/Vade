@@ -35,6 +35,16 @@ test('collapsed rendering hides earlier activity and preserves final answer and 
   assert.equal(roundLabel({...round,outcome:'interrupted'}),'Interrupted after 34s');
 });
 
+test('a compaction inside a native round leaves one activity group and keeps its divider visible',()=>{
+  const nativeRound={...round,messageIds:['user','progress','answer']};
+  const compacted=[message('user','user',0),message('progress','agent',10),{...message('notice','agent',20),kind:'compaction' as const},message('answer','agent',30)];
+  const grouped=groupSettledRounds(groupConversationTimeline(conversationTimeline(compacted,tools,false)),[nativeRound]);
+  assert.equal(grouped.filter(entry=>entry.kind==='round').length,1);
+  const page={source:'transcript',sourceIdentity:'source',provider:'claude',messages:compacted,rounds:[nativeRound],cursor:null,nextCursor:null,limited:false,truncated:false,warnings:[]} as ConversationPage;
+  const html=renderToStaticMarkup(createElement(ConversationHistory,{projectId:'p',nodeId:'n',runId:null,page,tools}));
+  assert.equal((html.match(/class="conversation-round"/g)??[]).length,1);assert.match(html,/Worked for 34s/);assert.match(html,/Context compacted/);assert.match(html,/>answer</);
+});
+
 test('steering prompts stay visible above the settled round and before the final answer',()=>{
   const nativeRound={...round,messageIds:['user','progress','steer','answer']};
   const steeringMessages=[message('user','user',0,'Initial request'),message('progress','agent',10,'Intermediate narration'),message('steer','user',20,'Steering request'),message('answer','agent',30,'Final answer'),message('next','user',40,'Next request')];

@@ -24,6 +24,8 @@ test('native durations restore settled historical rounds without fabricating out
   const native=claudeNativeRounds('native',[JSON.stringify(row)]);assert.equal(native[0].outcome,'ended');assert.equal(native[0].measurement,'native-duration');assert.equal(native[0].startedAt,'2026-10-28T12:00:00.000Z');
   for(const override of [{sessionId:'other'},{isSidechain:true},{durationMs:-1},{subtype:'local_command'}])assert.equal(claudeNativeRounds('native',[JSON.stringify({...row,...override})]).length,0);
   const observed={...native[0],id:'observed',measurement:'observed-work' as const,outcome:'interrupted' as const};assert.deepEqual(mergeConversationRounds([observed],native),[observed]);
+  const savedEnded={...native[0],id:'saved',measurement:'observed-work' as const,outcome:'ended' as const},nativeInterrupted={...native[0],outcome:'interrupted' as const,messageIds:['native-user']};
+  const corrected=mergeConversationRounds([savedEnded],[nativeInterrupted])[0];assert.equal(corrected.outcome,'interrupted');assert.deepEqual(corrected.messageIds,['native-user']);
   const events=[{type:'task_started',turn_id:'turn'},{type:'task_complete',turn_id:'turn'}].map((payload,index)=>JSON.stringify({type:'event_msg',timestamp:`2026-10-28T12:00:${index?'34':'00'}Z`,payload}));
   assert.equal(codexNativeRounds('native',events)[0].workedMs,34000);assert.equal(codexNativeRounds('native',events.slice(1)).length,0);
   assert.equal(codexNativeRounds('native',[events[0],events[1].replace('task_complete','turn_aborted')])[0].outcome,'ended','unconfirmed aborts are not labelled user interruptions');
@@ -60,6 +62,38 @@ test('Claude steering prompts remain owned through one native turn parent chain'
   const round=claudeNativeRounds('native',lines,'source')[0];
   assert.equal(round.messageIds?.includes(ids[0]),true);
   assert.equal(round.messageIds?.includes(ids[1]),true);
+});
+
+test('Claude tool-use interruption settles without exposing its native marker',()=>{
+  const record={provider:'claude',providerThreadId:'native'} as SessionRecord;
+  const row=(uuid:string,parentUuid:string|null,timestamp:string,type:string,message?:unknown,extra:Record<string,unknown>={})=>({uuid,parentUuid,timestamp,type,sessionId:'native',cwd:process.cwd(),...(message?{message}:{}),...extra});
+  const rows=[
+    row('prompt',null,'2026-10-28T12:00:00Z','user',{role:'user',content:[{type:'text',text:'Initialize the repository'}]}),
+    row('progress','prompt','2026-10-28T12:00:10Z','assistant',{role:'assistant',content:[{type:'text',text:'Checking Git'}]}),
+    row('interrupt','progress','2026-10-28T12:00:14Z','user',{role:'user',content:[{type:'text',text:'[Request interrupted by user for tool use]'}]},{interruptedMessageId:'message-id'}),
+  ],lines=rows.map(value=>JSON.stringify(value));
+  const promptId=publicMessage(record,lines[0],'source')!.id;
+  assert.equal(publicMessage(record,lines[2],'source'),null);
+  const round=claudeNativeRounds('native',lines,'source')[0];
+  assert.equal(round.outcome,'interrupted');assert.equal(round.workedMs,14000);
+  assert.equal(round.messageIds?.includes(promptId),true);assert.equal(round.messageIds?.length,2);
+});
+
+test('Claude compaction inside one native turn keeps the original prompt grouped',()=>{
+  const record={provider:'claude',providerThreadId:'native'} as SessionRecord;
+  const row=(uuid:string,parentUuid:string|null,timestamp:string,type:string,message?:unknown,extra:Record<string,unknown>={})=>({uuid,parentUuid,timestamp,type,sessionId:'native',cwd:process.cwd(),...(message?{message}:{}),...extra});
+  const rows=[
+    row('prompt',null,'2026-10-28T12:00:00Z','user',{role:'user',content:[{type:'text',text:'Implement the endpoint'}]}),
+    row('progress','prompt','2026-10-28T12:00:10Z','assistant',{role:'assistant',content:[{type:'text',text:'Implementing'}]}),
+    row('compact',null,'2026-10-28T12:00:20Z','system',undefined,{subtype:'compact_boundary',logicalParentUuid:'progress'}),
+    row('summary','compact','2026-10-28T12:00:21Z','user',{role:'user',content:[{type:'text',text:'Private summary'}]},{isCompactSummary:true}),
+    row('answer','summary','2026-10-28T12:00:40Z','assistant',{role:'assistant',content:[{type:'text',text:'Implemented'}]}),
+    row('duration','answer','2026-10-28T12:00:50Z','system',undefined,{subtype:'turn_duration',durationMs:50000}),
+  ],lines=rows.map(value=>JSON.stringify(value));
+  const promptId=publicMessage(record,lines[0],'source')!.id,answerId=publicMessage(record,lines[4],'source')!.id;
+  const native=claudeNativeRounds('native',lines,'source');
+  assert.equal(native.length,1);assert.equal(native[0].startedAt,'2026-10-28T12:00:00.000Z');
+  assert.equal(native[0].messageIds?.includes(promptId),true);assert.equal(native[0].messageIds?.includes(answerId),true);
 });
 
 test('DSH persists exact turn boundaries and owns steering prompts without exposing private rows',()=>{
