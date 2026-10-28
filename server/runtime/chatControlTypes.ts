@@ -5,6 +5,10 @@ export interface ChatControlIO {
   output(): string;
   /** Monotonic owned PTY output position, independent of the retained tail size. */
   outputCursor?(): number;
+  /** Current rendered native composer, including provider placeholders. */
+  promptEmpty?(): boolean;
+  /** Fresh exact-session native acknowledgement for this fixed operation. */
+  settingConfirmed?():boolean;
   write(data: string): Promise<void>;
   waitFor(predicate: (screen: string) => boolean): Promise<string>;
 }

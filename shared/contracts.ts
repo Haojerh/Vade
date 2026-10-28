@@ -284,14 +284,38 @@ export interface DashboardSnapshot {
   graph: Section<Graph>;
 }
 
+/** Recorded user image attachment metadata. Bytes are never inlined here; the exact
+ *  bounded bytes are served by the node conversation-image route for this opaque ID. */
+export interface ConversationImage {
+  id: Id; // opaque token bound to the page source identity and the recorded record offset
+  mimeType: string; // sniffed from the recorded bytes; only PNG, JPEG, GIF or WebP
+  bytes: number; // recorded decoded byte count
+}
+
 export interface ConversationMessage {
+  /** Recorded native boundary, never a summary or inferred from message text. */
+  kind?: 'compaction';
+  rewindable?: boolean;
   id: Id; // stable opaque ID from source identity + upstream message ID
   role: 'agent' | 'user';
   text: string; // explicit transcript text blocks only, plain text
   at: ISO | null; // source timestamp only
+  // Present only when the exact session recorded user image attachments for this turn.
+  images?: ConversationImage[];
 }
 
+/** Explicit settled-turn observations, scoped to this exact native conversation. */
+export interface ConversationRound {
+  /** Public rows explicitly bracketed by this native turn, including steering prompts. */
+  messageIds?:Id[];
+  id:Id; startedAt:ISO; endedAt:ISO;
+  outcome:'completed'|'failed'|'interrupted'|'ended';
+  workedMs:number; partial:boolean;
+  measurement:'observed-work'|'native-duration';
+}
 export interface ConversationPage {
+  rounds?:ConversationRound[];
+  revision?: string;
   // Node conversation SSE emits Section<ConversationPage> forward deltas; its cursors must never be used for older pagination.
   messages: ConversationMessage[];
   source: 'transcript';
@@ -303,6 +327,8 @@ export interface ConversationPage {
   truncated: boolean;
   warnings: string[];
 }
+/** Observed status on the selected conversation stream, independent of transcript growth. */
+export interface NodeStatusUpdate {nodeId:Id;observedAt:ISO;agentStatus:Section<AgentStatus>;liveness:Node['liveness']}
 
 export interface NodeDetails {
   terminalPreview?: string | null;
@@ -416,14 +442,22 @@ export interface AgentChatOptions {
   provider: string;
   transport: 'native' | 'terminal';
   models: AgentChatModel[];
-  current: { model?: string; effort?: string; fastMode?: boolean; serviceTier?: string };
+  current: { model?: string; effort?: string; fastMode?: boolean; serviceTier?: string; permission?: string };
+  permissions?: { value: string; label: string; description?: string }[];
+  permissionsRequireRestart?: boolean;
+  permissionCurrentSource?: 'native' | 'launch';
   controls: { model: boolean; effort: boolean; fastMode: boolean; fastToggle: boolean; serviceTier: boolean; providerPicker: boolean };
   unconfirmed?: boolean;
 }
 export interface SetAgentChatOptionRequest {
-  key: 'model' | 'effort' | 'fastMode' | 'serviceTier' | 'providerPicker' | 'fastToggle';
+  confirmRestart?: boolean;
+  key: 'model' | 'effort' | 'fastMode' | 'serviceTier' | 'providerPicker' | 'fastToggle' | 'permission';
   value: string;
 }
+export interface RewindConversationRequest { messageId: string; sourceIdentity: string; revision: string }
+export interface RewindConversationResponse { message: string }
+export interface NativeRewindPickerRequest {}
+export interface NativeRewindPickerResponse { ok:true }
 
 export const MAX_MESSAGE_ATTACHMENTS = 8;
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
@@ -608,6 +642,8 @@ export interface TerminalPage {
   exitCode: number | null;
 }
 export interface TerminalInputRequest { data: string }
+/** Paste validated image bytes into an owned native composer, without Enter. */
+export interface TerminalAttachmentsRequest { attachments: MessageAttachment[] }
 export interface SourceFile { path:string; index:string; worktree:string; added:number|null; removed:number|null; stagedAdded?:number|null; stagedRemoved?:number|null; workingAdded?:number|null; workingRemoved?:number|null }
 export interface SourceStatus { worktreeId:string; branch:string|null; head:string|null; upstream:string|null; ahead:number; behind:number; files:SourceFile[]; version:string; refs:string[]; base:string|null; canCreatePr:boolean; conflicts:boolean; truncated:boolean; excluded:number }
 export type SourceAction='stage'|'unstage'|'discard'|'commit'|'push'|'forcePush'|'pull'|'fetch'|'fastForward'|'sync'|'rebase'|'publish'|'createPr';

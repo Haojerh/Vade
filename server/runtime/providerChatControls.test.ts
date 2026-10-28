@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ProviderChatControls } from './providerChatControls.js';
+
+test('Claude effort confirmation accepts the native saved-default acknowledgement and rejects stale output',async()=>{
+  const options={provider:'claude',transport:'terminal',models:[{id:'model',label:'Model',efforts:[{value:'low',label:'Low'},{value:'high',label:'High'}]}],current:{model:'model',effort:'high'},controls:{model:true,effort:true,fastMode:false,fastToggle:false,serviceTier:false,providerPicker:false}} as AgentChatOptions;
+  let output='Set effort level to low (old acknowledgement)\n',typed='';
+  const io={screen:()=>'',output:()=>output,write:async(value:string)=>{typed+=value;if(value==='\r')output+='\r\n  ⎿ Set effort level to `low` (saved as your default for new sessions): Quick implementation\r\n';},waitFor:async(predicate:(screen:string)=>boolean)=>{assert.equal(predicate(''),true);return '';}};
+  const result=await new ProviderChatControls().apply(options,{key:'effort',value:'low'},io);
+  assert.equal(result.current.effort,'low');assert.equal(typed,'/effort low\r');
+  await assert.rejects(new ProviderChatControls().apply(options,{key:'effort',value:'low'},{...io,write:async()=>{},waitFor:async predicate=>{assert.equal(predicate(''),false);throw Error('No new acknowledgement');}}),/No new acknowledgement/);
+  const native=await new ProviderChatControls().apply(options,{key:'effort',value:'low'},{...io,output:()=>'',write:async()=>{},settingConfirmed:()=>true});
+  assert.equal(native.current.effort,'low','native confirmation survives wrapped or absent terminal acknowledgement text');
+});
 import type { AgentChatOptions } from '../../shared/contracts.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import { AntigravityChatControls } from './antigravityChatControls.js';

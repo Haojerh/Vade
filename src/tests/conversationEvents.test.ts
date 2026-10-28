@@ -81,11 +81,13 @@ test('conversation SSE resumes the forward cursor after page hiding and ignores 
   }
   Object.defineProperty(globalThis, 'document', { configurable: true, value: page });
   Object.defineProperty(globalThis, 'EventSource', { configurable: true, value: FakeSource });
-  let updates = 0;
+  let updates = 0,statusUpdates=0;
   const savedCursor = { current: null as string | null };
   let cleanup: (() => void) | undefined;
   try {
-    cleanup = subscribeConversationEvents('project', 'node', 'run', () => { updates++; }, () => {}, () => {}, savedCursor);
+    cleanup = subscribeConversationEvents('project', 'node', 'run', () => { updates++; }, () => {}, () => {}, savedCursor,()=>statusUpdates++);
+    const status={data:JSON.stringify({nodeId:'node',observedAt:'2026-10-28T12:00:00Z',agentStatus:{data:{state:'working'},meta:{}},liveness:'live'})};
+    sources[0].handlers.get('node-status')!(status);assert.equal(statusUpdates,1,'status arrives without a new public message');
     const event = { data: JSON.stringify({ data: { nextCursor: 'opaque-forward' }, meta: {} }) };
     sources[0].handlers.get('conversation')!(event);
     assert.equal(updates, 1);
@@ -93,6 +95,7 @@ test('conversation SSE resumes the forward cursor after page hiding and ignores 
     assert.equal(sources[0].closed, true);
     assert.equal(sources.length, 1);
     page.hidden = false; visibility();
+    sources[0].handlers.get('node-status')!(status);assert.equal(statusUpdates,1,'replaced stream cannot update status');
     assert.match(sources[1].url, /runId=run/);
     assert.match(sources[1].url, /cursor=opaque-forward/);
     cleanup(); cleanup = undefined;

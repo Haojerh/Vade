@@ -17,3 +17,6 @@
 @import './voice.css';
 @import '../features/updates/updates.css';
 @import '../features/workflow/chat.css';
+@import '../features/workflow/conversation-images.css';
+@import '../features/workflow/native-chat-actions.css';
+@import '../features/workflow/toolGroups.css';

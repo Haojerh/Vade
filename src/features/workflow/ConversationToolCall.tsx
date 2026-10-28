@@ -29,7 +29,7 @@ export function ConversationToolCall({ tool }: { tool: ToolActivity }) {
   const body = edits.length || tool.children?.length || (tool.detail && tool.detail !== tool.label);
   if (!body) return <div className="conversation-tool-call conversation-tool-call-plain" data-history-row data-tool-id={tool.id}>{summary}</div>;
   return <div className="conversation-tool-call" data-history-row data-tool-id={tool.id}>
-    <Disclosure title={tool.label} triggerContent={summary} compact lazy defaultOpen={edit || edits.length > 0}>
+    <Disclosure title={tool.label} triggerContent={summary} compact chevronEnd lazy defaultOpen={edit || edits.length > 0}>
       <div className="conversation-tool-details">
       {tool.children?.length ? <div className="conversation-tool-children">{tool.children.map(child => <ConversationToolCall key={child.id} tool={child} />)}</div> : null}
       {edits.length ? <ToolEditDiff edits={edits.map(edit => ({ ...edit, lines: more ? edit.lines : compactEditLines(edit.lines) }))} />

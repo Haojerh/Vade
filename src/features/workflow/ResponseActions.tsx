@@ -4,6 +4,7 @@ import type { ConversationMessage } from '../../../shared/contracts';
 import { Modal } from '../../components/ui/Modal';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { ConversationRewindButton } from './ConversationRewind';
 
 function useResponseCopy(message:ConversationMessage){
   const [copied,setCopied]=useState(false),[error,setError]=useState<string|null>(null);
@@ -24,6 +25,7 @@ export function UserMessageMeta({message}:{message:ConversationMessage}){
   return <div className="user-message-meta">
     <button type="button" className="btn-icon" title={copied?'Copied':'Copy message'} aria-label={copied?'Message copied':'Copy message'} onClick={()=>void copy()}>{copied?<Check size={12}/>:<Copy size={12}/>}</button>
     <MessageTimestamp message={message}/>
+    <ConversationRewindButton message={message}/>
     {copied&&<span className="sr-only" role="status">Message copied</span>}{error&&<span className="response-action-error" role="alert">Could not copy this message.</span>}
   </div>;
 }

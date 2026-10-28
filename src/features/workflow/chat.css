@@ -1,5 +1,8 @@
 @import './conversation-navigation.css';
 @import './context-usage.css';
+.conversation-compaction { display:flex; align-items:center; gap:14px; margin:22px 0; color:var(--text-muted); font-size:12px; }
+.conversation-compaction::before,.conversation-compaction::after { content:''; height:1px; flex:1; background:var(--border-subtle); }
+.conversation-compaction>span { flex-shrink:0; }
 .node-details-chatbox { padding:0; border:0; background:transparent; box-shadow:none; }
 .agent-chatbox-section { margin-top:12px; padding-top:0; border-top:0; }
 .node-details-chatbox .message-attachments { border:1px solid var(--border-main); border-radius:20px; background:var(--surface-2); padding:10px; }
@@ -8,19 +11,23 @@
 .node-details-chatbox .chatbox-textarea { min-height:70px; max-height:240px; padding:6px 6px 4px; border:0; border-radius:0; background:transparent; font-size:13px; line-height:1.6; box-shadow:none; resize:none; }
 .node-details-chatbox .chatbox-textarea:focus { border:0; box-shadow:none; }
 .node-details-chatbox .message-composer-actions { display:grid; grid-template-columns:minmax(28px,1fr) minmax(0,max-content) auto auto auto; align-items:center; gap:6px; margin:4px 0 0; }
-.node-details-chatbox .message-composer-actions>.message-attachment-controls { grid-column:1; grid-row:1; justify-self:start; }
+.node-details-chatbox .message-composer-actions>.message-attachment-controls { grid-column:1; grid-row:1; justify-self:start; display:flex; align-items:center; gap:4px; min-width:0; max-width:100%; }
 .node-details-chatbox .message-composer-actions>.agent-chat-controls { grid-column:2; grid-row:1; justify-self:end; width:auto; }
 .node-details-chatbox .message-composer-actions .composer-dictation { display:contents; }
 .node-details-chatbox .message-composer-actions>.context-usage-control { grid-column:3; grid-row:1; }
 .node-details-chatbox .message-composer-actions .composer-dictation>button { grid-column:4; grid-row:1; }
 .node-details-chatbox .message-composer-actions>.btn-chat-send { grid-column:5; grid-row:1; }
+.node-details-chatbox .message-composer-actions:not(:has(>.context-usage-control)) { grid-template-columns:minmax(28px,1fr) minmax(0,max-content) auto auto; }
+.node-details-chatbox .message-composer-actions:not(:has(>.context-usage-control)) .composer-dictation>button { grid-column:3; }
+.node-details-chatbox .message-composer-actions:not(:has(>.context-usage-control))>.btn-chat-send { grid-column:4; }
 .node-details-chatbox .message-composer-actions :is(.composer-attach-icon,.composer-dictation>button) { display:inline-flex; align-items:center; justify-content:center; width:32px; height:32px; min-width:32px; min-height:32px; padding:0; border:0; border-radius:9px; background:transparent; box-shadow:none; color:var(--text-secondary); }
 .node-details-chatbox .message-composer-actions .composer-attach-icon svg { width:18px; height:18px; }
 .node-details-chatbox .message-composer-actions .composer-dictation>.btn-danger { color:var(--state-failed-text); background:transparent; }
 .node-details-chatbox .message-composer-actions>.btn-chat-send { width:32px; height:32px; min-width:32px; min-height:32px; padding:0; justify-content:center; border:0; border-radius:50%; background:var(--text-main); color:var(--surface-1); box-shadow:none; }
 .node-details-chatbox .message-composer-actions>.btn-chat-send:disabled { background:var(--text-muted); color:var(--surface-2); opacity:.7; }
 .node-details-chatbox .agent-settings-trigger { height:32px; padding:0 6px; gap:6px; font-size:12px; color:var(--text-secondary); }
-.node-details-chatbox .agent-settings-trigger>span:first-child { max-width:24ch; }
+.node-details-chatbox .agent-settings-trigger>.agent-settings-model-label { max-width:24ch; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.agent-settings-compact-icon { display:none; }
 .node-details-chatbox .dictation-status { grid-column:1/-1; grid-row:2; }
 .response-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; margin:3px 0 0; color:var(--text-muted); opacity:0; pointer-events:none; }
 .row-agent:hover .response-actions,.row-agent:has(:focus-visible) .response-actions { opacity:1; pointer-events:auto; }
@@ -45,7 +52,13 @@
   .node-details-chatbox .message-composer-actions :is(.composer-attach-icon,.composer-dictation>button):hover:not(:disabled) { color:var(--text-main); background:transparent; }
   .node-details-chatbox .message-composer-actions>.btn-chat-send:hover:not(:disabled) { opacity:.85; }
 }
-@container(max-width:400px) { .node-details-chatbox .agent-settings-trigger>span:first-child { max-width:14ch; } }
+@container(max-width:500px) {
+  .node-details-chatbox .agent-settings-trigger { width:32px; min-width:32px; padding:0; justify-content:center; }
+  .node-details-chatbox .agent-settings-trigger>span,.node-details-chatbox .agent-settings-trigger>svg:last-child { display:none; }
+  .node-details-chatbox .agent-settings-trigger>.agent-settings-compact-icon { display:block; }
+  .node-details-chatbox .native-permission-trigger { width:32px; min-width:32px; padding:0; justify-content:center; }
+  .node-details-chatbox .native-permission-trigger>span,.node-details-chatbox .native-permission-trigger>svg:last-child { display:none; }
+}
 @media(hover:none) { .user-message-meta,.response-actions { opacity:1; pointer-events:auto; } }
 
 .conversation-tool-group { display:flex; flex-direction:column; gap:2px; min-width:0; }
@@ -56,7 +69,7 @@
 .conversation-thread>.row-agent+.conversation-tool-group { margin-top:6px; }
 .conversation-tool-group .conversation-tool-call { min-width:0; margin:0; padding:0; border:0; background:none; }
 .conversation-tool-group .disclosure-trigger { gap:6px; padding:5px 0; border-radius:6px; font:inherit; color:var(--text-muted); }
-.conversation-tool-group .disclosure-trigger:hover { background:var(--surface-hover); color:var(--text-secondary); }
+.conversation-tool-group .disclosure-trigger:hover { background:transparent; color:var(--text-main); }
 .conversation-tool-group .disclosure-chevron { flex:0 0 12px; width:12px; height:12px; opacity:.65; }
 .conversation-tool-group .conversation-tool-summary { display:flex; align-items:center; gap:8px; min-width:0; overflow:hidden; font-family:inherit; font-size:12px; line-height:1.5; color:var(--text-muted); text-align:left; }
 .conversation-tool-summary>svg { flex:0 0 13px; opacity:.8; }

@@ -13,6 +13,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { publicTranscriptRecord, transcriptSettings } from './shared.js';
 
 import { readOpenCodePage, readOpenCodeModel } from './opencode.js';
+import {readOpenCodeV2Page} from './openCodeV2.js';
 
 
 
@@ -134,6 +135,9 @@ test('Claude, Pi and OMP expose public text and omit tools, thinking and injecte
 });
 
 test('Codex interruption bookkeeping is omitted without hiding ordinary turn-aborted text', () => {
+  const claudeNotice=(text:string)=>JSON.stringify({type:'user',sessionId:'session',message:{role:'user',content:[{type:'text',text}]}});
+  assert.equal(publicMessage({provider:'claude',providerThreadId:'session'} as SessionRecord,claudeNotice('[Request interrupted by user]'),'source'),null);
+  assert.equal(publicMessage({provider:'claude',providerThreadId:'session'} as SessionRecord,claudeNotice('Please explain [Request interrupted by user]'),'source')?.text,'Please explain [Request interrupted by user]');
   const interrupted = '<turn_aborted>\nThe user interrupted the previous turn on purpose. Any running unified exec processes may still be running in the background. If any tools/commands were aborted, they may have partially executed.\n</turn_aborted>';
   assert.equal(publicMessage({ provider: 'codex', providerThreadId: 'session' } as SessionRecord,
     JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', id: 'interrupt', content: [{ type: 'input_text', text: interrupted }] } }), 'session'), null);
@@ -300,6 +304,10 @@ test('Claude manual effort acknowledgements refresh metadata while ordinary pros
   const record = (text: string) => ({ type: 'user', message: { role: 'user', content: [{ type: 'text', text }] } });
   assert.equal(claudeLocalCommandEffort(record('<local-command-stdout>Set effort level to low (this session only)</local-command-stdout>')), 'low');
   assert.equal(claudeLocalCommandEffort(record('<local-command-stdout>Effort level set to auto</local-command-stdout>')), 'auto');
+  const native={type:'system',subtype:'local_command',commandRun:{command:'effort',args:'low'},content:'<local-command-stdout>Set effort level to `low` (saved as your default for new sessions): Quick implementation</local-command-stdout>'};
+  assert.equal(claudeLocalCommandEffort(native),'low');
+  assert.equal(claudeLocalCommandEffort({...native,isSidechain:true}),undefined);
+  assert.equal(claudeLocalCommandEffort({...native,commandRun:{command:'model'}}),undefined);
   assert.equal(claudeLocalCommandEffort(record('Set effort level to low')), undefined);
   assert.equal(claudeLocalCommandEffort({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: '<local-command-stdout>Set effort level to low</local-command-stdout>' }] } }), undefined);
 });
@@ -350,6 +358,11 @@ test('OpenCode v2 activity reads native errors and inline reasoning separately f
   try {
     db.exec('CREATE TABLE session_message (id TEXT, session_id TEXT, seq INTEGER, type TEXT, time_created INTEGER, data TEXT)');
     const insert = db.prepare('INSERT INTO session_message VALUES (?,?,?,?,?,?)');
+    insert.run('compact', 'exact', 0, 'compaction', 0, JSON.stringify({status:'completed',summary:'PRIVATE COMPACTION SUMMARY'}));
+    insert.run('failed', 'exact', -1, 'compaction', 0, JSON.stringify({status:'failed',summary:'PRIVATE FAILURE'}));
+    const compact=readOpenCodeV2Page(file,'exact',null,20);
+    assert.equal(compact.lines.length,1);assert.equal(publicMessage({provider:'opencode2'} as SessionRecord,compact.lines[0],'source')?.kind,'compaction');
+    assert.doesNotMatch(compact.lines[0],/PRIVATE/);
     insert.run('err', 'exact', 1, 'assistant', 1, JSON.stringify({ error: { data: { message: 'Bad Request v2' } } }));
     insert.run('reason', 'exact', 2, 'assistant', 2, JSON.stringify({ content: [{ type: 'reasoning', text: 'PRIVATE THOUGHT', time: { start: 2, end: 3 } }] }));
     const result = databaseProviderActivity(file, 'exact', true);

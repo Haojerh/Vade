@@ -1,6 +1,8 @@
 import React from 'react';
+import { FileText, FilePenLine, Wrench, ListChecks, SlidersHorizontal } from 'lucide-react';
 
 export type IconName =
+  | 'file-text' | 'file-edit' | 'wrench' | 'list-checks' | 'sliders-horizontal'
   | 'github'
   | 'phone'
   | 'users' | 'workflow' | 'download' | 'key' | 'puzzle' | 'play' | 'coffee' | 'plug' | 'copy'
@@ -62,6 +64,8 @@ export const Icon: React.FC<IconProps> = ({
   style,
   'aria-hidden': ariaHidden = true,
 }) => {
+  const NativeIcon = name === 'file-text' ? FileText : name === 'file-edit' ? FilePenLine : name === 'wrench' ? Wrench : name === 'list-checks' ? ListChecks : name==='sliders-horizontal'?SlidersHorizontal:null;
+  if (NativeIcon) return <NativeIcon size={size} strokeWidth={strokeWidth} className={className} style={style} aria-hidden={ariaHidden} />;
   const renderPaths = () => {
     switch (name) {
       case 'phone': return <><rect x="6" y="2" width="12" height="20" rx="3" /><path d="M10 5h4M11 19h2" /></>;

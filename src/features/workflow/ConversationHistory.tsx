@@ -2,10 +2,14 @@ import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from
 import type { ConversationMessage, ConversationPage, ToolActivity } from '../../../shared/contracts';
 import { fetchNodeDetails } from '../../api/client';
 import { MessageMarkdown } from './MessageMarkdown';
-import { ConversationToolCall } from './ConversationToolCall';
 import { ResponseActions,UserMessageMeta } from './ResponseActions';
 import { useHistoryRendering } from '../../hooks/useHistoryRendering';
 import { ConversationPositionRail } from './ConversationPositionRail';
+import { ConversationImages } from './ConversationImages';
+import {ConversationRoundGroup,ConversationRoundActivity,ConversationRoundState,groupSettledRounds,mergeRoundObservations,type RoundEntry} from './conversationRounds';
+import { ConversationToolGroup, groupConversationTimeline } from './toolGroups';
+
+export { ConversationToolGroup, classifyToolActivity, formatToolClause, groupConversationTimeline, summarizeToolGroup, toolGroupClauses, toolGroupIcon } from './toolGroups';
 
 export function conversationTimeline(messages: ConversationMessage[], tools: ToolActivity[], limited: boolean) {
   const first = messages.find(message => message.at)?.at;
@@ -30,12 +34,14 @@ export function mergeLiveConversation(current: ConversationMessage[], incoming: 
   return [...messages.values()];
 }
 
-export function ConversationHistory({ projectId, nodeId, runId, page, scrollContainerRef, tools = [] }: {
+export function ConversationHistory({ projectId, nodeId, runId, page, scrollContainerRef, tools = [],active=false }: {
   projectId: string; nodeId: string; runId: string | null; page: ConversationPage;
   scrollContainerRef?: React.RefObject<HTMLDivElement | null>;
   tools?: ToolActivity[];
+  active?:boolean;
 }) {
   const [messages, setMessages] = useState(page.messages);
+  const [rounds,setRounds]=useState(page.rounds??[]);
   const [cursor, setCursor] = useState(page.nextCursor);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +55,7 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
   useLayoutEffect(() => {
     request.current?.abort(); request.current = null;
     setMessages(page.messages); setCursor(page.nextCursor); setError(null); setBusy(false);
+    setRounds(page.rounds??[]);
     setExpanded(new Set()); anchor.current = null; resetScroll.current = true;
     return () => { request.current?.abort(); request.current = null; };
   }, [page.sourceIdentity, projectId, nodeId, runId]);
@@ -57,6 +64,7 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
     const element = scrollContainerRef?.current;
     if (element && element.scrollHeight - element.scrollTop - element.clientHeight < 100) resetScroll.current = true;
     setMessages(current => mergeLiveConversation(current, page.messages));
+    setRounds(current=>mergeRoundObservations(current,page.rounds??[]));
   }, [page]);
 
   useLayoutEffect(() => {
@@ -81,6 +89,7 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
       const element = scrollContainerRef?.current;
       if (element) anchor.current = { height: element.scrollHeight, top: element.scrollTop };
       setMessages(current => mergeConversationMessages(next.data!.messages, current));
+      setRounds(current=>mergeRoundObservations(current,next.data!.rounds??[]));
       setCursor(next.data.nextCursor === cursor ? null : next.data.nextCursor);
     } catch (err) {
       if (!abort.signal.aborted) setError(err instanceof Error ? err.message : 'Could not load older messages.');
@@ -100,36 +109,36 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
   }, [scrollContainerRef, error, loadOlder]);
 
   const timeline = conversationTimeline(messages, tools, Boolean(cursor));
-  const publicMessages = timeline.flatMap(item => item.message ? [item.message] : []);
-  return <div ref={history} className={`conversation-history-content${scrollContainerRef && messages.some(message => message.role === 'user') ? ' has-position-rail' : ''}`} aria-label="Conversation history">
-    <ConversationPositionRail key={`${projectId}:${nodeId}:${runId}:${page.sourceIdentity}`} messages={publicMessages} historyRef={history} scrollRef={scrollContainerRef} hasOlder={Boolean(cursor)} loadingOlder={busy} onLoadOlder={() => { void loadOlder(); }} />
-    {(cursor || error) && <div className="conversation-history-pagination">
-      {cursor && <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { void loadOlder(); }}>{busy ? 'Loading…' : error ? 'Retry loading older messages' : 'Load more'}</button>}
-      {error && <p role="alert" className="text-xs text-danger">{error}</p>}
-    </div>}
-    <div className="conversation-thread" role="log" aria-label="Conversation turns" aria-live="off">
-      {timeline.map((item, index, timeline) => {
-        if (item.tool) {
-          if (timeline[index - 1]?.tool) return null;
-          const group: ToolActivity[] = [];
-          for (let next = index; next < timeline.length && timeline[next].tool; next++) group.push(timeline[next].tool!);
-          return <div className="conversation-tool-group" key={item.id} aria-label="Tool activity">
-            {group.map(tool => <ConversationToolCall key={tool.id} tool={tool} />)}
-          </div>;
-        }
-        const message = item.message;
-        if (!message) return null;
+  const entries = groupSettledRounds(groupConversationTimeline(timeline),rounds,active);
+  const publicMessages = timeline.flatMap(item => item.message&&!item.message.kind ? [item.message] : []);
+  const renderEntry=(entry:RoundEntry):React.ReactNode=>{
+    if(entry.kind==='round-activity')return <ConversationRoundActivity key={entry.id} round={entry.round} entryId={entry.id}>{renderEntry(entry.entry)}</ConversationRoundActivity>;
+    if(entry.kind==='round')return <ConversationRoundGroup key={entry.id} scope={`${projectId}:${nodeId}:${page.sourceIdentity}`} round={entry.round} activityIds={entry.distributed?entry.activities.map(activity=>activity.id):undefined} hasActivities={entry.activities.length>0}>{entry.distributed?null:entry.activities.map(renderEntry)}</ConversationRoundGroup>;
+
+        if (entry.kind === 'tools') return <ConversationToolGroup key={`${page.sourceIdentity}:${entry.id}`} tools={entry.tools} />;
+        const message = entry.message;
+        if(message.kind==='compaction'){const label=message.text==='Context checkpoint'?'Context checkpoint':'Context compacted';return <div key={message.id} className="conversation-compaction" data-history-row role="separator" aria-label={label}><span>{label}</span></div>;}
         return <div key={message.id} role="article" tabIndex={message.role === 'user' ? -1 : undefined} data-conversation-position={message.role === 'user' ? message.id : undefined} aria-label={message.role==='agent'?'Agent response':'Your message'} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
         <div className={`chat-bubble ${message.role === 'agent' ? 'bubble-agent' : 'bubble-user'}`}>
           <div data-history-row className={`chat-bubble-text message-markdown ${message.role==='user'&&message.text.length > 800 && !expanded.has(message.id) ? 'message-collapsed' : ''}`}><MessageMarkdown text={message.text} /></div>
           {message.role==='user'&&message.text.length > 800 && <button type="button" className="btn-read-more" aria-expanded={expanded.has(message.id)} onClick={() => setExpanded(current => {
             const next = new Set(current); if (next.has(message.id)) next.delete(message.id); else next.add(message.id); return next;
           })}>{expanded.has(message.id) ? 'Read Less' : 'Read More'}</button>}
+          <ConversationImages projectId={projectId} nodeId={nodeId} source={page.sourceIdentity} images={message.images} />
         </div>
         {message.role==='user'&&<UserMessageMeta message={message}/>}
         {message.role==='agent'&&<ResponseActions message={message}/>}
       </div>;
-      })}
-    </div>
+
+  };
+  return <div ref={history} className={`conversation-history-content${scrollContainerRef && messages.some(message => message.role === 'user') ? ' has-position-rail' : ''}`} aria-label="Conversation history">
+    <ConversationPositionRail key={`${projectId}:${nodeId}:${runId}:${page.sourceIdentity}`} messages={publicMessages} historyRef={history} scrollRef={scrollContainerRef} hasOlder={Boolean(cursor)} loadingOlder={busy} onLoadOlder={() => { void loadOlder(); }} />
+    {(cursor || error) && <div className="conversation-history-pagination">
+      {cursor && <button type="button" className="btn btn-secondary btn-sm" disabled={busy} onClick={() => { void loadOlder(); }}>{busy ? 'Loading…' : error ? 'Retry loading older messages' : 'Load more'}</button>}
+      {error && <p role="alert" className="text-xs text-danger">{error}</p>}
+    </div>}
+    <ConversationRoundState scope={`${projectId}:${nodeId}:${page.sourceIdentity}`}><div className="conversation-thread" role="log" aria-label="Conversation turns" aria-live="off">
+      {entries.map(renderEntry)}
+    </div></ConversationRoundState>
   </div>;
 }

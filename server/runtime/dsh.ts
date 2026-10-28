@@ -29,6 +29,9 @@ export function prepareDsh(directory: string, record: SessionRecord): string {
   const root = dshDirectory(directory, record);
   fs.mkdirSync(root, { recursive: true, mode: 0o700 });
   const plugin = path.join(root, 'observer.mjs'), patch = path.join(root, 'launch.patch.json');
+  let continuationReceipt=path.join(directory,'dsh',record.id,`continuation-${record.providerThreadId}.json`);
+  const legacy=path.join(directory,'dsh',record.id,'continuation.json');
+  try{if(record.dshContinuation&&fs.statSync(legacy).size<=4096){const value=JSON.parse(fs.readFileSync(legacy,'utf8'));if(value.target===record.providerThreadId&&value.source===record.dshContinuation.threadId&&value.cwd===record.cwd)continuationReceipt=legacy;}}catch{/* No legacy receipt for this target. */}
   fs.writeFileSync(plugin, DSH_PLUGIN, { mode: 0o600 });
   let registry: string | undefined;
   const home = process.env.DSH_HOME || path.join(os.homedir(), '.dsh');
@@ -39,7 +42,7 @@ export function prepareDsh(directory: string, record: SessionRecord): string {
     } catch { /* Try the next fixed installed package root. */ }
   }
   const patches: object[] = [{ insert: [{ id: 'vade-dsh-observer', name: plugin.replaceAll('\\','/'), config: { directory: root, statusFile: path.join(directory, 'status', record.id + '.json'), token: record.statusToken, cwd: record.cwd, expected: record.providerThreadId, registry,
-    ...(record.dshContinuation ? { continuation: record.dshContinuation, continuationReceipt: path.join(directory, 'dsh', record.id, 'continuation.json') } : {}) } }] }];
+    ...(record.dshContinuation ? { continuation: record.dshContinuation, continuationReceipt } : {}) } }] }];
   if (!record.providerThreadId && record.workflowLaunch?.model) {
     const split = record.workflowLaunch.model.indexOf('/');
     if (split < 1) throw new CliError('INVALID_ARGUMENT', 'DSH models require an exact provider route');
@@ -68,13 +71,14 @@ export function dshOptions(directory: string, record: SessionRecord): AgentChatO
   const safe = (s: unknown): s is string => typeof s === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:/@+-]{0,199}$/.test(s);
   const label = (s: string, limit: number) => s.replace(/[\x00-\x1f\x7f]/g, '').slice(0,limit);
   const models = (Array.isArray(value.models) ? value.models : []).slice(0,200).filter((m: any) => safe(m.id) && typeof m.label === 'string').map((m: any) => ({ id: m.id, label: label(m.label,160), efforts: (Array.isArray(m.efforts) ? m.efforts : []).slice(0,16).filter((e: any) => safe(e.value) && typeof e.label === 'string').map((e: any) => ({value:e.value,label:label(e.label,80)})) }));
-  const current = { ...(safe(value.current?.model) ? { model: value.current.model } : {}), ...(safe(value.current?.effort) ? { effort: value.current.effort } : {}) };
-  return { provider: 'dsh', transport: 'terminal', models, current, controls: { model: value.ready === true && models.length > 0, effort: value.ready === true && Boolean(models.find((m: any) => m.id === current.model)?.efforts.length), fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false } };
+  const current = { ...(safe(value.current?.model) ? { model: value.current.model } : {}), ...(safe(value.current?.effort) ? { effort: value.current.effort } : {}), ...(safe(value.current?.permission) ? { permission: value.current.permission } : {}) };
+  const permissions=value.ready===true?(Array.isArray(value.permissions)?value.permissions:[]).slice(0,32).filter((p:any)=>safe(p.value)&&typeof p.label==='string').map((p:any)=>({value:p.value,label:label(p.label,160),...(typeof p.description==='string'?{description:label(p.description,400)}:{})})):[];
+  return { provider: 'dsh', transport: 'terminal', models, current, ...(permissions.length?{permissions}:{}), controls: { model: value.ready === true && models.length > 0, effort: value.ready === true && Boolean(models.find((m: any) => m.id === current.model)?.efforts.length), fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false } };
 }
 export async function applyDshOption(directory: string, record: SessionRecord, request: SetAgentChatOptionRequest, io: ChatControlIO): Promise<AgentChatOptions> {
   if (!dshReady(directory, record)) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait for the native DSH session to finish opening');
   const options = dshOptions(directory, record), model = options.models.find(m => m.id === options.current.model);
-  if (request.key !== 'model' && request.key !== 'effort' || request.key === 'model' && !options.models.some(m => m.id === request.value) || request.key === 'effort' && !model?.efforts.some(e => e.value === request.value)) throw new CliError('INVALID_ARGUMENT', 'Choose a native DSH model or supported effort');
+  if (request.key !== 'model' && request.key !== 'effort' && request.key !== 'permission' || request.key === 'model' && !options.models.some(m => m.id === request.value) || request.key === 'effort' && !model?.efforts.some(e => e.value === request.value) || request.key === 'permission' && !options.permissions?.some(p=>p.value===request.value)) throw new CliError('INVALID_ARGUMENT', 'Choose an advertised native DSH setting');
   if (options.current[request.key] === request.value) return options;
   const command = `/${request.key} ${request.value}`;
   await io.write(`\x1b[200~${command}\x1b[201~`);

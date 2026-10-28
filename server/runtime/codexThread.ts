@@ -4,6 +4,11 @@ import { CliError } from '../integrations/cli.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function validCodexThreadId(value: unknown): value is string { return typeof value === 'string' && UUID.test(value); }
+const threadBindings=new Map<string,{cwd:string;historyMode:string|undefined}>();
+export function codexPaginatedBinding(threadId:string,cwd:string,sourceCwd?:string):boolean {
+  const binding=threadBindings.get(threadId);
+  return Boolean(binding?.historyMode==='paginated'&&[cwd,sourceCwd].some(root=>root&&path.resolve(root)===path.resolve(binding.cwd)));
+}
 
 // Fixed local methods only. Never start a turn or expose provider RPC to HTTP clients.
 export async function codexThread(resolved: { executable: string; args: string[] }, cwd: string, title: string, threadId?: string, signal?: AbortSignal, sourceCwd = cwd): Promise<string> {
@@ -12,13 +17,15 @@ export async function codexThread(resolved: { executable: string; args: string[]
     const response = threadId ? await call('thread/read', { threadId, includeTurns: false }) : await call('thread/start', { cwd });
     const thread = response?.thread;
     if (!validCodexThreadId(thread?.id) || (threadId && thread.id !== threadId) || thread.ephemeral !== false || typeof thread.cwd !== 'string' || ![cwd, sourceCwd].some(root => path.resolve(thread.cwd) === path.resolve(root))) throw new CliError('CLI_FAILED', 'Codex session binding failed');
+    if(threadBindings.size>=256)threadBindings.delete(threadBindings.keys().next().value!);
+    threadBindings.set(thread.id,{cwd:thread.cwd,historyMode:typeof thread.historyMode==='string'?thread.historyMode:undefined});
     if (!threadId) await call('thread/name/set', { threadId: thread.id, name: title });
     return thread.id;
   }, signal);
 }
 
 // Internal callers supply fixed methods; this transport is never exposed as an API.
-export async function codexRequest<T>(resolved: { executable: string; args: string[] }, cwd: string, operation: (call: (method: string, params: object) => Promise<any>) => Promise<T>, signal?: AbortSignal): Promise<T> {
+export async function codexRequest<T>(resolved: { executable: string; args: string[] }, cwd: string, operation: (call: (method: string, params: object) => Promise<any>) => Promise<T>, signal?: AbortSignal, options?:{experimentalApi?:boolean;maxBytes?:number}): Promise<T> {
   if (signal?.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
   const env = { ...process.env }; delete env.CODEX_THREAD_ID;
   for (const key of Object.keys(env)) if (key.startsWith('ORCA_')) delete env[key];
@@ -32,7 +39,7 @@ export async function codexRequest<T>(resolved: { executable: string; args: stri
   signal?.addEventListener('abort', abort, { once: true });
   child.stdout.on('data', chunk => {
     bytes += chunk.length;
-    if (bytes > 1024 * 1024) { fail(); child.kill(); return; }
+    if (bytes > Math.min(8*1024*1024,Math.max(1024*1024,options?.maxBytes??1024*1024))) { fail(); child.kill(); return; }
     buffer += chunk.toString('utf8');
     let end: number;
     while ((end = buffer.indexOf('\n')) >= 0) {
@@ -55,7 +62,7 @@ export async function codexRequest<T>(resolved: { executable: string; args: stri
   });
   const timer = setTimeout(() => { fail(); child.kill(); }, 20000);
   try {
-    await call('initialize', { clientInfo: { name: 'ade', title: 'ADE', version: '0.1.0' } });
+    await call('initialize', { clientInfo: { name: 'ade', title: 'ADE', version: '0.1.0' },...(options?.experimentalApi?{capabilities:{experimentalApi:true}}:{}) });
     send({ method: 'initialized', params: {} });
     const result = await operation(call);
     child.stdin.end();

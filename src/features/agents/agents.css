@@ -25,7 +25,9 @@
 .history-project-group > .section-header-row { position: sticky; top: 0; z-index: 1; background: var(--surface-2); padding: 8px 12px; margin: 0; }
 .history-project-group .disclosure-trigger { width: 100%; min-width: 0; }
 .history-project-group .disclosure-trigger > span:not(.history-group-count) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.history-group-count { margin-left: auto; padding: 0 7px; border-radius: 6px; background: var(--canvas-bg); color: var(--text-main); font-variant-numeric: tabular-nums; }
+/* The sticky group header is --surface-2, so the chip needs its own fill plus
+   --text-main to keep the loaded/total count legible at this small size. */
+.history-group-count { margin-left:auto; display:inline-grid; place-items:center; min-width:24px; height:20px; padding:0 6px; flex:0 0 auto; border:1px solid var(--border-strong); border-radius:5px; background:var(--surface-active); color:var(--text-main); font:600 11px/1 var(--font-sans,sans-serif); font-variant-numeric:tabular-nums; text-align:center; box-sizing:border-box; }
 .history-session-row { padding: 12px; border-bottom: 1px solid var(--border-main); cursor: grab; }
 .history-session-row:hover { background: var(--surface-hover); }
 .history-session-row.is-running { cursor: default; }
@@ -62,7 +64,6 @@
 .history-scope-indicator { position: absolute; inset: 0 auto 0 0; width: calc(100% / 3); background: var(--surface-active); transform: translateX(calc(var(--scope-index, 0) * 100%)); transition: transform 220ms var(--ease-out); pointer-events: none; }
 .history-session-list > .empty-hint { padding: 12px; }
 @media (prefers-reduced-motion: reduce) { .history-scope-indicator, .history-scope-tabs button { transition: none; } }
-.history-group-count { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 20px; padding: 0 7px; flex: 0 0 auto; line-height: 1; text-align: center; }
 .history-refresh { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 0; background: transparent; color: var(--text-secondary); cursor: pointer; }
 .history-refresh:hover { background: transparent; color: var(--text-main); }
 .history-refresh:disabled { background: transparent; opacity: .5; cursor: default; }

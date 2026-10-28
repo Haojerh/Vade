@@ -17,8 +17,11 @@ export interface SessionRecord {
   closed: boolean;
   providerThreadId?: string;
   sourceCwd?: string;
+  permissionOverride?: import('../../shared/contracts.js').AgentPermissionMode;
+  launchPermission?: import('../../shared/contracts.js').AgentPermissionMode;
+  rewindPending?: {sourceIdentity:string;revision:string;messageId:string};
   /** Full native DSH continuation into another checkout; source stays intact. */
-  dshContinuation?: { threadId: string; cwd: string };
+  dshContinuation?: { threadId: string; cwd: string; beforeSeq?: number; beforeMessageId?: string };
   bindingToken?: string;
   statusToken?: string;
   shell?: TerminalShell;
@@ -43,6 +46,8 @@ export class AdeStore {
     this.db.exec(`PRAGMA journal_mode=WAL;
       CREATE TABLE IF NOT EXISTS preferences (key TEXT PRIMARY KEY, value TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS turn_results (id TEXT PRIMARY KEY, at TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS conversation_rounds (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, node_id TEXT NOT NULL, thread_id TEXT NOT NULL, ended_at TEXT NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS conversation_round_scope ON conversation_rounds(project_id,node_id,thread_id,ended_at);
       CREATE TABLE IF NOT EXISTS inbox_attention (id TEXT PRIMARY KEY, at TEXT NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, path TEXT UNIQUE NOT NULL, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, data TEXT NOT NULL);
@@ -124,6 +129,7 @@ export class AdeStore {
       this.db.prepare('DELETE FROM titles WHERE id IN (SELECT id FROM sessions WHERE project_id = ?)').run(projectId);
       this.db.prepare('DELETE FROM sessions WHERE project_id = ?').run(projectId);
       this.db.prepare("DELETE FROM turn_results WHERE json_extract(data, '$.projectId') = ?").run(projectId);
+      this.db.prepare('DELETE FROM conversation_rounds WHERE project_id = ?').run(projectId);
       this.db.prepare("DELETE FROM inbox_attention WHERE json_extract(data, '$.projectId') = ?").run(projectId);
       this.db.prepare("DELETE FROM workflow_runs WHERE json_extract(data, '$.projectId') = ?").run(projectId);
       this.db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);

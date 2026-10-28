@@ -1,6 +1,6 @@
 .agent-settings { min-width: 0; margin-left: auto; }
 .agent-settings-trigger { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; width: max-content; padding: 5px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--text-secondary); font-size: 12px; cursor: pointer; }
-.agent-settings-trigger > span:first-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.agent-settings-trigger > .agent-settings-model-label { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .agent-settings-trigger > .text-muted, .agent-settings-trigger > svg { flex-shrink: 0; }
 .agent-settings-trigger:hover { background: var(--surface-hover); }
 .agent-settings-popover { padding: 0; border: 1px solid var(--border-main); border-radius: 12px; background: var(--surface-1); color: var(--text-main); box-shadow: 0 12px 36px #0005; transform-origin: left bottom; opacity: 1; transform: translateY(0) scale(1); transition: opacity 150ms var(--ease-out), transform 150ms var(--ease-out); }

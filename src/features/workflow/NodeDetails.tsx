@@ -12,11 +12,13 @@ import { ProviderActivity } from './ProviderActivity';
 import { useAgentDraft } from '../../hooks/useAgentDraft';
 import { WORKFLOW_CONFIRMATION_MESSAGE } from '../../../shared/contracts';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
-import { sendNodeMessage, interruptAgent, openChatTerminal, resumeTerminal } from '../../api/client';
+import { sendNodeMessage, interruptAgent, openChatTerminal, resumeTerminal, openNativeRewindPicker } from '../../api/client';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
 import { AgentChatControls } from './AgentChatControls';
 import { ContextUsageMeter } from './ContextUsageMeter';
+import { AgentPermissionControl } from './AgentPermissionControl';
+import { ConversationRewind } from './ConversationRewind';
 import { DictationButton } from './DictationButton';
 import { appendDictation } from './dictation';
 import { HandoffDialog, HandoffNotice } from './HandoffDialog';
@@ -164,7 +166,9 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   };
 
   const isMatchingDetails = Boolean(details?.node && details.node.id === selectedNodeId);
-  const baseNode = isMatchingDetails ? details!.node : selectedNode?.id === selectedNodeId ? selectedNode : null;
+  const detailsNode=isMatchingDetails?details!.node:null, snapshotNode=selectedNode?.id===selectedNodeId?selectedNode:null;
+  const statusObservedAt=(value:Node)=>Date.parse(value.agentStatus?.meta.observedAt??value.observedAt??'')||0;
+  const baseNode=detailsNode&&snapshotNode ? statusObservedAt(snapshotNode)>statusObservedAt(detailsNode)||statusObservedAt(snapshotNode)===statusObservedAt(detailsNode)&&Date.parse(snapshotNode.observedAt??'')>Date.parse(detailsNode.observedAt??'')?snapshotNode:detailsNode : detailsNode??snapshotNode;
   const liveLabel = (selectedNode?.id === selectedNodeId && selectedNode.label) || details?.node?.label;
   const node = baseNode ? { ...baseNode, label: liveLabel || baseNode.label } : null;
   const conversation = isMatchingDetails ? details?.conversation : null;
@@ -178,17 +182,17 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const tools = chatToolCallsEnabled ? (selectedNode?.id === selectedNodeId ? selectedNode.toolActivity?.data : undefined) ?? node?.toolActivity?.data ?? [] : [];
 
   const isWorktree = node?.kind === 'worktree';
-  const canInterrupt = Boolean(details?.session?.chat && (selectedNode ?? node)?.state === 'working' && (selectedNode ?? node)?.liveness === 'live' && !chatMessage.trim() && !chatFiles.length);
+  const canInterrupt = Boolean(details?.session?.chat && node?.state === 'working' && node?.liveness === 'live' && !chatMessage.trim() && !chatFiles.length);
   const interrupting = useRef(false);
   const [interruptRequested,setInterruptRequested]=useState(false);
-  useEffect(()=>{interrupting.current=false;setInterruptRequested(false);},[projectId,selectedNodeId,(selectedNode ?? node)?.state]);
+  useEffect(()=>{interrupting.current=false;setInterruptRequested(false);},[projectId,selectedNodeId,node?.state]);
   const handleInterrupt = async () => {
     if (!projectId || !node || !canInterrupt || interrupting.current) return;
     interrupting.current = true; setInterruptRequested(true);setChatSending(true);
     const owner = chatTarget.current;
     try { await interruptAgent(projectId,node.id); }
     catch (error) { if(owner===chatTarget.current) setChatStatus({type:'error',text:error instanceof Error?error.message:'Unable to interrupt. Open Terminal to check the agent.'}); }
-    finally { if(owner===chatTarget.current)setChatSending(false); }
+    finally { if(owner===chatTarget.current){setChatSending(false);onRefresh();onSessionChange?.();} }
   };
   if (!selectedNodeId) return null;
 
@@ -279,6 +283,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 {!isWorktree && details?.session && projectId && <>
                   {sessionView==='chat'&&(terminalError||chatTerminal&&!chatTerminal.live)&&<div className="panel-alert alert-info" role="status"><p>{terminalError??'The agent terminal is stopped. Resume it to continue this conversation.'}</p>{chatTerminal?.resumable&&<button type="button" className="btn btn-secondary btn-sm" disabled={openingTerminal} onClick={async()=>{const owner=chatTarget.current;setOpeningTerminal(true);try{await resumeTerminal(projectId,node.id);const page=await openChatTerminal(projectId,node.id);if(owner===chatTarget.current){setChatTerminal(page);setTerminalError(null);onSessionChange?.();}}catch(error){if(owner===chatTarget.current)setTerminalError(error instanceof Error?error.message:'Unable to resume the agent.');}finally{if(owner===chatTarget.current)setOpeningTerminal(false);}}}>Resume session</button>}<button type="button" className="btn btn-secondary btn-sm" onClick={()=>setSessionView('terminal')}>Open Terminal</button></div>}
                   {details.session.handoff && <HandoffNotice key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} info={details.session.handoff} onRefresh={onRefresh} />}
+                  {sessionView==='terminal'&&terminalError&&<div className="panel-alert alert-error" role="alert">{terminalError}</div>}
                   {(sessionView === 'terminal' || !details.session.chat) && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} provider={node.agentType ?? undefined} onStatusChange={onSessionChange} /></Suspense>}
                 </>}
 
@@ -308,15 +313,15 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                         </p>
                       </div>
                     ) : (
-                      convData ? <Suspense fallback={<p role="status">Loading conversation…</p>}><ConversationHistory key={`${projectId}:${selectedNodeId}:${selectedRunId}:${convData?.sourceIdentity}`} projectId={projectId!} nodeId={selectedNodeId} runId={selectedRunId ?? null} page={convData} tools={tools} scrollContainerRef={bodyRef} /></Suspense> : <div className="conversation-thread">{tools.map(tool => <ConversationToolCall key={tool.id} tool={tool} />)}</div>
+                      convData ? <ConversationRewind key={`${projectId}:${node.id}`} projectId={projectId!} nodeId={node.id} page={convData} disabled={chatSending||isClosing||Boolean(chatMessage.trim())||chatFiles.length>0||['working','waiting','blocked'].includes(node.state)} onNativeRewind={()=>{const owner=chatTarget.current;setSessionView('terminal');setTerminalError(null);void openNativeRewindPicker(projectId!,node.id).catch(error=>{if(owner===chatTarget.current)setTerminalError(error instanceof Error?error.message:'Unable to open native rewind.');});}} onRewound={message=>{setChatMessage(message);setChatFiles([]);onRefresh();onSessionChange?.();}}><Suspense fallback={<p role="status">Loading conversation…</p>}><ConversationHistory key={`${projectId}:${selectedNodeId}:${selectedRunId}:${convData?.sourceIdentity}`} projectId={projectId!} nodeId={selectedNodeId} runId={selectedRunId ?? null} page={convData} active={node.liveness==='live'&&['working','waiting','blocked'].includes(node.state)} tools={tools} scrollContainerRef={bodyRef} /></Suspense></ConversationRewind> : <div className="conversation-thread">{tools.map(tool => <ConversationToolCall key={tool.id} tool={tool} />)}</div>
                     )}
-                    <ProviderActivity node={selectedNode?.id === node.id ? selectedNode : node} />
+                    <ProviderActivity node={node} settledRounds={convData?.rounds} />
                   </section>
                 )}
 
                 {activeVisibleSections.chatbox && !isWorktree && (!details?.session || (sessionView === 'chat' && details.session.chat)) && (
                   <div className="modal-section agent-chatbox-section">
-                    {projectId && details?.session?.chat && <AgentInteraction key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} waiting={(selectedNode ?? node).state === 'waiting'} onTerminal={() => setSessionView('terminal')} />}
+                    {projectId && details?.session?.chat && <AgentInteraction key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} waiting={node.state === 'waiting'} onTerminal={() => setSessionView('terminal')} />}
                     {chatStatus?.type === 'error' && <div className="section-header-row">
 
                       {chatStatus && (
@@ -344,6 +349,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                             <div className="message-composer-actions">
                               <div className="message-attachment-controls">
                                 {attachButton}
+                                {projectId && <AgentPermissionControl key={`permission:${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} runId={selectedRunId??null} disabled={chatSending||dictating||isClosing||Boolean(chatMessage.trim())||chatFiles.length>0||['working','waiting','blocked'].includes(node.state)} />}
                               </div>
                               {projectId && <AgentChatControls projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} model={node.model} effort={node.effort} disabled={chatSending || isClosing || ['working', 'waiting', 'blocked'].includes(node.state)} />}
                               {projectId && <ContextUsageMeter key={`context:${projectId}:${node.id}:${selectedRunId ?? ''}`} projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} provider={node.agentType} usage={node.contextUsage} />}

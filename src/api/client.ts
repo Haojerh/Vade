@@ -120,6 +120,10 @@ export async function setAgentChatOption(projectId: string, nodeId: string, runI
   }));
 }
 
+export async function rewindConversation(projectId:string,nodeId:string,request:import('../../shared/contracts').RewindConversationRequest,signal?:AbortSignal):Promise<import('../../shared/contracts').RewindConversationResponse>{
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/rewind`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request),signal}));
+}
+
 export async function deleteProject(projectId: string): Promise<import('../../shared/contracts').DeleteProjectResponse> {
   return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}`, { method: 'DELETE' }));
 }
@@ -210,6 +214,10 @@ export async function updateTerminal(projectId: string, nodeId: string, action: 
 export async function interruptAgent(projectId:string,nodeId:string):Promise<import('../../shared/contracts').InterruptAgentResponse> {
   const request:import('../../shared/contracts').InterruptAgentRequest={};
   return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/interrupt`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request)}));
+}
+
+export async function openNativeRewindPicker(projectId:string,nodeId:string,signal?:AbortSignal):Promise<import('../../shared/contracts').NativeRewindPickerResponse>{
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/rewind-picker`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal}));
 }
 
 const openingTerminals=new Map<string,Promise<import('../../shared/contracts').TerminalPage>>();
@@ -326,6 +334,7 @@ export function subscribeConversationEvents(
   onConnection: (connected: boolean) => void,
   onReset: () => void,
   savedCursor?: { current: string | null },
+  onStatus?: (status:import('../../shared/contracts').NodeStatusUpdate)=>void,
 ): () => void {
   let source: EventSource | null = null;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -337,21 +346,28 @@ export function subscribeConversationEvents(
     if (runId) query.set('runId', runId);
     if (cursor) query.set('cursor', cursor);
     source = new EventSource(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/events?${query}`);
-    source.onopen = () => { if (!closed) onConnection(true); };
+    const current=source;
+    source.onopen = () => { if (!closed&&source===current) onConnection(true); };
     source.addEventListener('conversation', (event) => {
-      if (closed) return;
+      if (closed||source!==current) return;
       try {
         const section = JSON.parse((event as MessageEvent).data) as Section<ConversationPage>;
         if (section.data?.nextCursor) { cursor = section.data.nextCursor; if (savedCursor) savedCursor.current = cursor; }
         onConversation(section);
       } catch { /* A malformed event never replaces the loaded history. */ }
     });
+    source.addEventListener('node-status',event=>{
+      if(closed||source!==current)return;
+      try{const update=JSON.parse((event as MessageEvent).data) as import('../../shared/contracts').NodeStatusUpdate;if(update.nodeId===nodeId&&update.agentStatus&&['live','exited'].includes(update.liveness)&&Number.isFinite(Date.parse(update.observedAt)))onStatus?.(update);}catch{/* Preserve the last verified status. */}
+    });
     source.addEventListener('stream-reset', () => {
+      if(closed||source!==current)return;
       source?.close();
       cursor = null; if (savedCursor) savedCursor.current = null;
       if (!closed) { onReset(); timer = setTimeout(connect, 2000); }
     });
     source.onerror = () => {
+      if(closed||source!==current)return;
       source?.close();
       if (!closed) { onConnection(false); timer = setTimeout(connect, 2000); }
     };
@@ -359,6 +375,7 @@ export function subscribeConversationEvents(
   const visibility = () => {
     clearTimeout(timer);
     source?.close();
+    source=null;
     if (!document.hidden) connect();
   };
   document.addEventListener('visibilitychange', visibility);
@@ -404,7 +421,21 @@ export async function sendNodeMessage(
   workflowConfirmed = false,
   requireIdle = false,
 ): Promise<{ ok: boolean; message?: string }> {
-  const attachments = await Promise.all(files.map(async (file) => ({
+  const attachments = await encodeMessageFiles(files);
+  const res = await fetch(
+    `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/message`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ message, ...(attachments.length ? { attachments } : {}), ...(workflowConfirmed ? { workflowConfirmed: true } : {}), ...(requireIdle ? { requireIdle: true } : {}) }),
+      signal,
+    },
+  );
+  return handleResponse<{ ok: boolean; message?: string }>(res);
+}
+
+async function encodeMessageFiles(files:File[]):Promise<import('../../shared/contracts').MessageAttachment[]> {
+  return Promise.all(files.map(async (file) => ({
     name: file.name,
     mimeType: file.type || 'application/octet-stream',
     dataBase64: await new Promise<string>((resolve, reject) => {
@@ -414,19 +445,12 @@ export async function sendNodeMessage(
       reader.readAsDataURL(file);
     }),
   })));
-  const res = await fetch(
-    `/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/message`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({ message, ...(attachments.length ? { attachments } : {}), ...(workflowConfirmed ? { workflowConfirmed: true } : {}), ...(requireIdle ? { requireIdle: true } : {}) }),
-      signal,
-    },
-  );
-  return handleResponse<{ ok: boolean; message?: string }>(res);
+}
+
+export async function pasteTerminalImages(projectId:string,nodeId:string,files:File[],signal?:AbortSignal):Promise<void>{
+  const request:import('../../shared/contracts').TerminalAttachmentsRequest={attachments:await encodeMessageFiles(files)};
+  if(signal?.aborted)return;
+  await handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/terminal-attachments`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(request),signal}));
 }
 
 export async function closeAgentTab(

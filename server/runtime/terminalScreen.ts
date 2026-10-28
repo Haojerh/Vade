@@ -158,6 +158,12 @@ export class TerminalScreen {
     }
     return true;
   }
+  /** The focused native input row may contain a draft; numbered menus cannot. */
+  composerPresent():boolean {
+    const buffer=this.terminal.buffer.active;
+    const line=buffer.getLine(buffer.baseY+buffer.cursorY)?.translateToString(true)??'';
+    return /^\s*[›❯>](?:\s|$)/.test(line)&&!/^\s*[›❯>]\s*\d+\./.test(line);
+  }
   /** A rendered pasted draft, not a dim recommendation or an old transcript row. */
   codeBuddyComposerHasText(expected: string): boolean {
     if (this.composerEmpty(false, true)) return false;

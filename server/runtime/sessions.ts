@@ -6,7 +6,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import type { AdeProvider, AgentCatalogResponse, AgentStatus, Section, SendMessageRequest, TerminalPage, TerminalShell, AgentInteraction, AnswerAgentRequest, InboxItem, AgentChatOptions, SetAgentChatOptionRequest } from '../../shared/contracts.js';
 import { CliError } from '../integrations/cli.js';
 import { AdeStore, type SessionRecord } from './store.js';
-import { codexThread } from './codexThread.js';
+import { codexThread, codexRequest, codexPaginatedBinding } from './codexThread.js';
 import { installAgyHook, agyBindingFile, readAgyBinding, agyConversationSaved } from './agyBinding.js';
 import { installStatusHooks, readAgentStatus, statusFile } from './statusHooks.js';
 import { antigravityPromptReady, isInterruptionInput, programStatusReader, PROGRAM_STATUS_REPLY, TerminalTurnStatus } from './programStatus.js';
@@ -18,11 +18,15 @@ import { answerCodeBuddyQuestion, codeBuddyApprovalVisible, terminalInteraction 
 import { ProviderChatControls } from './providerChatControls.js';
 import { OpenCodeChatControls } from './openCodeChatControls.js';
 import { CodeBuddyChatControls } from './codeBuddyChatControls.js';
-import { codeBuddyCommandOutput } from './conversation.js';
+import { codeBuddyCommandOutput,claudeSettingConfirmation } from './conversation.js';
 import { AntigravityChatControls } from './antigravityChatControls.js';
 import { AgentWorkClock } from './agentWorkClock.js';
 import type { ChatControlIO } from './chatControlTypes.js';
+import {ConversationRounds} from './conversationRounds.js';
 import { prepareDsh, dshBinding, dshOptions, dshReady, dshResumable, applyDshOption } from './dsh.js';
+import { resolveSessionLaunchPermission, withProviderPermissions, validateProviderPermissionRequest } from './providerPermissions.js';
+import { hasNativePermissions, withNativePermissions, applyNativePermission, assertNoNativePermissionDialog, nativeFullAccessConfirmation, NativePermissionConfirmationRequired } from './nativePermissions.js';
+import { createCodexRewindPort, planCodexRewind, executeCodexRewind, verifyCodexCut, type NativeUserAnchor } from './providerRewind.js';
 
 const PROVIDERS: { id: AdeProvider; name: string; command: string; package?: string; entry?: string }[] = [
   { id: 'codex', name: 'Codex', command: 'codex', package: '@openai/codex', entry: 'bin/codex.js' },
@@ -166,6 +170,7 @@ export class AdeSessions {
   private statusListeners = new Map<string, Set<() => void>>();
   private resultTurns = new Map<string, { state: string; turn: string; token?: string; attention?: AgentStatus['attention'] }>();
   private workClock = new AgentWorkClock();
+  conversationRounds(record:SessionRecord){return new ConversationRounds(this.store).read(record);}
   private chatControls = new ProviderChatControls();
   private openCodeControls = new OpenCodeChatControls();
   private codeBuddyControls = new CodeBuddyChatControls();
@@ -283,6 +288,12 @@ export class AdeSessions {
 
   private attentionStatus(record: SessionRecord, status: Section<AgentStatus>): Section<AgentStatus> {
     if (!status.data) return status;
+    // Legacy idle_prompt notifications were saved as generic waiting. A focused
+    // empty composer clears that stale UI state without inventing a turn outcome.
+    if(record.provider==='claude'&&status.data.state==='waiting'&&status.data.event==='Notification'&&!status.data.attention){
+      const live=this.live.get(record.id);
+      if(live?.live&&!this.sending.has(record.id)&&live.screen?.composerEmpty())return {...status,data:{...status.data,state:'idle',source:'provider-terminal',event:'native-idle-prompt'}};
+    }
     if (record.provider === 'codebuddy' && status.data.state === 'waiting' && status.data.attention === 'approval') {
       const visible = codeBuddyApprovalVisible(this.live.get(record.id)?.screen?.viewportText() ?? '');
       return { ...status, data: { ...status.data, state: visible ? 'waiting' : 'working', attention: visible ? 'approval' : undefined, event: visible ? 'native-approval-prompt' : 'permission-check' } };
@@ -308,6 +319,7 @@ export class AdeSessions {
     status = this.attentionStatus(record, status);
     const workTime=this.workClock.observe(record,status);
     if(workTime)status={...status,data:{...status.data!,workTime}};
+    new ConversationRounds(this.store).observe(record,status);
     const state = status.data!.state, previous = this.resultTurns.get(record.id);
     if (state === 'waiting' && status.data!.attention === 'question' && status.meta.observedAt && this.live.get(record.id)?.live && (previous?.state !== 'waiting' || previous.attention !== 'question' || previous.token !== record.statusToken)) {
       const event = `${record.statusToken}:${status.meta.observedAt}`;
@@ -381,6 +393,8 @@ export class AdeSessions {
       const resolved = this.resolve(source.provider);
       if (!resolved) throw new CliError('CLI_MISSING', 'Install this agent before resuming');
       const record: SessionRecord = { id: previous?.id ?? crypto.randomUUID(), projectId, worktreeId, cwd, provider: source.provider, title: previous ? this.store.title(previous.id, source.title) : source.title, createdAt: previous?.createdAt ?? new Date().toISOString(), closed: false, providerThreadId: source.threadId, ...(source.cwd ? { sourceCwd: source.cwd } : {}) };
+      if(previous?.permissionOverride)record.permissionOverride=previous.permissionOverride;
+      if(previous?.rewindPending)record.rewindPending=previous.rewindPending;
       if (dshContinuation) {
         record.id = crypto.randomUUID();
         record.providerThreadId = crypto.randomUUID();
@@ -445,8 +459,8 @@ export class AdeSessions {
         if (record.providerThreadId) resolved = { ...resolved, args: [...resolved.args, '--conversation', record.providerThreadId] };
       }
       if (record.provider !== 'terminal') {
-        const preference = readAgentPreferences(this.store).providers[record.provider];
-        resolved = { ...resolved, args: [...resolved.args, ...permissionArgs[record.provider][preference.mode]!] };
+        const access=resolveSessionLaunchPermission(this.store,record);record=access.record;
+        resolved = { ...resolved, args: [...resolved.args, ...access.args] };
         const options = record.workflowLaunch;
         if (options?.model && record.provider !== 'dsh') resolved.args.push('--model', options.model);
         if (options?.effort && record.provider !== 'dsh' && !isOpenCode(record.provider)) resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
@@ -672,6 +686,8 @@ export class AdeSessions {
     return Boolean(empty && (['idle','completed','failed','interrupted'].includes(state ?? '') || native));
   }
 
+  liveness(projectId:string,id:string):'live'|'exited'{this.require(projectId,id);return this.live.get(id)?.live?'live':'exited';}
+
   page(projectId: string, id: string, cursor = 0, checkpoint = false): TerminalPage {
     const session = this.live.get(id);
     const record = this.require(projectId, id);
@@ -695,18 +711,25 @@ export class AdeSessions {
     return { command: session?.lastCommand ?? null, output: output || null };
   }
 
-  async chatOptions(projectId: string, id: string, observed: { model?: string | null; effort?: string | null }): Promise<AgentChatOptions> {
+  async chatOptions(projectId: string, id: string, observed: { model?: string | null; effort?: string | null; nativeResumable?:boolean }): Promise<AgentChatOptions> {
     const record = this.require(projectId, id), live = this.live.get(id);
     if (record.provider === 'terminal') throw new CliError('INVALID_ARGUMENT', 'Shell terminals do not have model settings');
     const current = record.provider === 'codebuddy' ? { ...live?.chatCurrent, ...observed } : { ...observed, ...live?.chatCurrent };
     const options = record.provider === 'dsh' ? dshOptions(this.store.directory, record) : record.provider === 'codebuddy' ? await this.codeBuddyControls.read(current, record.cwd, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.read(record.provider, record.cwd, current, live?.screen?.text() ?? '') : record.provider === 'antigravity' ? await this.antigravityControls.read(current, () => live?.screen?.text() ?? '')
       : await this.chatControls.read(record.provider, current, () => live?.screen?.text() ?? '', record.cwd);
     if (this.require(projectId, id).statusToken !== record.statusToken || this.live.get(id) !== live) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent changed while reading its settings. Reopen the picker.');
-    if (!live?.live) options.controls = { model: false, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false };
-    return options;
+    if (!live?.live) { options.controls = { model: false, effort: false, fastMode: false, fastToggle: false, serviceTier: false, providerPicker: false };delete options.permissions; }
+    const permissions=withProviderPermissions(options,record,{screen:()=>live?.screen?.viewportText()??null,directory:this.store.directory,live:Boolean(live?.live),resumable:observed.nativeResumable===true&&(record.provider!=='antigravity'||this.savedAgy(record))});
+    // Confirmed native controls remain effective until direct Terminal input
+    // invalidates chatCurrent. A fresh native footer still takes precedence.
+    if(hasNativePermissions(record.provider)&&live?.chatCurrent?.permission){
+      permissions.current={...permissions.current,permission:live.chatCurrent.permission};
+      permissions.permissionCurrentSource='native';
+    }
+    return withNativePermissions(permissions,live?.screen?.viewportText()??'',Boolean(live?.live));
   }
 
-  async setChatOption(projectId: string, id: string, request: SetAgentChatOptionRequest, observed: { model?: string | null; effort?: string | null }): Promise<AgentChatOptions> {
+  async setChatOption(projectId: string, id: string, request: SetAgentChatOptionRequest, observed: { model?: string | null; effort?: string | null; nativeResumable?:boolean }): Promise<AgentChatOptions> {
     const record = this.require(projectId, id), live = this.live.get(id);
     if (!live?.live || record.provider === 'terminal') throw new CliError('RUNTIME_UNAVAILABLE', 'Open the running agent terminal before changing settings');
     if (record.provider === 'dsh' && !dshReady(this.store.directory, record)) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait for DSH to finish opening its session before changing settings');
@@ -716,7 +739,8 @@ export class AdeSessions {
       if (this.shutdown.signal.aborted || this.live.get(id) !== live || !live.live || this.require(projectId, id).statusToken !== record.statusToken) throw new CliError('RUNTIME_UNAVAILABLE', 'The agent changed. Inspect Terminal before retrying.');
       const state = this.status(projectId, id).data?.state;
       // CodeBuddy's prompt hook reports its own slash commands (/model list) as a working turn; this lock already owns the idle terminal.
-      if (!(wrote && record.provider === 'codebuddy') && ['working', 'waiting', 'blocked'].includes(state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait until the agent is idle and finish any question or approval in Terminal before changing settings');
+      const fullAccessConfirmation=record.provider==='codex'&&request.key==='permission'&&request.value==='yolo'&&nativeFullAccessConfirmation(live.screen?.viewportText()??'');
+      if (!fullAccessConfirmation&&!(wrote && record.provider === 'codebuddy') && ['working', 'waiting', 'blocked'].includes(state ?? '')) throw new CliError('RUNTIME_UNAVAILABLE', 'Wait until the agent is idle and finish any question or approval in Terminal before changing settings');
     };
     verify();
     const inputRevision = live.inputRevision;
@@ -724,26 +748,32 @@ export class AdeSessions {
     verify();
     if (this.sending.has(id) || live.inputRevision !== inputRevision) throw new CliError('RATE_LIMITED', 'Terminal input changed while reading its prompt. Reopen settings.');
     const initial = live.screen?.text() ?? '';
+    if(!(record.provider==='codex'&&request.key==='permission'&&request.value==='yolo'&&nativeFullAccessConfirmation(initial)))assertNoNativePermissionDialog(record.provider,initial);
     // A failed setting confirmation can leave this conservative flag set even
     // after the provider has returned to its visibly empty native prompt.
     // Reconcile observed screen state; never resend the earlier operation.
-    const composerEmpty = record.provider === 'dsh' ? live.screen?.dshPromptReady() : isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
+    const fullAccessConfirmation=record.provider==='codex'&&request.key==='permission'&&request.value==='yolo'&&nativeFullAccessConfirmation(initial);
+    const composerEmpty = fullAccessConfirmation||(record.provider === 'dsh' ? live.screen?.dshPromptReady() : isOpenCode(record.provider) ? live.screen?.openCodePromptReady() : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy'));
     if (live.draftInput && composerEmpty && !/(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) live.draftInput = false;
     if (live.draftInput) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the draft in Terminal before changing settings');
     if (!composerEmpty) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal before changing settings');
     // Codex and CodeBuddy can omit their optional shortcuts footer. Their
     // owned idle process and empty native composer still fence these commands.
-    if ((!isOpenCode(record.provider) && record.provider !== 'dsh' && record.provider !== 'codex' && record.provider !== 'codebuddy' && !/(?:\? for shortcuts|context left|context remaining)/i.test(initial)) || /(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Open Terminal and wait for the agent prompt before changing settings');
+    if ((!isOpenCode(record.provider) && record.provider !== 'dsh' && record.provider !== 'codex' && record.provider !== 'codebuddy' && record.provider !== 'claude' && !/(?:\? for shortcuts|context left|context remaining)/i.test(initial)) || /(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Open Terminal and wait for the agent prompt before changing settings');
     if (record.provider === 'antigravity' && !antigravityPromptReady(initial)) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the Antigravity prompt before changing settings');
     this.sending.add(id);
     const start = live.start + live.buffer.length;
+    let confirmSetting:(()=>boolean)|undefined;
+    let expectedModelLabel:string|undefined;
     const io: ChatControlIO = {
       screen: () => live.screen?.viewportText() ?? '',
       output: () => live.buffer.slice(Math.max(0, start - live.start)).slice(-65536),
       outputCursor: () => live.start + live.buffer.length,
-      write: async data => { verify(); wrote = true; await this.command(live, { type: 'input', data }); },
+      promptEmpty: () => live.screen?.composerEmpty(record.provider==='antigravity',record.provider==='codebuddy')===true,
+      settingConfirmed:()=>confirmSetting?.()??false,
+      write: async data => { verify();if(data==='\r'&&!confirmSetting)confirmSetting=claudeSettingConfirmation(record,request,expectedModelLabel);wrote = true; await this.command(live, { type: 'input', data }); },
       waitFor: async predicate => {
-        const deadline = Date.now() + (record.provider === 'codebuddy' ? 20000 : 5000);
+        const deadline = Date.now() + (record.provider === 'codebuddy' ? 20000 : record.provider==='claude'?15000:5000);
         while (Date.now() < deadline) {
           verify(); const screen = live.screen?.viewportText() ?? '';
           if (predicate(screen)) return screen;
@@ -753,15 +783,119 @@ export class AdeSessions {
       },
     };
     try {
+      if(request.key==='permission'&&record.provider!=='dsh'&&!hasNativePermissions(record.provider))return await this.restartPermission(record,live,request,observed);
       const options = await this.chatOptions(projectId, id, observed); verify();
-      const result = record.provider === 'dsh' ? await applyDshOption(this.store.directory, record, request, io) : record.provider === 'codebuddy' ? await this.codeBuddyControls.apply(options, request, { ...io, output: codeBuddyCommandOutput(record) }, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.apply(options, request, io) : record.provider === 'antigravity' ? await this.antigravityControls.apply(options, request, io) : await this.chatControls.apply(options, request, io);
+      expectedModelLabel=options.models.find(model=>model.id===request.value)?.label;
+      const result = request.key==='permission'&&hasNativePermissions(record.provider)?await applyNativePermission(options,request,io):record.provider === 'dsh' ? await applyDshOption(this.store.directory, record, request, io) : record.provider === 'codebuddy' ? await this.codeBuddyControls.apply(options, request, { ...io, output: codeBuddyCommandOutput(record) }, `${record.id}:${record.statusToken}`) : isOpenCode(record.provider) ? await this.openCodeControls.apply(options, request, io) : record.provider === 'antigravity' ? await this.antigravityControls.apply(options, request, io) : await this.chatControls.apply(options, request, io);
       if (!result.unconfirmed) live.chatCurrent = result.current;
       this.changed(id); this.statusChanged(projectId, record);
       return result;
     } catch (error) {
+      if(error instanceof NativePermissionConfirmationRequired){live.draftInput=true;throw error;}
       if (wrote) { live.draftInput = true; throw new CliError('CLI_FAILED', `The setting may be partially applied (${error instanceof Error ? error.message.slice(0, 160) : 'unknown error'}). Inspect Terminal before retrying; no input was replayed.`); }
       throw error;
     } finally { this.sending.delete(id); }
+  }
+
+  private async restartPermission(record:SessionRecord,live:LiveSession,request:SetAgentChatOptionRequest,observed:{model?:string|null;effort?:string|null;nativeResumable?:boolean}):Promise<AgentChatOptions>{
+    if(record.provider==='terminal'||record.provider==='dsh'||!['manual','auto','yolo'].includes(request.value))throw new CliError('INVALID_ARGUMENT','Choose a supported native access mode.');
+    const mode=request.value as import('../../shared/contracts.js').AgentPermissionMode;
+    if(permissionArgs[record.provider][mode]===null||!validProviderSessionId(record.provider,record.providerThreadId))throw new CliError('RUNTIME_UNAVAILABLE','This saved native session cannot change access through a confirmed restart.');
+    if(request.confirmRestart!==true)throw new CliError('INVALID_ARGUMENT','Confirm restarting this idle session before changing its access.');
+    if(observed.nativeResumable!==true||(record.provider==='antigravity'&&!this.savedAgy(record)))throw new CliError('RUNTIME_UNAVAILABLE','Wait until this native session is saved before changing access.');
+    const selection=validateProviderPermissionRequest(record,request,{screen:()=>live.screen?.viewportText()??null,directory:this.store.directory,live:live.live,resumable:observed.nativeResumable});
+    if(selection.noop)return this.chatOptions(record.projectId,record.id,observed);
+    const resolved=this.resolve(record.provider);if(!resolved)throw new CliError('CLI_MISSING','Install this native provider before changing access.');
+    const stopped=new Promise<boolean>(resolve=>{const done=()=>{clearTimeout(timer);resolve(true);};const timer=setTimeout(()=>{live.process.removeListener('exit',done);resolve(false);},5000);live.process.once('exit',done);});
+    this.closeSession(record.projectId,record.id);
+    if(!await stopped)throw new CliError('RUNTIME_UNAVAILABLE','Native shutdown is unconfirmed. No replacement session was launched. Inspect Terminal before resuming.');
+    // Native resume restores the exact conversation. Do not reapply old model
+    // launch choices or replay any user input while changing access.
+    const started=await this.start({...record,closed:false,permissionOverride:mode,workflowLaunch:undefined},resolved);
+    const deadline=Date.now()+30000;
+    while(Date.now()<deadline){
+      const current=this.require(record.projectId,record.id),session=this.live.get(record.id);
+      if(current.statusToken!==started.statusToken||!session?.live)break;
+      await session.screen?.settled();
+      const ready=isOpenCode(current.provider)?session.screen?.openCodePromptReady():session.screen?.composerEmpty(current.provider==='antigravity',current.provider==='codebuddy');
+      if(ready)return this.chatOptions(record.projectId,record.id,observed);
+      await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    throw new CliError('RUNTIME_UNAVAILABLE','The session restarted but its prompt is not ready. Finish native setup in Terminal; no message or setting was replayed.');
+  }
+
+  async openNativeRewindPicker(projectId:string,id:string):Promise<import('../../shared/contracts.js').NativeRewindPickerResponse>{
+    const record=this.require(projectId,id),live=this.live.get(id);
+    if(!['antigravity','codebuddy'].includes(record.provider)||!live?.live)throw new CliError('RUNTIME_UNAVAILABLE','This provider has no running native rewind picker.');
+    if(this.sending.has(id))throw new CliError('RATE_LIMITED','Terminal input is busy.');
+    const revision=live.inputRevision;await live.screen?.settled();
+    if(live.inputRevision!==revision||!live.screen?.composerEmpty(record.provider==='antigravity',record.provider==='codebuddy')||['working','waiting','blocked'].includes(this.status(projectId,id).data?.state??''))throw new CliError('RUNTIME_UNAVAILABLE','Leave the idle native prompt empty before opening Rewind.');
+    this.sending.add(id);let wrote=false;
+    try{
+      for(const data of [...'/rewind','\r']){
+        if(this.live.get(id)!==live||!live.live||this.require(projectId,id).statusToken!==record.statusToken)throw Error('Native session changed');
+        wrote=true;await this.command(live,{type:'input',data});await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      live.chatCurrent=undefined;return {ok:true};
+    }catch(error){throw new CliError('RUNTIME_UNAVAILABLE',wrote?'Opening native Rewind is unconfirmed. Inspect its terminal; the command will not be replayed.':String(error));}
+    finally{this.sending.delete(id);}
+  }
+
+  nativeRewindAvailable(record:SessionRecord):boolean {
+    return record.provider==='codex'&&Boolean(this.live.get(record.id)?.live)&&Boolean(record.providerThreadId)&&codexPaginatedBinding(record.providerThreadId!,record.cwd,record.sourceCwd);
+  }
+
+  async rewind(projectId:string,id:string,target:{beforeSeq?:number;beforeMessageId?:string;anchor?:NativeUserAnchor;materialize?:()=>Promise<string|undefined>;message:string;current:()=>boolean;receipt?:import('./store.js').SessionRecord['rewindPending']},token:string|undefined):Promise<import('../../shared/contracts.js').RewindConversationResponse>{
+    const record=this.require(projectId,id),live=this.live.get(id);
+    if(!['dsh','codex','claude'].includes(record.provider)||!record.providerThreadId||!live?.live||record.statusToken!==token)throw new CliError('RUNTIME_UNAVAILABLE','The native session changed. Refresh before rewinding.');
+    if(this.sending.has(id)||this.starting.has(id))throw new CliError('RATE_LIMITED','Agent input is busy. No rewind was started.');
+    this.sending.add(id);
+    try{
+      const revision=live.inputRevision;await live.screen?.settled();
+      const state=this.status(projectId,id).data?.state;
+      const nativeReady=record.provider==='dsh'?dshReady(this.store.directory,record)&&live.screen?.dshPromptReady():record.provider==='claude'?Boolean(target.materialize)&&live.screen?.composerEmpty():this.nativeRewindAvailable(record)&&live.screen?.composerEmpty();
+      if(!target.current()||this.live.get(id)!==live||live.inputRevision!==revision||!nativeReady||['working','waiting','blocked'].includes(state??''))throw new CliError('INVALID_ARGUMENT','Leave the idle native prompt empty and refresh before rewinding.');
+      const resolved=this.resolve(record.provider);if(!resolved)throw new CliError('CLI_MISSING','Install the native provider before rewinding.');
+      if(record.provider==='dsh'&&(target.beforeSeq===undefined||!target.beforeMessageId))throw new CliError('INVALID_ARGUMENT','The native rewind boundary is unavailable.');
+      if(record.provider==='codex'&&!target.anchor)throw new CliError('INVALID_ARGUMENT','The native rewind anchor is unavailable.');
+      let codexFork:string|undefined;
+      if(record.provider==='codex'){
+        codexFork=await codexRequest(resolved,record.cwd,async call=>{
+          const port=createCodexRewindPort(call),plan=await planCodexRewind(port,{threadId:record.providerThreadId!,anchor:target.anchor!,strategy:'fork-before',allowedCwds:[record.cwd,...(record.sourceCwd?[record.sourceCwd]:[])]});
+          if(!plan.ok)throw new CliError('RUNTIME_UNAVAILABLE',plan.message);
+          if(!target.current()||this.live.get(id)!==live||!live.live||live.inputRevision!==revision)throw new CliError('RUNTIME_UNAVAILABLE','The native session changed before rewind.');
+          if(target.receipt)this.store.saveSession({...record,rewindPending:target.receipt});
+          const outcome=await executeCodexRewind(port,plan.plan);
+          if(!outcome.ok)throw new CliError('RUNTIME_UNAVAILABLE',outcome.message);
+          const verified=await verifyCodexCut(port,outcome);
+          if(!verified.ok)throw new CliError('RUNTIME_UNAVAILABLE',verified.message);
+          return outcome.threadId;
+        },this.shutdown.signal,{experimentalApi:true,maxBytes:8*1024*1024});
+      }
+      if(!target.current()||this.live.get(id)!==live||!live.live||live.inputRevision!==revision)throw new CliError('RUNTIME_UNAVAILABLE','The native session changed. The original terminal was kept open.');
+      if(target.receipt)this.store.saveSession({...record,rewindPending:target.receipt});
+      // A verified Codex fork is ready before closing the original. Storage continuations
+      // still require native writer shutdown before taking the source lease.
+      const exited=new Promise<boolean>(resolve=>{const timer=setTimeout(()=>{live.process.removeListener('exit',done);resolve(false);},5000);const done=()=>{clearTimeout(timer);resolve(true);};live.process.once('exit',done);});
+      this.closeSession(projectId,id);
+      if(!await exited)throw new CliError('RUNTIME_UNAVAILABLE','Native shutdown is unconfirmed. No rewind was launched. Inspect Terminal before resuming.');
+      let next:SessionRecord;
+      if(record.provider==='codex')next={...record,closed:false,providerThreadId:codexFork!,workflowLaunch:undefined,rewindPending:target.receipt};
+      else if(record.provider==='claude')next={...record,closed:false,providerThreadId:await target.materialize!(),workflowLaunch:undefined,rewindPending:target.receipt};
+      else next={...record,closed:false,providerThreadId:crypto.randomUUID(),sourceCwd:record.cwd,rewindPending:target.receipt,dshContinuation:{threadId:record.providerThreadId,cwd:record.cwd,beforeSeq:target.beforeSeq,beforeMessageId:target.beforeMessageId}};
+      const started=await this.start(next,resolved);
+      const deadline=Date.now()+30000;
+      while(Date.now()<deadline){
+        const current=this.require(projectId,id);
+        if(current.statusToken!==started.statusToken||!this.live.get(id)?.live)break;
+        if(current.provider==='dsh'?dshReady(this.store.directory,current):this.live.get(id)?.screen?.composerEmpty()){
+          if(current.rewindPending)this.store.saveSession({...current,rewindPending:undefined});
+          return {message:target.message};
+        }
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      throw new CliError('RUNTIME_UNAVAILABLE','Native rewind has not confirmed its new session. Inspect Terminal; the operation will not be replayed.');
+    }finally{this.sending.delete(id);}
   }
 
   async interrupt(projectId: string, id: string): Promise<void> {
@@ -816,6 +950,34 @@ export class AdeSessions {
     const interrupt = isInterruptionInput(data);
     if (!pointerInput) session.turnStatus.input(data, Date.now(), interrupt ? this.status(projectId, id).data?.state === 'working' : undefined);
     return sent.catch(error => { session.turnStatus.input(''); throw error; });
+  }
+
+  async pasteTerminalAttachments(projectId:string,id:string,request:import('../../shared/contracts.js').TerminalAttachmentsRequest):Promise<{ok:true}> {
+    const record=this.require(projectId,id),session=this.live.get(id);
+    if(!['codex','claude'].includes(record.provider))throw new CliError('INVALID_ARGUMENT','Image paste is supported in Codex and Claude terminals.');
+    const files=decodeAttachments(request.attachments);
+    if(!files.length||files.some(file=>!file.mimeType.startsWith('image/')))throw new CliError('INVALID_ARGUMENT','Paste valid image attachments.');
+    if(this.sending.has(id))throw new CliError('RATE_LIMITED','Terminal input is busy. Wait before pasting an image.');
+    const revision=session?.inputRevision;
+    await session?.screen?.settled();
+    const verify=()=>{
+      if(!session?.live||this.live.get(id)!==session||this.require(projectId,id).statusToken!==record.statusToken||session.inputRevision!==revision)throw new CliError('RUNTIME_UNAVAILABLE','The terminal changed. Inspect it before pasting again.');
+      assertNoNativePermissionDialog(record.provider,session.screen?.viewportText()??'');
+      if(['working','waiting','blocked'].includes(this.status(projectId,id).data?.state??'')||!session.screen?.composerPresent())throw new CliError('RUNTIME_UNAVAILABLE','Wait for the native input prompt and finish any setup or approval before pasting an image.');
+    };
+    verify();this.sending.add(id);let wrote=false;
+    try{
+      const stored=await storeAttachments(files,path.join(this.store.directory,'attachments'));
+      for(const file of stored){
+        verify();wrote=true;
+        await this.command(session!,{type:'input',data:attachmentPaste(record.provider,{...file,path:file.path.replaceAll('\\','/')})});
+      }
+      session!.inputRevision=(session!.inputRevision??0)+1;session!.draftInput=true;session!.chatCurrent=undefined;
+      return {ok:true};
+    }catch(error){
+      if(wrote)throw new CliError('CLI_FAILED','Image paste may be partially applied. Inspect Terminal before repeating it; no Enter or retry was sent.');
+      throw error;
+    }finally{this.sending.delete(id);}
   }
 
   async send(projectId: string, id: string, request: SendMessageRequest, internalWorkflow = false, submit = true, requireEmpty = false): Promise<{ ok: true; message: string }> {

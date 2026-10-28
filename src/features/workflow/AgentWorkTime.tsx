@@ -10,5 +10,5 @@ export function AgentWorkTime({node}:{node:Node}) {
   useEffect(()=>{setNow(Date.now());if(!active)return;const timer=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(timer);},[active,time?.activeSince]);
   if(!time)return null;
   const total=time.workedMs+(active?Math.max(0,now-Date.parse(time.activeSince!)):0);
-  return <div className="agent-work-time" title={time.partial?'Measured from observed working activity; earlier work may not be included.':'Time spent in observed Working state; waiting is excluded.'}><Timer size={14}/><span>{time.partial?'Observed work':active?'Working':'Worked for'} <time>{duration(total)}</time>{!active&&!time.endedAt?' · paused':''}</span></div>;
+  return <div className="agent-work-time" title={time.partial?'Measured from observed working activity; earlier work may not be included.':'Time spent in observed Working state; waiting is excluded.'}><Timer size={14}/><span>{node.state==='interrupted'?'Interrupted after':time.partial?'Observed work':active?'Working':'Worked for'} <time>{duration(total)}</time>{node.state!=='interrupted'&&!active&&!time.endedAt?' · paused':''}</span></div>;
 }

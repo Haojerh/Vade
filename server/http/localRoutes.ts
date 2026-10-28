@@ -10,6 +10,7 @@ import { listProjectFolders } from '../runtime/projectFolders.js';
 import { addProject } from '../runtime/projects.js';
 import { projectShortcuts, runProjectShortcut, saveProjectShortcuts } from '../runtime/projectShortcuts.js';
 import { notificationScope, notificationState, updateNotificationState } from '../runtime/notificationState.js';
+import { conversationImageHeaders } from '../providers/conversationImages.js';
 
 function text(value: unknown, label: string, max = 100): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max || /[\x00-\x1f\x7f]/.test(value)) throw new CliError('INVALID_ARGUMENT', `Invalid ${label}`);
@@ -272,7 +273,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       } else { requireMethod('GET'); sendJson(200, section({ projects: await runtime.git.projects() })); }
       return;
     }
-    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|interrupt|terminal|terminal-input|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|events))?)$/);
+    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|interrupt|terminal|terminal-input|terminal-attachments|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|rewind|rewind-picker|events|conversation-image))?)$/);
     if (!match) { sendError(404, 'INVALID_ARGUMENT', 'Unknown standalone ADE endpoint'); return; }
     const [, projectId, route, nodeId, action] = match;
     const project = runtime.store.project(projectId);
@@ -346,6 +347,13 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       if (!/^\d{1,16}$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new CliError('INVALID_ARGUMENT', 'Invalid terminal cursor');
       sendJson(200, runtime.sessions.page(projectId, nodeId, Number(raw))); return;
     }
+    if (action === 'conversation-image') {
+      requireMethod('GET'); queryKeys('source', 'id');
+      // The browser supplies only opaque tokens; the exact bytes come from this node's bound record.
+      const image = runtime.conversationImage(projectId, nodeId!, text(query.get('source'), 'conversation source', 120), text(query.get('id'), 'image ID', 96));
+      res.writeHead(200, conversationImageHeaders(image));
+      res.end(method === 'HEAD' ? undefined : image.bytes); return;
+    }
     if (action === 'events') {
       requireMethod('GET'); queryKeys('runId', 'cursor');
       if (query.has('cursor') && query.get('cursor')!.length > 512) throw new CliError('INVALID_ARGUMENT', 'Invalid conversation cursor');
@@ -358,33 +366,59 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       if (runtime.connections >= 32) throw new CliError('RATE_LIMITED', 'Too many event streams');
       runtime.connections++;
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache, no-transform', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
+      let publishedRevision=initial.data?.revision;
+      let publishedRounds=JSON.stringify(initial.data?.rounds);
+      let publishedStatus='';
+      const publishStatus=()=>{
+        if(closed||res.writableNeedDrain)return;
+        try{
+          const agentStatus=runtime.sessions.status(projectId,nodeId),liveness=runtime.sessions.liveness(projectId,nodeId);
+          const {attemptedAt,...meta}=agentStatus.meta;
+          const key=JSON.stringify({data:agentStatus.data,meta,liveness});if(key===publishedStatus)return;
+          const update:import('../../shared/contracts.js').NodeStatusUpdate={nodeId,observedAt:new Date().toISOString(),agentStatus,liveness};
+          res.write(`event: node-status\ndata: ${JSON.stringify(update)}\n\n`);publishedStatus=key;
+        }catch{/* Closing a node never invents a terminal outcome. */}
+      };
       const publish = (conversation: typeof initial, first = false) => {
         if (closed) return;
         if (conversation.data?.nextCursor) cursor = conversation.data.nextCursor;
-        if (first || conversation.data?.messages.length || conversation.meta.issue) res.write(`event: conversation\ndata: ${JSON.stringify(conversation)}\n\n`);
+        const revisionChanged=conversation.data?.revision!==undefined&&conversation.data.revision!==publishedRevision;
+        const roundSignature=JSON.stringify(conversation.data?.rounds);
+        if (first || conversation.data?.messages.length || conversation.meta.issue || revisionChanged||roundSignature!==publishedRounds) res.write(`event: conversation\ndata: ${JSON.stringify(conversation)}\n\n`);
+        publishedRounds=roundSignature;
+        if(conversation.data?.revision!==undefined)publishedRevision=conversation.data.revision;
       };
       const update = async () => {
         if (closed || busy || res.writableNeedDrain) return;
         busy = true;
-        try { publish(await read()); }
+        try { publishStatus();publish(await read()); }
         catch { if (!closed) res.write('event: stream-reset\ndata: {}\n\n'); close(); }
         finally { busy = false; }
       };
       const stopWatching = runtime.conversations.watch(runtime.sessions.require(projectId, nodeId), () => { void update(); });
+      const stopStatus=runtime.sessions.subscribeStatus(projectId,publishStatus);
       const timer = setInterval(update, 2000);
       const heartbeat = setInterval(() => { if (!closed && !res.writableNeedDrain) res.write(': heartbeat\n\n'); }, 15000);
       const close = () => {
         if (closed) return;
-        closed = true; clearInterval(timer); clearInterval(heartbeat); stopWatching(); runtime.connections--; runtime.streams.delete(close); res.end();
+        closed = true; clearInterval(timer); clearInterval(heartbeat); stopWatching();stopStatus(); runtime.connections--; runtime.streams.delete(close); res.end();
       };
-      runtime.streams.add(close); res.once('close', close); publish(initial, true); return;
+      runtime.streams.add(close); res.once('close', close); publishStatus();publish(initial, true); return;
     }
     queryKeys('runId');
+      if(action==='rewind'){
+        requireMethod('POST');queryKeys();
+        const request=await body<import('../../shared/contracts.js').RewindConversationRequest>(['messageId','sourceIdentity','revision']);
+        for(const key of ['messageId','sourceIdentity','revision'] as const)if(typeof request[key]!=='string'||!/^\w[\w.-]{0,199}$/.test(request[key]))throw new CliError('INVALID_ARGUMENT','Choose an exact recorded message to rewind.');
+        sendJson(200,await runtime.rewind(projectId,nodeId,request));return;
+      }
+    if(action==='rewind-picker'){requireMethod('POST');queryKeys();await body<import('../../shared/contracts.js').NativeRewindPickerRequest>([]);sendJson(200,await runtime.openNativeRewindPicker(projectId,nodeId));return;}
     if (action === 'chat-options') {
       if (req.method === 'GET') { sendJson(200, section(await runtime.chatOptions(projectId, nodeId))); return; }
       requireMethod('POST');
-      const request = await body<SetAgentChatOptionRequest>(['key', 'value']);
-      if (!['model', 'effort', 'fastMode', 'serviceTier', 'providerPicker', 'fastToggle'].includes(request.key) || typeof request.value !== 'string' || !request.value.length || request.value.length > 200 || /[\x00-\x1f\x7f]/.test(request.value)) throw new CliError('INVALID_ARGUMENT', 'Select a supported model setting');
+      const request = await body<SetAgentChatOptionRequest>(['key', 'value', 'confirmRestart']);
+      if(request.confirmRestart!==undefined&&(typeof request.confirmRestart!=='boolean'||request.key!=='permission'))throw new CliError('INVALID_ARGUMENT','Restart confirmation applies only to native permission changes.');
+        if (!['model', 'effort', 'fastMode', 'serviceTier', 'providerPicker', 'fastToggle', 'permission'].includes(request.key) || typeof request.value !== 'string' || !request.value.length || request.value.length > 200 || /[\x00-\x1f\x7f]/.test(request.value)) throw new CliError('INVALID_ARGUMENT', 'Select a supported native setting');
       sendJson(200, await runtime.chatOptions(projectId, nodeId, request)); return;
     }
     if (action === 'handoff' && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -405,6 +439,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       await runtime.sessions.resume(projectId, nodeId);
     }
     else if (action === 'interrupt') { queryKeys(); await body<import('../../shared/contracts.js').InterruptAgentRequest>([]); await runtime.sessions.interrupt(projectId,nodeId); }
+    else if(action==='terminal-attachments'){ queryKeys(); const request=await body<import('../../shared/contracts.js').TerminalAttachmentsRequest>(['attachments'],29*1024*1024); sendJson(200,await runtime.sessions.pasteTerminalAttachments(projectId,nodeId,request)); return; }
     else if (action === 'terminal-input') { const request = await body<{ data: string }>(['data'], 65536); await runtime.sessions.input(projectId, nodeId, request.data); }
     else if (action === 'terminal-resize') { const request = await body<{ cols: number; rows: number }>(['cols', 'rows']); await runtime.sessions.resize(projectId, nodeId, request.cols, request.rows); }
     else if (action === 'create-agent') {

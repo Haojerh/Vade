@@ -134,6 +134,8 @@ export function isPathInsideRoots(targetPath: string, allowedRoots: string[]): b
 
 export interface BoundedTranscriptReadResult {
   lines: string[];
+  /** Start byte offset of each returned line, aligned with `lines`. */
+  offsets?: number[];
   hasMore: boolean;
   limited: boolean;
   nextByteOffset: number;
@@ -173,7 +175,7 @@ export async function readOlderTranscriptLines(
     const buffer = Buffer.alloc(end - start);
     const size = fs.readSync(fd, buffer, 0, buffer.length, start);
     const first = start ? buffer.indexOf(10) + 1 : 0;
-    if (start && !first) return { lines: [], nextByteOffset: start, hasMore: start > 0, limited: true, totalScanned: 0 };
+    if (start && !first) return { lines: [], offsets: [], nextByteOffset: start, hasMore: start > 0, limited: true, totalScanned: 0 };
     const rows: { line: string; offset: number }[] = [];
     let position = first;
     while (position < size) {
@@ -183,16 +185,17 @@ export async function readOlderTranscriptLines(
       position = stop + 1;
     }
     const lines: string[] = [];
+    const offsets: number[] = [];
     let offset = start + first;
     let scanned = 0;
     for (let index = rows.length - 1; index >= 0; index--) {
       const row = rows[index];
       offset = row.offset;
       scanned++;
-      if (row.line && (!includeRecord || includeRecord(row.line))) lines.unshift(row.line);
+      if (row.line && (!includeRecord || includeRecord(row.line))) { lines.unshift(row.line); offsets.unshift(row.offset); }
       if (lines.length >= Math.min(200, Math.max(1, recordLimit))) break;
     }
-    return { lines, nextByteOffset: offset, hasMore: offset > 0, limited: start > 0 && lines.length < recordLimit, totalScanned: scanned };
+    return { lines, offsets, nextByteOffset: offset, hasMore: offset > 0, limited: start > 0 && lines.length < recordLimit, totalScanned: scanned };
   } finally { fs.closeSync(fd); }
 }
 
@@ -320,20 +323,27 @@ export async function readBoundedTranscriptLines(
     }
 
     const completeBuf = sliceBuf.subarray(initialDiscardBytes, bytesRead - trailingDiscardBytes);
-    const text = completeBuf.toString('utf-8');
 
-    const rawLines = text
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((line) => Boolean(line) && (!includeRecord || includeRecord(line)));
+    const entries: { line: string; offset: number }[] = [];
+    let lineStart = 0;
+    for (let i = 0; i <= completeBuf.length; i++) {
+      if (i < completeBuf.length && completeBuf[i] !== 0x0a) continue;
+      const line = completeBuf.subarray(lineStart, i).toString('utf-8').trim();
+      if (line && (!includeRecord || includeRecord(line))) entries.push({ line, offset: readStart + initialDiscardBytes + lineStart });
+      lineStart = i + 1;
+    }
+    const rawLines = entries.map((entry) => entry.line);
+    const rawOffsets = entries.map((entry) => entry.offset);
 
     if (isInitialTail) {
       const rawCount = rawLines.length;
       const lines = rawCount > limit ? rawLines.slice(-limit) : rawLines;
+      const offsets = rawCount > limit ? rawOffsets.slice(-limit) : rawOffsets;
       const limited = rawCount > limit || fileSize > maxBytesWindow;
       const nextByteOffset = readStart + readLen - trailingDiscardBytes;
       return {
         lines,
+        offsets,
         hasMore: nextByteOffset < fileSize,
         limited,
         nextByteOffset,
@@ -363,6 +373,7 @@ export async function readBoundedTranscriptLines(
       const nextByteOffset = readStart + initialDiscardBytes + pos;
       return {
         lines,
+        offsets: rawOffsets.slice(0, limit),
         hasMore: true,
         limited: readLen === maxBytesWindow && readStart + readLen < fileSize,
         nextByteOffset,
@@ -375,6 +386,7 @@ export async function readBoundedTranscriptLines(
       trailingDiscardBytes > 0 ? readStart + readLen - trailingDiscardBytes : readStart + readLen;
     return {
       lines: rawLines,
+      offsets: rawOffsets,
       hasMore: nextByteOffset < fileSize,
       limited: readLen === maxBytesWindow && readStart + readLen < fileSize,
       nextByteOffset,

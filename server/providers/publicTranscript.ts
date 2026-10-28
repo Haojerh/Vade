@@ -1,4 +1,5 @@
 import type { ConversationMessage } from '../../shared/contracts.js';
+import { isCodexImageEnvelopeText, recordedUserImages } from './conversationImages.js';
 import { publicTranscriptRecord } from './shared.js';
 import { hashId,isCodexTurnAbortedNotice,isSystemInjectedUserText,toIsoOrNull } from './transcriptUtils.js';
 
@@ -31,7 +32,8 @@ export function parseCoordinatorTranscriptLine(
       if ((b.type === 'output_text' || b.type === 'input_text' || b.type === 'text') && typeof b.text === 'string') {
         const trimmed = b.text.trim();
         if (role === 'user' && (isSystemInjectedUserText(trimmed, false)
-          || (provider === 'codex' && isCodexTurnAbortedNotice(trimmed)))) {
+          || (provider === 'codex' && (isCodexTurnAbortedNotice(trimmed) || isCodexImageEnvelopeText(trimmed))))) {
+          // A Codex image envelope only wraps the recorded host path; the image itself is projected separately.
           omitted = true;
           continue;
         }
@@ -41,7 +43,7 @@ export function parseCoordinatorTranscriptLine(
       }
     }
 
-    if (textBlocks.length === 0) {
+    if (textBlocks.length === 0 && !(role==='user'&&recordedUserImages(provider,line,opaqueSourceIdentity,0).images.length)) {
       return { message: null, omitted: true };
     }
 

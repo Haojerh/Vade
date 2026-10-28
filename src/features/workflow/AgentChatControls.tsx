@@ -109,8 +109,9 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
   const hasFast = options?.controls.fastMode || options?.controls.fastToggle;
   return <div className="agent-settings agent-chat-controls">
     <button ref={trigger} type="button" className="agent-settings-trigger" disabled={disabled || saving}
-      aria-expanded={overlay.present && !overlay.closing} aria-haspopup="dialog" onClick={overlay.toggle} title="Model and agent settings">
-      <span>{selected?.label ?? observedModel ?? (loading ? 'Loading model…' : 'Model settings')}</span>
+      aria-expanded={overlay.present && !overlay.closing} aria-haspopup="dialog" onClick={overlay.toggle} title="Model and agent settings" aria-label={`Model and agent settings: ${selected?.label??observedModel??'Provider default'}${observedEffort?`, ${observedEffort}`:''}`}>
+      <Icon name="sliders-horizontal" size={16} className="agent-settings-compact-icon" />
+      <span className="agent-settings-model-label">{selected?.label ?? observedModel ?? (loading ? 'Loading model…' : 'Model settings')}</span>
       {observedEffort && <span className="text-muted">{observedEffort}</span>}
       <Icon name="chevron-down" size={12} />
     </button>

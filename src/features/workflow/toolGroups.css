@@ -1,0 +1,19 @@
+.conversation-tool-group-disclosure { min-width:0; margin:0; padding:0; border:0; background:none; }
+.conversation-round { min-width:0; }
+.conversation-round-activity:not([hidden]) { display:contents; }
+.conversation-round { margin-bottom:-8px; }
+.conversation-round > .disclosure { padding:0; margin:0; border:0; background:none; }
+.conversation-round > .disclosure > .section-header-row { margin-bottom:0; padding-bottom:3px; border-bottom:1px solid var(--border-subtle); }
+.conversation-round-label { border-bottom:1px solid var(--border-subtle); }
+.conversation-thread > .conversation-round-label + .row-agent { margin-top:-8px; }
+.conversation-round > .disclosure > .section-header-row > .disclosure-trigger,.conversation-round-label { display:inline-flex; align-items:center; gap:7px; width:auto; padding:7px 0; color:var(--text-muted); font-size:12px; line-height:1.5; font-weight:400; }
+.conversation-round > .disclosure > .section-header-row > .disclosure-trigger:hover { background:transparent; color:var(--text-main); }
+.conversation-round-activities { display:flex; flex-direction:column; gap:14px; min-width:0; padding:8px 0 14px; }
+.conversation-tool-group > .conversation-tool-group-disclosure > .section-header-row > .disclosure-trigger { display:inline-flex; align-items:center; gap:6px; max-width:100%; min-width:0; padding:4px 6px 4px 0; border-radius:6px; color:var(--text-muted); font-size:12px; line-height:1.5; }
+.conversation-tool-group > .conversation-tool-group-disclosure > .section-header-row > .disclosure-trigger:hover { background:transparent; color:var(--text-main); }
+.conversation-tool-group-summary { display:inline-flex; flex-wrap:wrap; align-items:center; gap:7px; min-width:0; overflow:hidden; font-size:12px; line-height:1.5; color:inherit; text-align:left; }
+.conversation-tool-group-clause { display:inline-flex; align-items:center; gap:5px; min-width:0; max-width:100%; }
+.conversation-tool-group-icon { flex:0 0 13px; width:13px; height:13px; opacity:.8; }
+.conversation-tool-group-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font:500 12px/1.5 var(--font-sans, sans-serif); }
+.conversation-tool-group-list { display:flex; flex-direction:column; gap:2px; min-width:0; margin:2px 0 4px 6px; padding:2px 0 2px 12px; border-left:1px solid var(--border-subtle); }
+.conversation-tool-group-list > .conversation-tool-call-plain { padding:4px 0; }

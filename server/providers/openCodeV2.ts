@@ -22,11 +22,17 @@ export function readOpenCodeV2Page(file: string, session: string, offset: number
       if (!rows.length) break;
       for (const row of rows) {
         totalScanned++; position = Number(row.seq); newest = Math.max(newest, position);
-        if (typeof row.data !== 'string' || !['user', 'assistant'].includes(String(row.type))) continue;
+        if (typeof row.data !== 'string' || !['user', 'assistant','compaction'].includes(String(row.type))) continue;
         bytes += Buffer.byteLength(row.data);
         if (bytes > 8 * 1024 * 1024) throw new Error('Provider page exceeds byte limit');
         const message = JSON.parse(row.data);
         if (message.synthetic || message.isMeta || message.isApiErrorMessage) continue;
+        if(row.type==='compaction'){
+          if(message.status!=='completed')continue;
+          lines.push(JSON.stringify({type:'compacted',id:row.id,timestamp:new Date(Number(row.time_created)).toISOString()}));
+          if(lines.length>=limit)break;
+          continue;
+        }
         const content = Array.isArray(message.content) ? message.content.filter((part: any) => part?.type === 'text' && !part.synthetic && typeof part.text === 'string')
           : typeof message.text === 'string' ? [{ type: 'text', text: message.text }]
             : Array.isArray(message.text) ? message.text.filter((part: unknown) => typeof part === 'string').map((text: string) => ({ type: 'text', text })) : [];

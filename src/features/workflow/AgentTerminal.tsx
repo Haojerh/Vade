@@ -3,7 +3,9 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { TerminalClientMessage, TerminalServerMessage } from '../../../shared/contracts';
-import { markTabClosed, resumeTerminal } from '../../api/client';
+import { markTabClosed, resumeTerminal, pasteTerminalImages } from '../../api/client';
+import { readTerminalClipboard } from './terminalClipboard';
+import { validateMessageFiles } from './MessageAttachments';
 import { isTerminalReply, isTerminalClipboardShortcut } from './terminalInput';
 import { Icon } from '../../components/ui/Icon';
 import { attachTerminalTouch } from './terminalTouch';
@@ -71,10 +73,10 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     }
     // Let Chromium deliver native clipboard events before xterm's Kitty encoder claims them.
     terminal.attachCustomKeyEventHandler(event => {
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v' && navigator.clipboard?.readText) {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 'v' && typeof navigator.clipboard?.readText==='function') {
         if (event.type === 'keydown') {
           event.preventDefault(); event.stopPropagation();
-          if (!event.repeat) void navigator.clipboard.readText().then(text => { if (active) terminal.paste(text); }).catch(() => { if (active) setError('Clipboard access unavailable. Use the browser paste menu or Shift+Insert.'); });
+          if (!event.repeat) void readTerminalClipboard(navigator.clipboard).then(payload => { if (!active) return; if(payload.files.length)void pasteImages(payload.files);else terminal.paste(payload.text); }).catch(() => { if (active) setError('Clipboard access unavailable. Use the browser paste menu or Shift+Insert.'); });
         }
         return false;
       }
@@ -86,6 +88,7 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     } catch { /* xterm's default renderer remains available when WebGL is unavailable. */ }
     let cursor = 0, active = true, failed = false, initialPage = true, lastLive: boolean | undefined;
     let socket: WebSocket | null = null, frame = 0, inputTimer: ReturnType<typeof setTimeout> | undefined;
+    let imageUpload:AbortController|null=null;
     let queuedInput = '', sentSize = '', visible = !document.hidden;
     let deferredOutput: string | null = null, deferredAck: number | null = null;
     let claimOnNextPage = false;
@@ -110,6 +113,27 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
       if (!socket || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 1024 * 1024) throw new Error('Terminal disconnected. Inspect before repeating input.');
       socket.send(JSON.stringify(message));
     };
+    const pasteImages=async(files:File[])=>{
+      if(!active||failed||!visible)return;
+      if(streamPath||!['codex','claude'].includes(provider??'')){setError('Image paste is available in Codex and Claude terminals.');return;}
+      const problem=validateMessageFiles(files);
+      if(problem){setError(problem);return;}
+      if(imageUpload){setError('An image paste is already in progress. Wait before typing or pasting again.');return;}
+      const controller=new AbortController();imageUpload=controller;
+      try{
+        // Flush prior keyboard bytes; the backend also fences changes during storage.
+        clearTimeout(inputTimer);inputTimer=undefined;
+        while(queuedInput){const data=queuedInput.slice(0,16384);queuedInput=queuedInput.slice(data.length);send({type:'input',data});}
+        setError(null);await pasteTerminalImages(projectId,nodeId,files,controller.signal);
+      }catch(error){if(active&&!controller.signal.aborted)setError(error instanceof Error?error.message:'Image paste was not confirmed. Inspect Terminal before repeating it.');}
+      finally{if(imageUpload===controller)imageUpload=null;}
+    };
+    const pasteEvent=(event:ClipboardEvent)=>{
+      const files=Array.from(event.clipboardData?.files??[]).filter(file=>file.type.startsWith('image/'));
+      if(!files.length)return;
+      event.preventDefault();event.stopImmediatePropagation();void pasteImages(files);
+    };
+    host.current.addEventListener('paste',pasteEvent,true);
     setError(null); setLive(null);
     const fitTerminal = (claim = false) => {
       if (!active || !visible || document.hidden || !host.current?.clientWidth || !host.current?.clientHeight) return;
@@ -122,6 +146,7 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     };
     const input = terminal.onData(data => {
       if (failed || !active || !visible || isTerminalReply(data)) return;
+      if(imageUpload){setError('Wait for the image paste to finish before typing.');return;}
       fitTerminal(true);
       queuedInput += data;
       if (queuedInput.length > 262144) { fail(new Error('Terminal input is too large. Paste smaller sections.')); return; }
@@ -207,7 +232,7 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
         }
       }
     });
-    return () => { active = false; disposeVisibility(); window.removeEventListener('ade:session-closed', closedTab); window.removeEventListener('focus', claimViewport); document.removeEventListener('visibilitychange', claimViewport); surface.removeEventListener('pointerdown', claimViewport, true); surface.removeEventListener('wheel', claimViewport, true); clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); disposeTouch(); terminal.dispose(); };
+    return () => { active = false; imageUpload?.abort();surface.removeEventListener('paste',pasteEvent,true);disposeVisibility(); window.removeEventListener('ade:session-closed', closedTab); window.removeEventListener('focus', claimViewport); document.removeEventListener('visibilitychange', claimViewport); surface.removeEventListener('pointerdown', claimViewport, true); surface.removeEventListener('wheel', claimViewport, true); clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); disposeTouch(); terminal.dispose(); };
   }, [projectId, nodeId, retry, streamPath, provider, surfaceReady]);
   return <section className="agent-terminal" aria-label="Agent terminal" aria-busy={live === null && !error}>
     {error && <div className="panel-alert alert-error" role="alert">{error} <button className="btn btn-secondary btn-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button><span> Inspect the terminal before repeating input.</span></div>}

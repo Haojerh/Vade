@@ -1,0 +1,30 @@
+.native-permission-control { position:relative; min-width:0; max-width:170px; }
+.permission-tone-neutral { --permission-color:var(--text-secondary); }
+.permission-tone-read { --permission-color:var(--state-working-text); }
+.permission-tone-workspace { --permission-color:var(--state-completed-text); }
+.permission-tone-auto { --permission-color:#b6a0f8; }
+:root[data-theme="light"] .permission-tone-auto { --permission-color:#7951bc; }
+.permission-tone-full { --permission-color:var(--state-waiting-text); }
+.native-permission-trigger { display:flex; align-items:center; gap:6px; height:32px; max-width:100%; min-width:0; padding:0 6px; border:0; border-radius:6px; background:transparent; color:var(--permission-color,var(--text-secondary)); font-size:12px; cursor:pointer; }
+.native-permission-trigger span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.native-permission-trigger > svg { flex-shrink:0; }
+.native-permission-trigger:hover,.native-permission-trigger[aria-expanded="true"] { background:var(--surface-hover); }
+.native-permission-trigger:focus-visible { outline:2px solid var(--focus-ring); outline-offset:-2px; }
+.native-permission-trigger:disabled { opacity:.5; cursor:default; }
+.native-permission-popover { padding:0; font-size:12px; outline:none; }
+.native-permission-heading { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:11px 14px; border-bottom:1px solid var(--border-subtle); }
+.native-permission-heading > strong { font-size:12px; font-weight:600; }
+.native-permission-heading > span { color:var(--text-muted); font-size:11px; }
+.native-permission-options { padding:5px; }
+.native-permission-option { display:flex; width:100%; gap:10px; text-align:left; align-items:flex-start; border:0; border-radius:8px; padding:10px 9px; color:var(--text-main); background:transparent; cursor:pointer; }
+.native-permission-option > svg { flex-shrink:0; margin-top:2px; color:var(--permission-color,var(--text-secondary)); }
+.native-permission-option > svg:last-child:not(:first-child) { align-self:center; margin-top:0; }
+.native-permission-option > span { flex:1; min-width:0; }
+.native-permission-option strong { font-size:12px; font-weight:600; }
+.native-permission-option small { display:block; font-size:11px; line-height:1.45; margin-top:3px; color:var(--text-secondary); }
+.native-permission-option:hover { background:var(--surface-hover); }
+.native-permission-option[aria-pressed="true"] { background:color-mix(in srgb,var(--permission-color) 8%,transparent); }
+.native-permission-option[aria-pressed="true"] strong { color:var(--permission-color); }
+.native-permission-popover p { margin:9px 14px; line-height:1.5; }
+.native-permission-footer { padding-top:9px; border-top:1px solid var(--border-subtle); font-size:11px; color:var(--text-secondary); }
+@media(max-width:600px) { .native-permission-trigger { padding:0 5px; } .native-permission-trigger span, .native-permission-trigger > svg:last-child { display:none; } }

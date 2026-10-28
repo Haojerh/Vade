@@ -4,6 +4,7 @@ import { CliError } from '../integrations/cli.js';
 import { codexRequest } from './codexThread.js';
 import { resolveAgent } from './sessions.js';
 import type { ChatControlIO } from './chatControlTypes.js';
+import {claudeEffortAcknowledgement} from '../providers/shared.js';
 
 const SAFE = /^[a-zA-Z0-9][a-zA-Z0-9_.\/:+@()\[\]-]{0,199}$/;
 const text = (value: unknown, limit = 160): string => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, limit) : '';
@@ -58,7 +59,7 @@ export class ProviderChatControls {
     const effective = { ...observed, ...visible };
     const alias = effective.model ? resolvedModelAliases.get(models)?.get(effective.model) : undefined;
     const model = models.find(row => row.id === (alias ?? effective.model) || row.label.toLowerCase() === effective.model?.toLowerCase());
-    const current: AgentChatOptions['current'] = { ...(effective.model && SAFE.test(effective.model) ? { model: model?.id ?? effective.model } : {}), ...(effective.effort && SAFE.test(effective.effort) ? { effort: effective.effort } : {}), ...(typeof observed.fastMode === 'boolean' ? { fastMode: observed.fastMode } : {}), ...(observed.serviceTier && SAFE.test(observed.serviceTier) ? { serviceTier: observed.serviceTier } : {}), ...('fastMode' in visible ? { fastMode: visible.fastMode, serviceTier: visible.serviceTier } : {}) };
+    const current: AgentChatOptions['current'] = { ...(model ? {model:model.id} : effective.model && SAFE.test(effective.model) ? {model:effective.model} : {}), ...(effective.effort && SAFE.test(effective.effort) ? { effort: effective.effort } : {}), ...(typeof observed.fastMode === 'boolean' ? { fastMode: observed.fastMode } : {}), ...(observed.serviceTier && SAFE.test(observed.serviceTier) ? { serviceTier: observed.serviceTier } : {}), ...('fastMode' in visible ? { fastMode: visible.fastMode, serviceTier: visible.serviceTier } : {}) };
     if (provider === 'codex' && !('fastMode' in visible)) {
       const tier = screen.match(/Service tier set to (priority|fast|default)\b/g)?.at(-1)?.split(' ').at(-1);
       if (tier) { current.serviceTier = tier; current.fastMode = tier !== 'default'; }
@@ -79,13 +80,14 @@ export class ProviderChatControls {
     const desired = options.models.find(row => row.id === request.value);
     const desiredFast = request.key === 'fastMode' ? request.value === 'true' : typeof options.current.fastMode === 'boolean' ? !options.current.fastMode : undefined;
     const confirmed = await io.waitFor(screen => {
+      if(options.provider==='claude'&&!fast&&io.settingConfirmed?.())return true;
       const fresh = io.output().slice(before).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
       const tier = fresh.match(/Service tier set to (priority|fast|default)\b/g)?.at(-1)?.split(' ').at(-1);
       const footer = options.provider === 'codex' ? codexFooter(options.models, screen) : {};
       const changedFooter = typeof footer.fastMode === 'boolean' && typeof beforeFooter.fastMode === 'boolean' && footer.fastMode !== beforeFooter.fastMode && (desiredFast === undefined || footer.fastMode === desiredFast);
       return fast ? changedFooter || (tier !== undefined && (desiredFast === undefined || (tier !== 'default') === desiredFast)) || (options.provider === 'claude' && /fast mode.*(?:on|off|enabled|disabled)/i.test(fresh))
-      : fresh.split(/[\r\n]/).some(line => request.key === 'model' ? /(?:set|switched|changed).*model|model.*(?:set|switched|changed)/i.test(line) && [desired?.id, desired?.label].some(value => value && norm(line).includes(norm(value)))
-        : /effort.*(?:set|changed)|(?:set|changed).*effort/i.test(line) && new RegExp(`\\b${request.value}\\b`, 'i').test(line));
+      : fresh.split(/[\r\n]/).some(line => request.key === 'model' ? /(?:set|switched|changed|kept).*model|model.*(?:set|switched|changed|kept)/i.test(line) && [desired?.id, desired?.label].some(value => value && norm(line).includes(norm(value)))
+        : claudeEffortAcknowledgement(line) === request.value);
     });
     const tier = io.output().slice(before).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').match(/Service tier set to (priority|fast|default)\b/g)?.at(-1)?.split(' ').at(-1);
     if (tier) return { ...options, current: { ...options.current, serviceTier: tier, fastMode: tier !== 'default' }, controls: { ...options.controls, fastMode: true, fastToggle: false } };

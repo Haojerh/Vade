@@ -587,7 +587,9 @@ test('standalone history reads exact Codex, Claude and Antigravity sessions with
           const response = await fetch(url, { signal: abort.signal });
           assert.equal(response.status, 200);
           const stream = response.body!.getReader();
-          assert.match(new TextDecoder().decode((await stream.read()).value), /event: conversation/);
+          const initialEvents=new TextDecoder().decode((await stream.read()).value);
+          assert.match(initialEvents,/event: conversation/);
+          assert.match(initialEvents,/event: node-status/,'node status is published independently of public conversation rows');
           let notify!: () => void;
           const changed = new Promise<void>(resolve => { notify = resolve; });
           const stopWatching = reader.watch(record, notify);
@@ -659,7 +661,11 @@ test('provider status hooks preserve settings and bind observed events to the ex
     run('claude', 'PreToolUse', { tool_name: 'AskUserQuestion' });
     assert.equal(readAgentStatus(directory, record, true).data?.attention, 'question');
     run('claude', 'Notification', { notification_type: 'idle_prompt' });
-    assert.equal(readAgentStatus(directory, record, true).data?.attention, undefined, 'idle notifications are not questions');
+    assert.equal(readAgentStatus(directory, record, true).data?.attention, 'question', 'idle notifications cannot replace an outstanding question');
+    run('claude','Stop');
+    const completed=fs.readFileSync(statusFile(directory,record.id),'utf8');
+    run('claude','Notification',{notification_type:'idle_prompt'});
+    assert.equal(fs.readFileSync(statusFile(directory,record.id),'utf8'),completed,'idle notifications preserve the terminal outcome');
     run('claude', 'PostToolUse', { tool_result: 'error failed' });
     assert.equal(readAgentStatus(directory, record, true).data?.state, 'working');
     const saved = fs.readFileSync(statusFile(directory, record.id), 'utf8');
@@ -702,6 +708,21 @@ test('provider status hooks preserve settings and bind observed events to the ex
     assert.throws(() => installStatusHooks(directory, 'claude', process.execPath, configFile), /preserved/);
     assert.equal(fs.readFileSync(configFile, 'utf8'), '{invalid');
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('Claude legacy idle notifications clear only at an empty native composer, without inventing completion',async()=>{
+  const sessions=Object.create(AdeSessions.prototype) as any,screen=new TerminalScreen(()=>{},()=>{});
+  const record={provider:'claude',id:'node'} as SessionRecord;
+  const status={data:{state:'waiting',source:'provider-hook',event:'Notification'},meta:{availability:'ready',observedAt:new Date().toISOString()}};
+  Object.assign(sessions,{sending:new Set(),live:new Map([['node',{live:true,screen}]])});
+  try{
+    screen.write('\x1b[2J\x1b[H❯ \x1b[1;3H');await screen.settled();
+    const result=sessions.attentionStatus(record,status);assert.equal(result.data.state,'idle');assert.equal(result.data.event,'native-idle-prompt');
+    for(const attention of ['question','approval','auth'])assert.equal(sessions.attentionStatus(record,{...status,data:{...status.data,attention}}).data.state,'waiting');
+    sessions.sending.add('node');assert.equal(sessions.attentionStatus(record,status).data.state,'waiting');sessions.sending.clear();
+    screen.write('\x1b[2J\x1b[H❯ draft\x1b[1;8H');await screen.settled();assert.equal(sessions.attentionStatus(record,status).data.state,'waiting');
+    screen.write('\x1b[2J\x1b[HDo you want to proceed?\r\n❯ 1. Yes\x1b[2;4H');await screen.settled();assert.equal(sessions.attentionStatus(record,status).data.state,'waiting');
+  }finally{screen.dispose();}
 });
 
 test('Antigravity identity hook preserves user hooks and captures only its authenticated session ID', () => {
@@ -1191,6 +1212,10 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     const snapshot = await (await fetch(base + projectRoute + '/snapshot')).json();
     const nodeId = snapshot.graph.data.nodes[0].id;
     assert.equal((await fetch(base + projectRoute + `/nodes/${nodeId}?limit=20&direction=older`)).status, 200);
+    assert.equal((await fetch(base + projectRoute + `/nodes/${nodeId}/rewind`)).status,405);
+    assert.equal((await post(projectRoute + `/nodes/${nodeId}/rewind`,{messageId:'message',sourceIdentity:'source',revision:'revision',beforeSeq:0})).status,400);
+    assert.equal((await post(projectRoute + `/nodes/${nodeId}/rewind`,{messageId:'../../native',sourceIdentity:'source',revision:'revision'})).status,400);
+    assert.equal((await post(projectRoute + `/nodes/${nodeId}/rewind?unexpected=stale`,{messageId:'message',sourceIdentity:'source',revision:'revision'})).status,400);
     assert.equal((await fetch(base + projectRoute + '/snapshot?runId=foreign')).status, 404);
     assert.equal((await fetch(base + projectRoute + '/snapshot?x=y')).status, 400);
     assert.equal((await fetch(base + projectRoute + '/snapshot?runId=x&runId=y')).status, 400);

@@ -109,12 +109,19 @@ export function useNodeDetailsLoader({
           const messages = new Map(previous.messages.map(message => [message.id, message]));
           for (const message of conversation.data.messages) messages.set(message.id, message);
           // Keep the older-history cursor; streamed cursors are forward-only and belong to the SSE client.
-          return { ...current, conversation: { ...conversation, data: { ...previous, messages: [...messages.values()] } } };
+          return { ...current, conversation: { ...conversation, data: { ...previous, rounds:conversation.data.rounds??previous.rounds, revision: conversation.data.revision ?? previous.revision, messages: [...messages.values()] } } };
         });
         setNodeDetailsError(null);
       }, (connected) => {
         setNodeDetailsError(connected ? null : 'Live conversation disconnected. Reconnecting…');
-      }, () => { void loadNodeDetails(); }, streamCursor.current);
+      }, () => { void loadNodeDetails(); }, streamCursor.current, update=>{
+        setNodeDetails(current=>{
+          if(current?.node.id!==selectedNodeId)return current;
+          const prior=Date.parse(current.node.observedAt??'');if(Number.isFinite(prior)&&prior>Date.parse(update.observedAt))return current;
+          const agentStatus=update.agentStatus;
+          return {...current,node:{...current.node,agentStatus,liveness:update.liveness,observedAt:update.observedAt,state:agentStatus.meta.availability==='ready'&&agentStatus.data?agentStatus.data.state:'unknown',lastActivityAt:agentStatus.meta.observedAt,stale:agentStatus.meta.stale}};
+        });
+      });
   }, [selectedProjectId, selectedNodeId, selectedRunId, streamKind, streamIdentity, loadNodeDetails, conversationVisible]);
 
   const refreshNodeDetails = useCallback(() => {

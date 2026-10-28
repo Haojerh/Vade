@@ -51,8 +51,7 @@ process.stdin.on('data', chunk => {
       const tool = agy ? p.toolCall?.name : p.tool_name;
       state = ['AskUserQuestion','request_user_input','ask_question','ask_user_question','ask_permission'].includes(tool) ? 'waiting' : 'working';
     } else if (event==='PermissionRequest') state='waiting';
-    else if (event==='Notification' && ['permission_prompt','idle_prompt','elicitation_dialog','agent_needs_input'].includes(p.notification_type)
-      && !(provider==='codebuddy' && p.notification_type==='idle_prompt')) state='waiting';
+    else if (event==='Notification' && ['permission_prompt','elicitation_dialog','agent_needs_input'].includes(p.notification_type)) state='waiting';
     else if (event==='StopFailure' && ['claude','codebuddy'].includes(provider)) state='failed';
     else if (event==='Stop') {
       if (agy) {

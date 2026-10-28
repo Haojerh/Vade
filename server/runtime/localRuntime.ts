@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import path from 'node:path';
 import type { ConversationPage, DashboardSnapshot, Graph, HandoffWorktree, Node, NodeDetails, NodeDetailsQuery, Section, SourceMeta, SetAgentChatOptionRequest } from '../../shared/contracts.js';
 import { CliError, type CommandRunner, defaultCommandRunner } from '../integrations/cli.js';
 import { taskProgress } from '../services/progress.js';
@@ -50,7 +51,7 @@ export class LocalRuntime {
   readonly streams = new Set<() => void>();
 
   constructor(readonly store = new AdeStore(), runner: CommandRunner = defaultCommandRunner, connectionsService?: LocalConnections) {
-    this.conversations = new AdeConversations(store.directory);
+    this.conversations = new AdeConversations(store.directory,record=>this.sessions.nativeRewindAvailable(record),record=>this.sessions.conversationRounds(record));
     this.git = new AdeGit(store, runner);
     this.files = new WorkspaceFiles(store, this.git);
     this.fileActions = new WorkspaceActions(store, this.files);
@@ -130,8 +131,34 @@ export class LocalRuntime {
 
   async chatOptions(projectId: string, nodeId: string, request?: SetAgentChatOptionRequest) {
     const record = this.sessions.require(projectId, nodeId);
-    const metadata = await this.conversations.metadata(record);
+    if(request?.key==='permission'&&record.provider!=='dsh'){
+      this.handoffs.assertSourceAvailable(record);
+      const tree=await this.git.requireWorktree(this.store.project(projectId),record.worktreeId);
+      if(tree.locked||path.relative(tree.path,record.cwd))throw new CliError('INVALID_ARGUMENT','The original unlocked session workspace is no longer available.');
+    }
+    const metadata = {...await this.conversations.metadata(record),nativeResumable:this.conversations.resumeAvailable(record)};
     return request ? this.sessions.setChatOption(projectId, nodeId, request, metadata) : this.sessions.chatOptions(projectId, nodeId, metadata);
+  }
+
+  async openNativeRewindPicker(projectId:string,nodeId:string){
+    const record=this.sessions.require(projectId,nodeId);this.handoffs.assertSourceAvailable(record);
+    const tree=await this.git.requireWorktree(this.store.project(projectId),record.worktreeId);
+    if(tree.locked||path.relative(tree.path,record.cwd))throw new CliError('INVALID_ARGUMENT','The original unlocked session workspace is no longer available.');
+    return this.sessions.openNativeRewindPicker(projectId,nodeId);
+  }
+
+  async rewind(projectId:string,nodeId:string,request:import('../../shared/contracts.js').RewindConversationRequest){
+    const record=this.sessions.require(projectId,nodeId);this.handoffs.assertSourceAvailable(record);
+    if(record.rewindPending&&['sourceIdentity','revision','messageId'].every(key=>record.rewindPending![key as keyof typeof request]===request[key as keyof typeof request]))throw new CliError('RUNTIME_UNAVAILABLE','The previous rewind is unconfirmed. Inspect Terminal; it will not be replayed.');
+    const tree=await this.git.requireWorktree(this.store.project(projectId),record.worktreeId);
+    if(tree.locked||path.relative(tree.path,record.cwd))throw new CliError('INVALID_ARGUMENT','The original unlocked session workspace is no longer available.');
+    const target=await this.conversations.rewindTarget(record,request);
+    return this.sessions.rewind(projectId,nodeId,{...target,receipt:request},record.statusToken);
+  }
+
+  /** Recorded user image bytes for one projected locator on this exact project/node session. */
+  conversationImage(projectId: string, nodeId: string, source: string, id: string): { mimeType: string; bytes: Buffer } {
+    return this.conversations.image(this.sessions.require(projectId, nodeId), source, id);
   }
 
   async details(projectId: string, nodeId: string, query: NodeDetailsQuery = { direction: 'older' }): Promise<NodeDetails> {

@@ -1,0 +1,18 @@
+/* Recorded user image attachments in native chat. Bytes are served by the bounded
+   conversation-image route; nothing here loads a host path or a remote URL. */
+.conversation-images { display:flex; flex-wrap:wrap; gap:8px; max-width:100%; margin:8px 0 0; padding:0; list-style:none; }
+.conversation-images>li { display:block; min-width:0; max-width:100%; }
+.conversation-image-button { display:block; padding:0; border:0; border-radius:10px; background:transparent; cursor:zoom-in; line-height:0; }
+.conversation-image-button:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }
+.conversation-image { display:block; width:auto; height:auto; max-width:min(260px,100%); max-height:190px; object-fit:contain; border:1px solid var(--border-subtle); border-radius:10px; background:var(--surface-1); }
+.conversation-image-unavailable { display:inline-flex; align-items:center; gap:6px; padding:7px 10px; border:1px dashed var(--border-subtle); border-radius:10px; color:var(--text-muted); font-size:11px; line-height:1.4; }
+dialog.node-modal-dialog.conversation-image-dialog { position:fixed; inset:0; margin:0; width:100vw; max-width:none; height:100dvh; min-height:0; max-height:none; padding:48px 24px 24px; border:0; border-radius:0; background:transparent; box-shadow:none; }
+dialog.node-modal-dialog.conversation-image-dialog[open] { display:grid; place-items:center; }
+dialog.node-modal-dialog.conversation-image-dialog::backdrop { background:rgb(0 0 0 / .8); }
+.desktop-custom-titlebar dialog.node-modal-dialog.conversation-image-dialog { top:36px; height:calc(100dvh - 36px); max-height:none; }
+.conversation-image-close { position:absolute; top:12px; right:12px; display:grid; place-items:center; width:40px; height:40px; padding:0; border:1px solid rgb(255 255 255 / .12); border-radius:50%; background:rgb(0 0 0 / .45); color:#fff; cursor:pointer; }
+.conversation-image-close:focus-visible { outline:2px solid #fff; outline-offset:3px; }
+.conversation-image-full { display:block; margin:0; width:auto; height:auto; max-width:100%; max-height:calc(100dvh - 96px); object-fit:contain; border-radius:6px; background:transparent; }
+@media(max-width:600px) { dialog.node-modal-dialog.conversation-image-dialog { padding:56px 12px 12px; } }
+@media(hover:hover) and (pointer:fine) { .conversation-image-close:hover { background:rgb(255 255 255 / .15); } }
+@media(hover:hover) and (pointer:fine) { .conversation-image-button:hover { opacity:.88; } }

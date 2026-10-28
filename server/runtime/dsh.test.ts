@@ -61,6 +61,51 @@ test('DSH cross-worktree continuation copies the full native log once, preserves
   }finally{f.close();}
 });
 
+test('DSH compaction is projected only after the native transaction ends without error',async()=>{
+  const f=await fixture();try{
+    f.bind();f.emit('compaction/start',{compactionId:'compact'});f.emit('compaction/end',{compactionId:'failed',error:{message:'private failure'}});f.emit('compaction/end',{compactionId:'compact'});
+    const page=(await new AdeConversations(f.directory).read(f.record)).data!;
+    assert.deepEqual(page.messages.map(message=>[message.kind,message.text]),[['compaction','Context compacted']]);
+  }finally{f.close();}
+});
+
+test('DSH permissions use only the native runtime roster and require observed confirmation',async()=>{
+  const f=await fixture(true);
+  try{
+    f.bind();let permission='workspace-write';
+    f.ctx.channel.permissionPresets=()=>({availability:'runtime',options:[{value:'workspace-write',name:'Workspace writes',description:'Ask outside the workspace'},{value:'read-only',name:'Read only'}],current:{value:permission}});
+    f.callbacks.get('ready')?.();
+    await new Promise(resolve=>setTimeout(resolve,70));
+    assert.equal(dshOptions(f.directory,f.record).current.permission,'workspace-write');
+    assert.equal(dshOptions(f.directory,f.record).permissions?.length,2);
+    const writes:string[]=[];
+    const io:any={write:async(text:string)=>{writes.push(text);if(text==='\r'){permission='read-only';f.ctx.changed();await new Promise(resolve=>setTimeout(resolve,20));}},waitFor:async(predicate:Function)=>{assert.equal(predicate('❯ /permission read-only'),true);return '';}};
+    await assert.rejects(applyDshOption(f.directory,f.record,{key:'permission',value:'invented-full-access'},io),/advertised/);
+    assert.equal(writes.length,0);
+    assert.equal((await applyDshOption(f.directory,f.record,{key:'permission',value:'read-only'},io)).current.permission,'read-only');
+    assert.deepEqual(writes,['\x1b[200~/permission read-only\x1b[201~','\r']);
+    f.ctx.channel.permissionPresets=()=>({availability:'unavailable',options:[{value:'invented',name:'Hidden'}]});f.ctx.changed();await new Promise(resolve=>setTimeout(resolve,20));
+    assert.equal(dshOptions(f.directory,f.record).permissions,undefined);
+  }finally{f.close();}
+});
+
+test('DSH rewind targets are exact public native user boundaries and reject changed history',async()=>{
+  const f=await fixture();
+  try{
+    f.bind();f.emit('user/message',{id:'user-one',role:'user',source:{kind:'user'},content:[{type:'text',text:'First message'}]});
+    f.emit('assistant/message',{message:{id:'answer-one',role:'assistant',source:{kind:'model'},content:[{type:'text',text:'Response'}]}});
+    f.emit('user/message',{id:'user-two',role:'user',source:{kind:'user'},content:[{type:'text',text:'Edit this'}]});
+    const reader=new AdeConversations(f.directory),page=(await reader.read(f.record,{direction:'older',limit:20})).data!;
+    assert.ok(page.revision);assert.equal(page.messages[0].rewindable,true);assert.equal(page.messages[1].rewindable,undefined);
+    const request={messageId:page.messages[2].id,sourceIdentity:page.sourceIdentity,revision:page.revision!};
+    const target=await reader.rewindTarget(f.record,request);
+    assert.equal(target.beforeSeq,2);assert.equal(target.beforeMessageId,'user-two');assert.equal(target.message,'Edit this');assert.equal(target.current(),true);
+    await assert.rejects(reader.rewindTarget(f.record,{...request,messageId:page.messages[1].id}),/not an available/);
+    f.emit('user/message',{id:'newer',role:'user',source:{kind:'user'},content:[{type:'text',text:'Changed'}]});
+    assert.equal(target.current(),false);await assert.rejects(reader.rewindTarget(f.record,request),/changed/);
+  }finally{f.close();}
+});
+
 test('DSH observer binds the owned root, projects only public messages, and uses explicit native turn outcomes',async()=>{
   const f=await fixture();
   try {
@@ -282,5 +327,14 @@ test('owned DSH sends require native readiness, submit once and interrupt with C
     assert.equal(original.cwd,directory,'original registry entry stays in source checkout');
     assert.equal(original.providerThreadId,source.threadId);assert.equal(original.closed,true);
     assert.equal(fs.existsSync(path.join(dshDirectory(directory,continued),'counts.json')),false,'continuation submits no input');
+    const before=sessions.require(project.id,continued.id),target={beforeSeq:0,beforeMessageId:'native-user',message:'Edit this message',current:()=>false};
+    await assert.rejects(sessions.rewind(project.id,continued.id,target,before.statusToken),/refresh before rewinding/);
+    assert.equal(sessions.page(project.id,continued.id).live,true,'stale rewind never stops the process');
+    const rewound=await sessions.rewind(project.id,continued.id,{...target,current:()=>true},before.statusToken);
+    assert.equal(rewound.message,'Edit this message');
+    const after=sessions.require(project.id,continued.id);
+    assert.notEqual(after.providerThreadId,before.providerThreadId);assert.notEqual(after.statusToken,before.statusToken);
+    assert.equal(after.dshContinuation?.beforeSeq,0);assert.equal(after.dshContinuation?.threadId,before.providerThreadId);
+    assert.equal(fs.existsSync(path.join(dshDirectory(directory,after),'counts.json')),false,'rewind never submits the returned draft');
   }finally{sessions.close();store.close();await fs.promises.rm(directory,{recursive:true,force:true,maxRetries:10,retryDelay:100})}
 });

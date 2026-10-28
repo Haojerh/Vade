@@ -15,7 +15,7 @@ export function installContinuation(ctx, config) {
   ctx.inject(['sessionPersistence'], child => {
     const persistence = child.get('sessionPersistence'), original = persistence.open;
     let pending;
-    const identity = { source: source.threadId, sourceCwd: source.cwd, target: expected, cwd };
+    const identity = { source: source.threadId, sourceCwd: source.cwd, target: expected, cwd, ...(source.beforeSeq!==undefined?{beforeSeq:source.beforeSeq,beforeMessageId:source.beforeMessageId}:{}) };
     const save = complete => { const temp=receipt+'.tmp';fs.writeFileSync(temp,JSON.stringify({...identity,complete}),{mode:0o600});fs.renameSync(temp,receipt); };
     const materialize = async options => {
       if (fs.existsSync(receipt)) {
@@ -36,8 +36,14 @@ export function installContinuation(ctx, config) {
         input=await original.call(persistence,source.threadId,'write',options);
         const header=input.header;
         if(header.id!==source.threadId || typeof header.cwd!=='string' || norm(header.cwd)!==norm(source.cwd) || header.parentSession || header.origin==='subagent')throw new Error('DSH continuation source workspace or identity changed');
-        const page=await input.read(0,4001,options), events=page.events;
+        if(source.beforeSeq!==undefined&&(!Number.isSafeInteger(source.beforeSeq)||source.beforeSeq<0||source.beforeSeq>=4000))throw new Error('DSH rewind target exceeds the native continuation limit');
+        const page=await input.read(0,source.beforeSeq===undefined?4001:source.beforeSeq+1,options);let events=page.events;
         if(!Array.isArray(events)||events.length>4000||Buffer.byteLength(JSON.stringify(events))>16*1024*1024)throw new Error('DSH session exceeds the native continuation limit; use Hand Off instead');
+        if(source.beforeSeq!==undefined){
+          const event=events[source.beforeSeq];
+          if(!Number.isSafeInteger(source.beforeSeq)||source.beforeSeq<0||event?.seq!==source.beforeSeq||event.type!=='user/message'||event.data?.role!=='user'||event.data?.source?.kind!=='user'||event.data?.id!==source.beforeMessageId)throw new Error('DSH rewind target changed');
+          events=events.slice(0,source.beforeSeq);
+        }
         // Mark intent before taking a native writer. A failed/uncertain attempt
         // never replays a partially appended log on restart.
         save(false);
@@ -85,11 +91,12 @@ export function apply(ctx, config) {
     if(!Number.isSafeInteger(event.seq)||event.seq<0||projected.has(event.seq))return;
     projected.add(event.seq);if(projected.size>4000)projected.delete(projected.values().next().value);
     const data=event.data, timestamp=new Date(event.time).toISOString();
+    if(event.type==='compaction/end'&&typeof data?.compactionId==='string'&&data.compactionId.length<=200&&!data.error)transcript({type:'compacted',timestamp,id:data.compactionId});
     if (event.type==='request/header' && data?.header?.config) {const config=data.header.config;transcript({type:'turn_context',payload:{model:safe(config.provider)&&safe(config.model)?config.provider+'/'+config.model:undefined,effort:config.reasoningEffort}});}
     const message=event.type==='user/message'?data:event.type==='assistant/message'?data?.message:null;
     if(message && (message.role==='assistant' && message.source?.kind==='model' || message.role==='user' && message.source?.kind==='user')) {
       const content=Array.isArray(message.content)?message.content.filter(p=>p?.type==='text'&&typeof p.text==='string').map(p=>({type:'text',text:p.text.slice(0,100000)})):[];
-      if(content.length)transcript({type:'response_item',timestamp,payload:{type:'message',id:message.id??String(event.seq),role:message.role,content}});
+      if(content.length)transcript({type:'response_item',timestamp,payload:{type:'message',id:message.id??String(event.seq),nativeSeq:event.seq,hasAttachments:message.role==='user'&&Array.isArray(message.content)&&message.content.some(p=>p?.type!=='text'),role:message.role,content}});
     }
     if(event.type==='tool/call' && typeof data?.name==='string' && typeof data.arguments==='string') transcript({type:'response_item',timestamp,payload:{type:'function_call',call_id:data.callId,name:data.name,arguments:data.arguments.slice(0,32768)}});
   };
@@ -165,9 +172,12 @@ export function apply(ctx, config) {
       ...(input===undefined?{}:{inputTokens:input,outputTokens:count(usage?.output),cacheReadTokens:read,cacheWriteTokens:cacheWrite})};
     const contextKey=JSON.stringify(context);
     if(contextKey!==lastContext){lastContext=contextKey;transcript({type:'context_usage',timestamp:new Date().toISOString(),payload:context});}
+    const permissionSnapshot=typeof channel.permissionPresets==='function'?channel.permissionPresets():undefined;
+    const permissions=permissionSnapshot?.availability==='runtime'?(permissionSnapshot.options??[]).slice(0,32).filter(p=>safe(p.value)&&typeof p.name==='string').map(p=>({value:p.value,label:p.name.slice(0,160),...(typeof p.description==='string'?{description:p.description.slice(0,400)}:{})})):[];
+    if(safe(permissionSnapshot?.current?.value))current.permission=permissionSnapshot.current.value;
     const ready=channel.ready===true;
-    const value=JSON.stringify({current,models,ready});if(value===lastState)return;lastState=value;
-    write('options.json',{...base(),current,models,ready});
+    const value=JSON.stringify({current,models,ready,permissions});if(value===lastState)return;lastState=value;
+    write('options.json',{...base(),current,models,ready,permissions});
   };
   const timer=setInterval(()=>{void attach()},1000);timer.unref?.();
   const catalogTimer=setInterval(()=>{void attach()},60000);catalogTimer.unref?.();

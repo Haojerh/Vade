@@ -19,6 +19,8 @@ The right-side message rail marks loaded public user turns, with the active read
 
 ## Reference and evidence
 
+Claude system/local-command records for `/context` contain the native rounded context estimate and advertised window. The reader accepts only the exact bound session's recorded command output, removes formatting, and projects that estimate without mixing in last-request cache rows. For the observed custom-model session this recovered `35.3k/272k`; the `[1m]` model suffix is never interpreted as capacity. Later API responses restore explicitly labelled last-request usage while retaining capacity only for the same observed response model. A changed model invalidates retained capacity. Collection does not invoke `/context`, alter statusline configuration or estimate tokens from chat text.
+
 Hover dismissal checks both the trigger and floating card before closing, so a delayed leave event cannot dismiss a card that is still hovered or focused. Kilo catalog matching preserves the provider prefix even when a native model ID contains another slash.
 
 REA Evidence `ev_e61201428cd73319631854693370d390d2f5551e8ad8c4d1e741319acdd03022` covers extracted installed CodeBuddy model metadata and context rendering functions (artifact SHA-256 `f2013674fd79a6c9bccb0c8ff3836784bbbd4c4ec62ba97d928b264bcf1ee002`). It confirms native `maxInputTokens` metadata and the formatted `/context` report. Vade does not adopt the native formatter's fallback capacity. Reports are accepted only from bounded native local-command records in the bound session, never ordinary chat text; model changes invalidate retained report capacity. Static evidence and fixture tests establish these formats, without sending a live provider request.

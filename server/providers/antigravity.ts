@@ -155,6 +155,11 @@ export function parseAntigravityTranscriptLine(
 ): { message: ConversationMessage | null; omitted: boolean } {
   try {
     const obj = JSON.parse(line);
+    // Native CHECKPOINT is a context summary boundary. Keep its own label:
+    // checkpoints can be intent-only, so do not assert that compaction occurred.
+    if(obj.type==='CHECKPOINT'&&obj.status==='DONE'&&Number.isSafeInteger(obj.step_index)&&obj.step_index>=0){
+      return {message:{id:hashId('msg',`${opaqueSourceIdentity}:checkpoint:${obj.step_index}`),role:'agent',kind:'compaction',text:'Context checkpoint',at:toIsoOrNull(obj.created_at)},omitted:true};
+    }
     if (obj.type === 'USER_INPUT') {
       let text = typeof obj.content === 'string' ? obj.content : '';
       if (text.includes('<USER_REQUEST>')) {
