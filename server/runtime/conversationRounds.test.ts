@@ -1,5 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
+import {DatabaseSync} from 'node:sqlite';
 import {AdeStore,type SessionRecord} from './store.js';import {ConversationRounds,claudeNativeRounds,codexNativeRounds,mergeConversationRounds} from './conversationRounds.js';
+import {antigravityNativeRounds,codeBuddyNativeRounds,dshNativeRounds,openCodeNativeRounds,openCodeV2NativeRounds} from './conversationRounds.js';
 import {publicMessage} from './conversation.js';
 import type {AgentStatus,Section} from '../../shared/contracts.js';
 
@@ -58,4 +60,106 @@ test('Claude steering prompts remain owned through one native turn parent chain'
   const round=claudeNativeRounds('native',lines,'source')[0];
   assert.equal(round.messageIds?.includes(ids[0]),true);
   assert.equal(round.messageIds?.includes(ids[1]),true);
+});
+
+test('DSH persists exact turn boundaries and owns steering prompts without exposing private rows',()=>{
+  const source='source',row=(timestamp:string,type:string,payload:Record<string,unknown>)=>({timestamp,type,payload});
+  const rows=[
+    {timestamp:'2026-10-28T12:00:00Z',type:'turn_started',turnId:'turn'},
+    row('2026-10-28T12:00:01Z','response_item',{type:'message',role:'user',id:'initial',content:[{type:'input_text',text:'Initial'}]}),
+    row('2026-10-28T12:00:10Z','response_item',{type:'message',role:'assistant',id:'progress',content:[{type:'output_text',text:'Progress'}]}),
+    row('2026-10-28T12:00:20Z','response_item',{type:'message',role:'user',id:'steer',content:[{type:'input_text',text:'Steer'}]}),
+    row('2026-10-28T12:00:30Z','response_item',{type:'message',role:'assistant',id:'answer',content:[{type:'output_text',text:'Answer'}]}),
+    {timestamp:'2026-10-28T12:00:34Z',type:'turn_ended',turnId:'turn',reason:{kind:'completed'}},
+  ];
+  const record={provider:'dsh',providerThreadId:'native'} as SessionRecord;
+  const ids=rows.flatMap(value=>{const message=publicMessage(record,JSON.stringify(value),source);return message?[message.id]:[]});
+  const round=dshNativeRounds('native',rows.map(value=>JSON.stringify(value)),source)[0];
+  assert.equal(round.outcome,'completed');assert.equal(round.workedMs,34000);assert.deepEqual(round.messageIds,ids);
+  assert.equal(dshNativeRounds('native',rows.slice(0,-1).map(value=>JSON.stringify(value)),source).length,0,'an open turn never settles');
+  const interrupted=rows.map(value=>JSON.stringify(value)).slice();interrupted[interrupted.length-1]=JSON.stringify({timestamp:'2026-10-28T12:00:34Z',type:'turn_ended',turnId:'turn',reason:{kind:'aborted',reason:{kind:'user'}}});
+  assert.equal(dshNativeRounds('native',interrupted,source)[0].outcome,'interrupted');
+});
+
+test('CodeBuddy settles only request groups whose last public answer has no later tool call',()=>{
+  const source='source',record={provider:'codebuddy',providerThreadId:'native'} as SessionRecord;
+  const row=(id:string,timestamp:number,type:string,role:string|undefined,request:string,text:string,status?:string,error?:string)=>({
+    id,parentId:null,timestamp,type,role,content:role?[{type:role==='user'?'input_text':'output_text',text}]:undefined,
+    status,providerData:{conversationRequestId:request,...(error?{error:{message:error}}:{})},sessionId:'native',
+  });
+  const rows=[
+    row('u1',1793000000000,'message','user','request-1','Initial'),
+    row('p1',1793000010000,'message','assistant','request-1','Progress','completed'),
+    row('call1',1793000011000,'function_call',undefined,'request-1','',undefined),
+    row('a1',1793000030000,'message','assistant','request-1','Answer','completed'),
+    row('u2',1793000040000,'message','user','request-2','Second'),
+    row('p2',1793000050000,'message','assistant','request-2','Still working','completed'),
+    row('call2',1793000051000,'function_call',undefined,'request-2','',undefined),
+    row('u3',1793000060000,'message','user','request-3','Stop'),
+    row('a3',1793000064000,'message','assistant','request-3','Interrupted by user','incomplete','Interrupted by user'),
+  ].map(value=>JSON.stringify(value));
+  const ids=new Set(rows.flatMap(line=>{const message=publicMessage(record,line,source);return message?[message.id]:[]}));
+  const rounds=codeBuddyNativeRounds('native',rows,source);
+  assert.equal(rounds.length,2);
+  assert.equal(rounds[0].outcome,'completed');assert.equal(rounds[0].workedMs,30000);
+  assert.equal(rounds[0].messageIds?.every(id=>ids.has(id)),true);assert.equal(rounds[0].messageIds?.length,3);
+  assert.equal(rounds[1].outcome,'interrupted');assert.equal(rounds[1].workedMs,4000);
+});
+
+test('Antigravity groups ordered user, progress and final responses only after trailing tools',()=>{
+  const source='source';
+  const rows=[
+    {step_index:1,source:'USER_EXPLICIT',type:'USER_INPUT',status:'DONE',created_at:'2026-10-28T12:00:00Z',content:'<USER_REQUEST>\nInitial\n</USER_REQUEST>'},
+    {step_index:2,source:'USER_EXPLICIT',type:'USER_INPUT',status:'DONE',created_at:'2026-10-28T12:00:01Z',content:'<USER_REQUEST>\nSteering\n</USER_REQUEST>'},
+    {step_index:3,source:'MODEL',type:'PLANNER_RESPONSE',status:'DONE',created_at:'2026-10-28T12:00:10Z',content:'Progress'},
+    {step_index:4,source:'MODEL',type:'PLANNER_RESPONSE',status:'DONE',created_at:'2026-10-28T12:00:20Z',content:'',tool_calls:[{name:'read_file'}]},
+    {step_index:5,source:'MODEL',type:'GENERIC',status:'DONE',created_at:'2026-10-28T12:00:25Z',content:'Private tool output'},
+    {step_index:6,source:'MODEL',type:'PLANNER_RESPONSE',status:'DONE',created_at:'2026-10-28T12:00:30Z',content:'Answer'},
+    {step_index:7,source:'USER_EXPLICIT',type:'USER_INPUT',status:'DONE',created_at:'2026-10-28T12:00:40Z',content:'<USER_REQUEST>\nNext\n</USER_REQUEST>'},
+  ];
+  const record={provider:'antigravity'} as SessionRecord;
+  const ids=rows.flatMap(value=>{const message=publicMessage(record,JSON.stringify(value),source);return message?[message.id]:[]});
+  const rounds=antigravityNativeRounds(rows.map(value=>JSON.stringify(value)),source);
+  assert.equal(rounds.length,1);assert.equal(rounds[0].outcome,'ended');assert.equal(rounds[0].workedMs,30000);
+  assert.deepEqual(rounds[0].messageIds,ids.slice(0,4));
+  const withTrailingTool=[...rows.slice(0,6),{step_index:7,source:'MODEL',type:'PLANNER_RESPONSE',status:'DONE',created_at:'2026-10-28T12:00:34Z',content:'',tool_calls:[{name:'run_command'}]}];
+  assert.equal(antigravityNativeRounds(withTrailingTool.map(value=>JSON.stringify(value)),source).length,0);
+});
+
+test('OpenCode and Kilo v1 rounds use parent-linked terminal assistant metadata',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ade-round-opencode-v1-')),file=path.join(dir,'kilo.db'),db=new DatabaseSync(file);
+  try{
+    db.exec('CREATE TABLE message(id TEXT,session_id TEXT,time_created INTEGER,data TEXT);CREATE TABLE part(message_id TEXT,session_id TEXT,data TEXT);');
+    const message=db.prepare('INSERT INTO message VALUES(?,?,?,?)'),part=db.prepare('INSERT INTO part VALUES(?,?,?)');
+    const add=(id:string,at:number,data:any,text:string)=>{message.run(id,'native',at,JSON.stringify(data));if(text)part.run(id,'native',JSON.stringify({type:'text',text}));};
+    add('u1',1793000000000,{role:'user',time:{created:1793000000000}},'Initial');
+    add('p1',1793000010000,{role:'assistant',parentID:'u1',time:{created:1793000010000,completed:1793000011000},finish:'tool-calls'},'Progress');
+    add('a1',1793000020000,{role:'assistant',parentID:'u1',time:{created:1793000020000,completed:1793000030000},finish:'stop'},'Answer');
+    add('u2',1793000040000,{role:'user',time:{created:1793000040000}},'Second');
+    add('p2',1793000050000,{role:'assistant',parentID:'u2',time:{created:1793000050000,completed:1793000051000},finish:'tool-calls'},'Still working');
+    add('u3',1793000060000,{role:'user',time:{created:1793000060000}},'Abort');
+    add('a3',1793000061000,{role:'assistant',parentID:'u3',time:{created:1793000061000,completed:1793000064000},error:{name:'MessageAbortedError'}},'Stopped');
+    const rounds=openCodeNativeRounds(file,'native','source');
+    assert.equal(rounds.length,2);assert.equal(rounds[0].outcome,'completed');assert.equal(rounds[0].workedMs,30000);assert.equal(rounds[0].messageIds?.length,3);
+    assert.equal(rounds[1].outcome,'ended');assert.equal(rounds[1].workedMs,4000);
+  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
+});
+
+test('OpenCode v2 rounds use native idle outcomes and include steering prompts',()=>{
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'ade-round-opencode-v2-')),file=path.join(dir,'opencode.db'),db=new DatabaseSync(file);
+  try{
+    db.exec('CREATE TABLE session_message(id TEXT,session_id TEXT,seq INTEGER,type TEXT,time_created INTEGER,data TEXT)');
+    const insert=db.prepare('INSERT INTO session_message VALUES(?,?,?,?,?,?)');
+    insert.run('u1','native',1,'user',1793000000000,JSON.stringify({text:'Initial',time:{created:1793000000000}}));
+    insert.run('p1','native',2,'assistant',1793000010000,JSON.stringify({content:[{type:'text',text:'Progress'}],time:{created:1793000010000,completed:1793000011000},finish:'tool-calls'}));
+    insert.run('u2','native',3,'user',1793000020000,JSON.stringify({text:'Steering',time:{created:1793000020000}}));
+    insert.run('a1','native',4,'assistant',1793000030000,JSON.stringify({content:[{type:'text',text:'Answer'}],time:{created:1793000030000,completed:1793000033000},finish:'stop'}));
+    insert.run('idle1','native',5,'idle',1793000034000,JSON.stringify({outcome:'succeeded',time:{created:1793000034000}}));
+    insert.run('u3','native',6,'user',1793000040000,JSON.stringify({text:'Stop',time:{created:1793000040000}}));
+    insert.run('a3','native',7,'assistant',1793000041000,JSON.stringify({content:[{type:'text',text:'Stopped'}],time:{created:1793000041000,completed:1793000044000},error:{name:'MessageAbortedError'}}));
+    insert.run('idle3','native',8,'idle',1793000045000,JSON.stringify({outcome:'interrupted',time:{created:1793000045000}}));
+    const rounds=openCodeV2NativeRounds(file,'native','source');
+    assert.equal(rounds.length,2);assert.equal(rounds[0].outcome,'completed');assert.equal(rounds[0].workedMs,34000);assert.equal(rounds[0].messageIds?.length,4);
+    assert.equal(rounds[1].outcome,'interrupted');assert.equal(rounds[1].workedMs,5000);
+  }finally{db.close();fs.rmSync(dir,{recursive:true,force:true});}
 });

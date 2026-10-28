@@ -15,7 +15,7 @@ import {stagedUserImages,readStagedUserImage,stripStagedImagePaths} from './stag
 import {publicRewindTarget,type NativeUserAnchor} from './providerRewind.js';
 import {forkClaudeBefore} from './claudeRewind.js';
 import {codeBuddyBranch} from './codeBuddyBranch.js';
-import {claudeNativeRounds,codexNativeRounds,mergeConversationRounds,nativeRoundRows} from './conversationRounds.js';
+import {antigravityNativeRounds,claudeNativeRounds,codeBuddyNativeRounds,codexNativeRounds,dshNativeRounds,mergeConversationRounds,nativeRoundRows,openCodeNativeRounds,openCodeV2NativeRounds} from './conversationRounds.js';
 import { parseAntigravityTranscriptLine, readAntigravityModel, readAntigravityToolActivity } from '../providers/antigravity.js';
 import { transcriptSettings, claudeLocalCommandEffort, claudeLocalCommandModel,stripAnsiCodes } from '../providers/shared.js';
 import { codeBuddyEffortAcknowledgement } from '../providers/codeBuddySettings.js';
@@ -245,9 +245,20 @@ export function publicMessage(record: SessionRecord, line: string, sourceIdentit
 export class AdeConversations {
   private roundCache=new Map<string,{stamp:string;rounds:import('../../shared/contracts.js').ConversationRound[]}>();
   private nativeRounds(record:SessionRecord,file:string,source:string,stat:fs.Stats){
-    if(!['claude','codex'].includes(record.provider))return [];
-    const stamp=`${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`,cached=this.roundCache.get(source);if(cached?.stamp===stamp)return cached.rounds;
-    const rows=nativeRoundRows(file,stat.size),rounds=(record.provider==='claude'?claudeNativeRounds:codexNativeRounds)(record.providerThreadId!,rows,source);
+    if(!['claude','codex','antigravity','codebuddy','dsh','opencode','opencode2','kilo'].includes(record.provider))return [];
+    let stamp=`${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
+    if(isOpenCode(record.provider))stamp+=[file+'-wal',file+'-shm'].map(candidate=>{try{const value=fs.statSync(candidate);return `:${value.size}:${value.mtimeMs}:${value.ctimeMs}`;}catch{return ':0';}}).join('');
+    const cached=this.roundCache.get(source);if(cached?.stamp===stamp)return cached.rounds;
+    let rounds:import('../../shared/contracts.js').ConversationRound[];
+    if(isOpenCode(record.provider))rounds=(record.provider==='opencode2'?openCodeV2NativeRounds:openCodeNativeRounds)(file,record.providerThreadId!,source);
+    else{
+      const rows=nativeRoundRows(file,stat.size),filtered=record.provider==='codebuddy'?rows.filter(line=>codeBuddyBranch(file,record.providerThreadId!).allows(line)):rows;
+      rounds=record.provider==='claude'?claudeNativeRounds(record.providerThreadId!,filtered,source)
+        :record.provider==='codex'?codexNativeRounds(record.providerThreadId!,filtered,source)
+          :record.provider==='antigravity'?antigravityNativeRounds(filtered,source)
+            :record.provider==='codebuddy'?codeBuddyNativeRounds(record.providerThreadId!,filtered,source)
+              :dshNativeRounds(record.providerThreadId!,filtered,source);
+    }
     if(this.roundCache.size>=32)this.roundCache.delete(this.roundCache.keys().next().value!);this.roundCache.set(source,{stamp,rounds});return rounds;
   }
   constructor(private directory = process.env.ADE_DATA_DIR || path.join(os.homedir(), '.ade'),private nativeRewindAvailable:(record:SessionRecord)=>boolean=()=>false,private savedRounds:(record:SessionRecord)=>import('../../shared/contracts.js').ConversationRound[]=()=>[]) {}

@@ -2,7 +2,9 @@ import type {AgentStatus,ConversationRound,Section} from '../../shared/contracts
 import type {AdeStore,SessionRecord} from './store.js';
 import {hashId,toIsoOrNull} from '../providers/transcriptUtils.js';
 import fs from 'node:fs';
+import {DatabaseSync} from 'node:sqlite';
 import {parseCoordinatorTranscriptLine} from '../providers/publicTranscript.js';
+import {parseAntigravityTranscriptLine} from '../providers/antigravity.js';
 
 /** Private native timing/parent-link window, independent of public page limits. */
 export function nativeRoundRows(file:string,end:number):string[]{
@@ -66,6 +68,192 @@ export function codexNativeRounds(sessionId:string,lines:string[],sourceIdentity
     }
   }catch{/* Partial native boundaries never settle a round. */}}
   return rounds.slice(-200);
+}
+
+const MAX_NATIVE_ROUND_MS=7*24*60*60*1000;
+function nativeRound(id:string,startedAt:string|null,endedAt:string|null,outcome:ConversationRound['outcome'],messageIds:string[]):ConversationRound|undefined{
+  if(!startedAt||!endedAt)return;
+  const duration=Date.parse(endedAt)-Date.parse(startedAt);
+  if(!Number.isFinite(duration)||duration<0||duration>MAX_NATIVE_ROUND_MS)return;
+  return {id,startedAt,endedAt,workedMs:duration,partial:false,outcome,measurement:'native-duration',...(messageIds.length?{messageIds:[...new Set(messageIds)].slice(-200)}:{})};
+}
+
+/** DSH's owned observer records exact turn boundaries before projecting public messages. */
+export function dshNativeRounds(sessionId:string,lines:string[],sourceIdentity?:string):ConversationRound[]{
+  const rounds:ConversationRound[]=[];let active:{turnId:string;startedAt:string;messages:string[]}|undefined;
+  for(const line of lines){try{
+    const row=JSON.parse(line),at=toIsoOrNull(row.timestamp);
+    if(sourceIdentity&&active&&row.type==='response_item'){
+      const message=parseCoordinatorTranscriptLine(line,'dsh',sourceIdentity).message;
+      if(message)active.messages.push(message.id);
+    }
+    if((row.type!=='turn_started'&&row.type!=='turn_ended')||typeof row.turnId!=='string'||!at)continue;
+    if(row.type==='turn_started'){
+      active={turnId:row.turnId,startedAt:at,messages:[]};
+      continue;
+    }
+    if(!active||active.turnId!==row.turnId)continue;
+    const kind=row.reason?.kind,outcome=kind==='completed'?'completed':kind==='error'?'failed':kind==='aborted'&&row.reason?.reason?.kind==='user'?'interrupted':'ended';
+    const round=nativeRound(hashId('round',`${sessionId}:dsh:${row.turnId}`),active.startedAt,at,outcome,active.messages);
+    if(round)rounds.push(round);
+    active=undefined;
+  }catch{/* An incomplete lifecycle row never settles a round. */}}
+  return rounds.slice(-200);
+}
+
+/** CodeBuddy request IDs group steering, tool activity and the terminal public reply. */
+export function codeBuddyNativeRounds(sessionId:string,lines:string[],sourceIdentity?:string):ConversationRound[]{
+  type Evidence={startedAt:string;messages:string[];lastAnswerAt?:string;lastAnswerStatus?:string;lastAnswerError?:string;toolAfterAnswer:boolean};
+  const groups=new Map<string,Evidence>();
+  for(const line of lines){try{
+    const row=JSON.parse(line);
+    if(row.sessionId!==sessionId||row.providerData?.skipRun===true||row.isSidechain||row._fromSubAgent)continue;
+    const requestId=row.providerData?.conversationRequestId;
+    if(typeof requestId!=='string'||!requestId||requestId.length>200)continue;
+    let evidence=groups.get(requestId);
+    const message=parseCoordinatorTranscriptLine(line,'codebuddy',sourceIdentity??'').message;
+    if(message?.role==='user'){
+      evidence??= {startedAt:message.at!,messages:[],toolAfterAnswer:false};
+      evidence.startedAt=evidence.startedAt<message.at!?evidence.startedAt:message.at!;
+      evidence.messages.push(message.id);
+    }else if(message?.role==='agent'&&message.text.trim()){
+      evidence??= {startedAt:message.at!,messages:[],toolAfterAnswer:false};
+      evidence.messages.push(message.id);evidence.lastAnswerAt=message.at??undefined;
+      evidence.lastAnswerStatus=typeof row.status==='string'?row.status:undefined;
+      evidence.lastAnswerError=typeof row.providerData?.error?.message==='string'?row.providerData.error.message:undefined;
+      evidence.toolAfterAnswer=false;
+    }else if(evidence&&['function_call','function_call_result'].includes(row.type))evidence.toolAfterAnswer=true;
+    if(evidence)groups.set(requestId,evidence);
+  }catch{/* Partial request records remain unsettled. */}}
+  return [...groups].flatMap(([requestId,evidence])=>{
+    if(!evidence.lastAnswerAt||evidence.toolAfterAnswer||!evidence.startedAt)return [];
+    const outcome=/interrupt/i.test(evidence.lastAnswerError??'')?'interrupted':evidence.lastAnswerError?'failed':evidence.lastAnswerStatus==='completed'?'completed':'ended';
+    const round=nativeRound(hashId('round',`${sessionId}:codebuddy:${requestId}`),evidence.startedAt,evidence.lastAnswerAt,outcome,evidence.messages);
+    return round?[round]:[];
+  }).slice(-200);
+}
+
+/** Antigravity closes a turn only after a final planner response with no later tool call. */
+export function antigravityNativeRounds(lines:string[],sourceIdentity?:string):ConversationRound[]{
+  const rounds:ConversationRound[]=[];
+  let active:{firstId:string;startedAt:string;messages:string[];answerAt?:string}|undefined;
+  const close=()=>{
+    if(!active?.answerAt)return;
+    const round=nativeRound(hashId('round',`antigravity:${sourceIdentity??''}:${active.firstId}`),active.startedAt,active.answerAt,'ended',active.messages);
+    if(round)rounds.push(round);
+  };
+  for(const line of lines){try{
+    const row=JSON.parse(line);
+    if(row.type==='USER_INPUT'){
+      const message=parseAntigravityTranscriptLine(line,sourceIdentity??'').message;
+      if(!message||message.role!=='user'||!message.at)continue;
+      if(active?.answerAt){close();active=undefined;}
+      active??={firstId:message.id,startedAt:message.at,messages:[]};
+      active.messages.push(message.id);
+      continue;
+    }
+    if(!active||row.type!=='PLANNER_RESPONSE')continue;
+    if(Array.isArray(row.tool_calls)&&row.tool_calls.length){
+      active.answerAt=undefined;
+      continue;
+    }
+    const message=parseAntigravityTranscriptLine(line,sourceIdentity??'').message;
+    if(message?.role==='agent'&&message.text.trim()&&message.at){
+      active.messages.push(message.id);active.answerAt=message.at;
+    }
+  }catch{/* Malformed native rows cannot settle a turn. */}}
+  close();
+  return rounds.slice(-200);
+}
+
+function openCodeV1HasText(db:DatabaseSync,sessionId:string):Set<string>{
+  return new Set((db.prepare(`SELECT DISTINCT message_id FROM (
+    SELECT rowid,message_id,data FROM part WHERE session_id=? AND length(CAST(data AS BLOB))<=2097152 ORDER BY rowid DESC LIMIT 4000
+  ) WHERE json_extract(data,'$.type')='text' AND COALESCE(json_extract(data,'$.synthetic'),0)=0`).all(sessionId) as any[])
+    .flatMap(row=>typeof row.message_id==='string'?[row.message_id]:[]));
+}
+
+/** OpenCode/Kilo v1 links assistant messages to the user message through parentID. */
+export function openCodeNativeRounds(file:string,sessionId:string,sourceIdentity?:string):ConversationRound[]{
+  const db=new DatabaseSync(file,{readOnly:true});
+  try{
+    const rows=db.prepare(`SELECT rowid,id,time_created,data FROM (
+      SELECT rowid,id,time_created,data FROM message WHERE session_id=? ORDER BY rowid DESC LIMIT 2000
+    ) ORDER BY rowid`).all(sessionId) as any[];
+    const hasText=openCodeV1HasText(db,sessionId),users=new Map<string,{at:string;id:string}>();
+    const assistants=new Map<string,Array<{id:string;at?:string;completedAt?:string;finish?:string;errorName?:string}>>();
+    for(const row of rows){
+      if(typeof row.id!=='string'||typeof row.data!=='string'||!hasText.has(row.id))continue;
+      let data:any;try{data=JSON.parse(row.data);}catch{continue;}
+      if(data.summary===true&&data.mode==='compaction')continue;
+      const at=toIsoOrNull(data.time?.created)??toIsoOrNull(row.time_created);
+      if(data.role==='user'&&at)users.set(row.id,{at,id:row.id});
+      else if(data.role==='assistant'&&typeof data.parentID==='string'){
+        const list=assistants.get(data.parentID)??[];
+        list.push({id:row.id,at:at??undefined,completedAt:toIsoOrNull(data.time?.completed)??undefined,finish:typeof data.finish==='string'?data.finish:undefined,errorName:typeof data.error?.name==='string'?data.error.name:undefined});
+        assistants.set(data.parentID,list);
+      }
+    }
+    return [...users].flatMap(([parentId,user])=>{
+      const linked=assistants.get(parentId);if(!linked?.length)return [];
+      const final=linked.at(-1)!;
+      if(final.finish==='tool-calls')return [];
+      const endedAt=final.completedAt??final.at;if(!endedAt)return [];
+      const outcome=final.errorName==='MessageAbortedError'?'ended':final.errorName?'failed':final.finish==='stop'?'completed':'ended';
+      const messageIds=[hashId('msg',`${sourceIdentity}:${user.id}`),...linked.map(item=>hashId('msg',`${sourceIdentity}:${item.id}`))];
+      const round=nativeRound(hashId('round',`${sessionId}:opencode:${parentId}`),user.at,endedAt,outcome,messageIds);
+      return round?[round]:[];
+    }).slice(-200);
+  }finally{db.close();}
+}
+
+function openCodeV2Text(data:any):string{
+  if(Array.isArray(data?.content))return data.content.flatMap((part:any)=>part?.type==='text'&&!part.synthetic&&typeof part.text==='string'?[part.text]:[]).join('\n').trim();
+  if(typeof data?.text==='string')return data.text.trim();
+  if(Array.isArray(data?.text))return data.text.filter((part:unknown)=>typeof part==='string').join('\n').trim();
+  return '';
+}
+
+/** OpenCode v2 records an idle row with the terminal outcome for each user turn. */
+export function openCodeV2NativeRounds(file:string,sessionId:string,sourceIdentity?:string):ConversationRound[]{
+  const db=new DatabaseSync(file,{readOnly:true});
+  try{
+    const rows=db.prepare(`SELECT seq,id,type,time_created,data FROM (
+      SELECT seq,id,type,time_created,data FROM session_message WHERE session_id=? ORDER BY seq DESC LIMIT 2000
+    ) ORDER BY seq`).all(sessionId) as any[];
+    const rounds:ConversationRound[]=[];
+    let active:{firstId:string;startedAt:string;messages:string[];lastAssistantAt?:string;lastAssistantFinish?:string;lastAssistantError?:string}|undefined;
+    const close=(endedAt:string|null,outcome:ConversationRound['outcome'])=>{
+      if(!active)return;
+      const round=nativeRound(hashId('round',`${sessionId}:opencode2:${active.firstId}`),active.startedAt,endedAt,outcome,active.messages);
+      if(round)rounds.push(round);
+      active=undefined;
+    };
+    for(const row of rows){
+      if(typeof row.data!=='string')continue;
+      let data:any;try{data=JSON.parse(row.data);}catch{continue;}
+      const at=toIsoOrNull(row.time_created)??toIsoOrNull(data.time?.created);
+      if(row.type==='user'){
+        if(data.synthetic||data.isMeta||data.isApiErrorMessage||!openCodeV2Text(data)||!at)continue;
+        active??={firstId:row.id,startedAt:at,messages:[]};
+        active.messages.push(hashId('msg',`${sourceIdentity}:${row.id}`));
+      }else if(row.type==='assistant'&&active){
+        if(data.synthetic||data.isMeta||data.isApiErrorMessage||!openCodeV2Text(data))continue;
+        active.messages.push(hashId('msg',`${sourceIdentity}:${row.id}`));
+        active.lastAssistantAt=toIsoOrNull(data.time?.completed)??at??undefined;
+        active.lastAssistantFinish=typeof data.finish==='string'?data.finish:undefined;
+        active.lastAssistantError=typeof data.error?.name==='string'?data.error.name:undefined;
+      }else if(row.type==='idle'&&active){
+        const outcome=data.outcome==='succeeded'?'completed':data.outcome==='interrupted'?'interrupted':data.outcome==='failed'?'failed':'ended';
+        close(at,outcome);
+      }
+    }
+    if(active?.lastAssistantAt&&active.lastAssistantFinish!=='tool-calls'){
+      const outcome=active.lastAssistantError==='MessageAbortedError'?'ended':active.lastAssistantError?'failed':active.lastAssistantFinish==='stop'?'completed':'ended';
+      close(active.lastAssistantAt,outcome);
+    }
+    return rounds.slice(-200);
+  }finally{db.close();}
 }
 
 /** Prefer explicit owned outcomes over overlapping native elapsed-duration records. */

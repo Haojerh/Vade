@@ -91,6 +91,10 @@ export function apply(ctx, config) {
     if(!Number.isSafeInteger(event.seq)||event.seq<0||projected.has(event.seq))return;
     projected.add(event.seq);if(projected.size>4000)projected.delete(projected.values().next().value);
     const data=event.data, timestamp=new Date(event.time).toISOString();
+    const turn=data?.turn;
+    const turnId=(typeof turn==='string'||typeof turn==='number')&&String(turn).length<=200?String(turn):String(event.seq);
+    if(event.type==='turn/start')transcript({type:'turn_started',timestamp,turnId});
+    else if(event.type==='turn/end')transcript({type:'turn_ended',timestamp,turnId,reason:data?.reason});
     if(event.type==='compaction/end'&&typeof data?.compactionId==='string'&&data.compactionId.length<=200&&!data.error)transcript({type:'compacted',timestamp,id:data.compactionId});
     if (event.type==='request/header' && data?.header?.config) {const config=data.header.config;transcript({type:'turn_context',payload:{model:safe(config.provider)&&safe(config.model)?config.provider+'/'+config.model:undefined,effort:config.reasoningEffort}});}
     const message=event.type==='user/message'?data:event.type==='assistant/message'?data?.message:null;
