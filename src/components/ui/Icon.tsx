@@ -1,8 +1,8 @@
 import React from 'react';
-import { FileText, FilePenLine, Wrench, ListChecks, SlidersHorizontal } from 'lucide-react';
+import { FileText, FilePenLine, Wrench, ListChecks, SlidersHorizontal, Gauge, Sparkles } from 'lucide-react';
 
 export type IconName =
-  | 'file-text' | 'file-edit' | 'wrench' | 'list-checks' | 'sliders-horizontal'
+  | 'file-text' | 'file-edit' | 'wrench' | 'list-checks' | 'sliders-horizontal' | 'gauge' | 'sparkles'
   | 'github'
   | 'phone'
   | 'users' | 'workflow' | 'download' | 'key' | 'puzzle' | 'play' | 'coffee' | 'plug' | 'copy'
@@ -64,7 +64,7 @@ export const Icon: React.FC<IconProps> = ({
   style,
   'aria-hidden': ariaHidden = true,
 }) => {
-  const NativeIcon = name === 'file-text' ? FileText : name === 'file-edit' ? FilePenLine : name === 'wrench' ? Wrench : name === 'list-checks' ? ListChecks : name==='sliders-horizontal'?SlidersHorizontal:null;
+  const NativeIcon = name === 'file-text' ? FileText : name === 'file-edit' ? FilePenLine : name === 'wrench' ? Wrench : name === 'list-checks' ? ListChecks : name==='sliders-horizontal'?SlidersHorizontal:name==='gauge'?Gauge:name==='sparkles'?Sparkles:null;
   if (NativeIcon) return <NativeIcon size={size} strokeWidth={strokeWidth} className={className} style={style} aria-hidden={ariaHidden} />;
   const renderPaths = () => {
     switch (name) {

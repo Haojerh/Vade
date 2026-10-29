@@ -12,6 +12,32 @@ test('Claude effort confirmation accepts the native saved-default acknowledgemen
   const native=await new ProviderChatControls().apply(options,{key:'effort',value:'low'},{...io,output:()=>'',write:async()=>{},settingConfirmed:()=>true});
   assert.equal(native.current.effort,'low','native confirmation survives wrapped or absent terminal acknowledgement text');
 });
+test('Claude confirmation reads the rendered screen when the raw stream splits the acknowledgement',async()=>{
+  const options={provider:'claude',transport:'terminal',models:[{id:'model',label:'Model',efforts:[{value:'low',label:'Low'},{value:'high',label:'High'}]}],current:{model:'model',effort:'high'},controls:{model:true,effort:true,fastMode:false,fastToggle:false,serviceTier:false,providerPicker:false}} as AgentChatOptions;
+  // Ink writes positioned fragments, so the byte stream never contains the sentence.
+  let output='',screen='',typed='';
+  const io={screen:()=>screen,output:()=>output,write:async(value:string)=>{
+    typed+=value;
+    if(value!=='\r')return;
+    output+='Set effort level to \u001b[1mlo\u001b[22m\u001b[3Gw\r\n';
+    screen='> /effort low\n  ⎿  Set effort level to low (saved as your default for new sessions): Quick implementation\n';
+  },waitFor:async(predicate:(screen:string)=>boolean)=>{assert.equal(predicate(screen),true);return screen;}};
+  const result=await new ProviderChatControls().apply(options,{key:'effort',value:'low'},io);
+  assert.equal(result.current.effort,'low');
+  // An older acknowledgement still visible above this command's echo cannot confirm it.
+  const staleScreen='> /effort low\n  ⎿  Set effort level to low (saved as your default for new sessions): Quick\n\n> /effort low\n';
+  const stale={...io,screen:()=>staleScreen,output:()=>'',write:async()=>{},waitFor:async(predicate:(screen:string)=>boolean)=>{assert.equal(predicate(staleScreen),false,'an earlier acknowledgement is not fresh evidence');throw Error('No fresh acknowledgement');}};
+  await assert.rejects(new ProviderChatControls().apply(options,{key:'effort',value:'low'},stale),/No fresh acknowledgement/);
+});
+
+test('Claude model confirmation accepts a rendered acknowledgement naming the chosen model',async()=>{
+  const options={provider:'claude',transport:'terminal',models:[{id:'model-a',label:'Model A',efforts:[]}],current:{},controls:{model:true,effort:false,fastMode:false,fastToggle:false,serviceTier:false,providerPicker:false}} as AgentChatOptions;
+  let screen='',output='';
+  const io={screen:()=>screen,output:()=>output,write:async(value:string)=>{if(value!=='\r')return;output='';screen='> /model model-a\n  ⎿  Set model to Model A\n';},waitFor:async(predicate:(screen:string)=>boolean)=>{assert.equal(predicate(screen),true);return screen;}};
+  const result=await new ProviderChatControls().apply(options,{key:'model',value:'model-a'},io);
+  assert.equal(result.current.model,'model-a');
+});
+
 import type { AgentChatOptions } from '../../shared/contracts.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import { AntigravityChatControls } from './antigravityChatControls.js';

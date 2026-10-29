@@ -9,11 +9,39 @@ function open(file: string): DatabaseSync {
   catch (error) { db.close(); throw error; }
 }
 
+/** Public content blocks for one tagged v2 message. Attachments are the provider's own
+ * recorded image bytes; the `[Image N]` placeholder stays for marker stripping. */
+function v2Content(message: any): any[] {
+  const text = Array.isArray(message.content) ? message.content.filter((part: any) => part?.type === 'text' && !part.synthetic && typeof part.text === 'string')
+    : typeof message.text === 'string' ? [{ type: 'text', text: message.text }]
+      : Array.isArray(message.text) ? message.text.filter((part: unknown) => typeof part === 'string').map((text: string) => ({ type: 'text', text })) : [];
+  const images = Array.isArray(message.files) ? message.files.flatMap((file: any) =>
+    typeof file?.data === 'string' && typeof file?.mime === 'string' && file.mime.startsWith('image/') && /^image\/[a-z]+$/.test(file.mime)
+      ? [{ type: 'input_image', image_url: `data:${file.mime};base64,${file.data}` }] : []) : [];
+  return [...text, ...images];
+}
+
+/** Rebuild the exact public row for one recorded v2 message cursor. */
+export function openCodeV2RecordedLine(file: string, session: string, seq: number): string | null {
+  const db = open(file);
+  try {
+    const row = db.prepare(`SELECT id, seq, type, time_created, CASE WHEN length(CAST(data AS BLOB)) <= 2097152 THEN data END AS data
+      FROM session_message WHERE session_id = ? AND seq = ?`).get(session, seq) as any;
+    if (typeof row?.data !== 'string' || !['user', 'assistant'].includes(String(row.type))) return null;
+    const message = JSON.parse(row.data);
+    if (message.synthetic || message.isMeta || message.isApiErrorMessage) return null;
+    const content = v2Content(message);
+    if (!content.some((part: any) => part.type === 'input_image' || part.text?.trim())) return null;
+    return JSON.stringify({ type: 'response_item', timestamp: new Date(Number(row.time_created)).toISOString(), payload: { type: 'message', role: row.type, id: row.id, content } });
+  } catch { return null; }
+  finally { db.close(); }
+}
+
 /** OpenCode 2 stores tagged messages inline, independently of the v1 part table. */
 export function readOpenCodeV2Page(file: string, session: string, offset: number | null, limit: number, direction?: 'older'): BoundedTranscriptReadResult {
   const db = open(file);
   try {
-    const backwards = offset === null || direction === 'older', lines: string[] = [];
+    const backwards = offset === null || direction === 'older', lines: string[] = [], offsets: number[] = [];
     let position = offset, bytes = 0, totalScanned = 0, newest = offset ?? 0;
     while (lines.length < limit && totalScanned < 10000) {
       const rows = db.prepare(`SELECT id, seq, type, time_created, CASE WHEN length(CAST(data AS BLOB)) <= 2097152 THEN data END AS data
@@ -30,20 +58,20 @@ export function readOpenCodeV2Page(file: string, session: string, offset: number
         if(row.type==='compaction'){
           if(message.status!=='completed')continue;
           lines.push(JSON.stringify({type:'compacted',id:row.id,timestamp:new Date(Number(row.time_created)).toISOString()}));
+          offsets.push(position);
           if(lines.length>=limit)break;
           continue;
         }
-        const content = Array.isArray(message.content) ? message.content.filter((part: any) => part?.type === 'text' && !part.synthetic && typeof part.text === 'string')
-          : typeof message.text === 'string' ? [{ type: 'text', text: message.text }]
-            : Array.isArray(message.text) ? message.text.filter((part: unknown) => typeof part === 'string').map((text: string) => ({ type: 'text', text })) : [];
-        if (!content.some((part: any) => part.text.trim())) continue;
+        const content = v2Content(message);
+        if (!content.some((part: any) => part.type === 'input_image' || part.text?.trim())) continue;
         lines.push(JSON.stringify({ type: 'response_item', timestamp: new Date(Number(row.time_created)).toISOString(), payload: { type: 'message', role: row.type, id: row.id, content } }));
+        offsets.push(position);
         if (lines.length >= limit) break;
       }
     }
     const more = position !== null && Boolean(db.prepare(`SELECT 1 FROM session_message WHERE session_id = ? AND seq ${backwards ? '<' : '>'} ? LIMIT 1`).get(session, position));
-    if (backwards) lines.reverse();
-    return { lines, totalScanned, nextByteOffset: direction === 'older' ? position ?? 0 : newest, hasMore: direction === 'older' ? more : !backwards && more, limited: backwards && more };
+    if (backwards) { lines.reverse(); offsets.reverse(); }
+    return { lines, offsets, totalScanned, nextByteOffset: direction === 'older' ? position ?? 0 : newest, hasMore: direction === 'older' ? more : !backwards && more, limited: backwards && more };
   } finally { db.close(); }
 }
 

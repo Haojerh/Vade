@@ -44,9 +44,14 @@ export function groupSettledRounds(entries:ConversationTimelineEntry[],rounds:Co
     let next=index+1;while(next<entries.length&&!(entries[next].kind==='message'&&(entries[next] as Extract<ConversationTimelineEntry,{kind:'message'}>).message.role==='user'))next++;
     const nextAt=next<entries.length?at(entries[next].at):Infinity,userAt=at(user.at);
     const previousUser=entries.slice(0,index).reverse().find(entry=>entry.kind==='message'&&entry.message.role==='user');
-    const round=rounds.filter(round=>at(round.endedAt)>=userAt&&at(round.endedAt)<nextAt&&(!previousUser||at(previousUser.at)<at(round.startedAt))).at(-1);
-    result.push(user);
     const body=entries.slice(index+1,next);
+    // A settlement describes this turn only while it began before the turn's last visible
+    // record. Native turn starts can precede the recorded prompt by a fraction of a second,
+    // so no lower bound is applied; an unrelated round from another day still cannot claim
+    // this turn because it would have to begin after that last record.
+    const lastBodyAt=body.reduce((latest,entry)=>{const value=time(entry);return Number.isFinite(value)&&value>latest?value:latest;},userAt);
+    const round=rounds.filter(round=>at(round.endedAt)>=userAt&&at(round.endedAt)<nextAt&&at(round.startedAt)<=lastBodyAt&&(!previousUser||at(previousUser.at)<at(round.startedAt))).at(-1);
+    result.push(user);
     if(!round||!Number.isFinite(userAt)||active&&next===entries.length){result.push(...body);index=next;continue;}
     const settled=body.filter(entry=>Number.isFinite(time(entry))&&time(entry)<=at(round.endedAt));
     const answer=[...settled].reverse().find(entry=>entry.kind==='message'&&!entry.message.kind&&entry.message.role==='agent'&&entry.message.text.trim());

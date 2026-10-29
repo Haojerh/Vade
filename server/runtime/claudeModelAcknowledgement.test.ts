@@ -36,6 +36,28 @@ test('Claude setting confirmation accepts a fresh row whose timestamp is rounded
   }finally{if(previous===undefined)delete process.env.CLAUDE_CONFIG_DIR;else process.env.CLAUDE_CONFIG_DIR=previous;fs.rmSync(root,{recursive:true,force:true});}
 });
 
+test('Claude records its model acknowledgement without arguments, which still confirms the named model',()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'ade-claude-confirm-args-')),previous=process.env.CLAUDE_CONFIG_DIR;
+  try{
+    const id='22222222-3333-4444-8555-666666666666',cwd=path.join(root,'work'),project=path.join(root,'projects','encoded');fs.mkdirSync(cwd);fs.mkdirSync(project,{recursive:true});process.env.CLAUDE_CONFIG_DIR=root;
+    const file=path.join(project,id+'.jsonl'),record={provider:'claude',providerThreadId:id,cwd} as SessionRecord;
+    fs.writeFileSync(file,JSON.stringify({type:'user',sessionId:id,cwd,uuid:'seed',timestamp:'2026-10-29T08:00:00Z',message:{role:'user',content:[{type:'text',text:'hi'}]}})+'\n');
+    const confirm=claudeSettingConfirmation(record,{key:'model',value:'native-glm'},label)!;
+    const append=(args:string,content:string)=>fs.appendFileSync(file,JSON.stringify({type:'system',subtype:'local_command',sessionId:id,cwd,timestamp:new Date().toISOString(),commandRun:{command:'model',args},content})+'\n');
+    // An unrelated model keeps waiting, even with the provider's empty argument list.
+    append('','<local-command-stdout>Set model to `Other model`</local-command-stdout>');
+    assert.equal(confirm(),false);
+    append('','<local-command-stdout>Set model to `'+label+'`</local-command-stdout>');
+    assert.equal(confirm(),true,'the acknowledgement names the selected model without recording its argument');
+    // A recorded argument still has to be the requested one: a mismatched row alone never confirms.
+    const other=path.join(project,'99999999-3333-4444-8555-666666666666.jsonl');
+    fs.writeFileSync(other,JSON.stringify({type:'user',sessionId:'99999999-3333-4444-8555-666666666666',cwd,uuid:'seed',timestamp:'2026-10-29T08:00:00Z',message:{role:'user',content:[{type:'text',text:'hi'}]}})+'\n');
+    const strict=claudeSettingConfirmation({...record,providerThreadId:'99999999-3333-4444-8555-666666666666'},{key:'model',value:'native-glm'},label)!;
+    fs.appendFileSync(other,JSON.stringify({type:'system',subtype:'local_command',sessionId:'99999999-3333-4444-8555-666666666666',cwd,timestamp:new Date().toISOString(),commandRun:{command:'model',args:'different-model'},content:'<local-command-stdout>Set model to `'+label+'`</local-command-stdout>'})+'\n');
+    assert.equal(strict(),false);
+  }finally{if(previous===undefined)delete process.env.CLAUDE_CONFIG_DIR;else process.env.CLAUDE_CONFIG_DIR=previous;fs.rmSync(root,{recursive:true,force:true});}
+});
+
 test('Claude native kept-model acknowledgements provide metadata while public prose and private rows do not',()=>{
   assert.equal(claudeLocalCommandModel(acknowledgement),label);
   assert.equal(claudeLocalCommandModel({...acknowledgement,commandRun:{command:'other'}}),undefined);

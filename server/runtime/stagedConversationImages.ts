@@ -3,31 +3,63 @@ import path from 'node:path';
 import type {ConversationImage} from '../../shared/contracts.js';
 import {MAX_ATTACHMENT_BYTES} from '../../shared/contracts.js';
 import {conversationImageId,MAX_MESSAGE_IMAGES,recordedImageMimeType} from '../providers/conversationImages.js';
-import {publicTranscriptRecord} from '../providers/shared.js';
+import {parseCoordinatorTranscriptLine} from '../providers/publicTranscript.js';
+import {parseAntigravityTranscriptLine} from '../providers/antigravity.js';
 
 /** Only direct UUID files created by the backend attachment store are eligible.
  * Transcript paths elsewhere on the host are never read or sent to the browser. */
-function references(provider:string,line:string,root:string):{file:string;text:string}[]{
-  if(!['codex','claude'].includes(provider))return [];
+const OWNED_ATTACHMENT=/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}\.(?:png|jpg|gif|webp)$/i;
+/** A provider records the staged reference however its own composer rendered it:
+ * a bare path (Codex), an `@` file mention (Antigravity, DSH, CodeBuddy) or a quoted
+ * path. Only the bounded token itself is removed from the public text. */
+const TOKEN_END=/[\s"'<>()[\]{},;|]+/;
+
+export interface StagedReference{file:string;tokens:string[]}
+
+function normalize(value:string):string{return value.replaceAll('\\','/');}
+
+/** Public user text for one recorded row, using the same parser as chat projection. */
+export function stagedUserText(provider:string,line:string):string{
   try{
-    const raw=JSON.parse(line),record=publicTranscriptRecord(line,provider);
-    if(record?.payload?.role!=='user'||raw.message?.content?.some?.((block:any)=>['tool_result','tool_use'].includes(block?.type)))return [];
-    const prefix=path.resolve(root).replaceAll('\\','/').replace(/\/$/,'')+'/';
-    const found:{file:string;text:string}[]=[];
-    for(const block of record.payload.content??[]){
-      if(!['input_text','text'].includes(block?.type)||typeof block.text!=='string')continue;
-      for(const text of block.text.split(/\r?\n/)){
-        const trimmed=text.trim(),reference=trimmed.replace(/^"([^"\n]+)"$|^'([^'\n]+)'$/,'$1$2').replaceAll('\\','/');
-        const starts=process.platform==='win32'?reference.toLowerCase().startsWith(prefix.toLowerCase()):reference.startsWith(prefix);
-        if(!starts)continue;
-        const name=reference.slice(prefix.length);
-        if(!/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}\.(?:png|jpg|gif|webp)$/.test(name)||found.some(item=>item.file===path.join(root,name)))continue;
-        found.push({file:path.join(root,name),text:trimmed});
-        if(found.length>=MAX_MESSAGE_IMAGES)return found;
-      }
-    }
-    return found;
-  }catch{return [];}
+    if(provider==='antigravity')return parseAntigravityTranscriptLine(line,'staged').message?.text??'';
+    const message=parseCoordinatorTranscriptLine(line,provider,'staged').message;
+    return message?.role==='user'?message.text:'';
+  }catch{return '';}
+}
+
+/** Ordered staged attachment references recorded inside one public user turn.
+ * `tokens` are the exact recorded text spans, so a preview can replace them in place. */
+export function stagedReferences(text:string,root:string):StagedReference[]{
+  if(!text)return [];
+  const normalized=normalize(text);
+  const prefix=normalize(path.resolve(root)).replace(/\/$/,'')+'/';
+  const caseInsensitive=process.platform==='win32';
+  const haystack=caseInsensitive?normalized.toLowerCase():normalized;
+  const needle=caseInsensitive?prefix.toLowerCase():prefix;
+  const found:StagedReference[]=[];
+  let from=0,scanned=0;
+  while(found.length<MAX_MESSAGE_IMAGES&&scanned++<32){
+    const at=haystack.indexOf(needle,from);
+    if(at<0)break;
+    from=at+needle.length;
+    const remainder=normalized.slice(from,from+128);
+    const stop=remainder.search(TOKEN_END);
+    const raw=stop<0?remainder:remainder.slice(0,stop);
+    // Sentence punctuation can follow a bare recorded path; it is not part of the name.
+    const name=raw.replace(/[.,:;!?]+$/,'');
+    if(!OWNED_ATTACHMENT.test(name))continue;
+    const file=path.join(root,name);
+    // The `@` that marks a file mention belongs to the reference, not the prose.
+    let start=at>0&&normalized[at-1]==='@'?at-1:at;
+    let end=from+name.length;
+    // A quoted reference is one recorded token; keep the pair out of the prose.
+    const quote=normalized[start-1];
+    if((quote==='"'||quote==="'")&&normalized[end]===quote){start-=1;end+=1;}
+    const token=text.slice(start,end);
+    const existing=found.find(item=>item.file===file);
+    if(existing)existing.tokens.push(token);else found.push({file,tokens:[token]});
+  }
+  return found;
 }
 
 function readOwnedImage(root:string,file:string):{mimeType:string;bytes:Buffer}|null{
@@ -48,23 +80,35 @@ function readOwnedImage(root:string,file:string):{mimeType:string;bytes:Buffer}|
   finally{if(fd!==undefined)fs.closeSync(fd);}
 }
 
-export function stagedUserImages(provider:string,line:string,root:string,source:string,offset:number):{images:ConversationImage[];paths:string[]} {
-  const images:ConversationImage[]=[],paths:string[]=[];
-  for(const [index,reference] of references(provider,line,root).entries()){
+export function stagedImagesFromText(text:string,root:string,source:string,offset:number):{images:ConversationImage[];tokens:string[][]} {
+  const images:ConversationImage[]=[],tokens:string[][]=[];
+  for(const [index,reference] of stagedReferences(text,root).entries()){
     const image=readOwnedImage(root,reference.file);if(!image)continue;
     images.push({id:conversationImageId(source,offset,index,image.bytes.toString('base64')),mimeType:image.mimeType,bytes:image.bytes.length});
-    paths.push(reference.text);
+    tokens.push(reference.tokens);
   }
-  return {images,paths};
+  return {images,tokens};
+}
+
+export function stagedUserImages(provider:string,line:string,root:string,source:string,offset:number):{images:ConversationImage[];tokens:string[][]} {
+  return stagedImagesFromText(stagedUserText(provider,line),root,source,offset);
 }
 
 export function readStagedUserImage(provider:string,line:string,root:string,index:number):{mimeType:string;bytes:Buffer}|null{
-  const reference=references(provider,line,root)[index];
+  const reference=stagedReferences(stagedUserText(provider,line),root)[index];
   return reference?readOwnedImage(root,reference.file):null;
 }
 
-export function stripStagedImagePaths(text:string,paths:readonly string[]):string{
-  if(!paths.length)return text;
-  const removed=new Set(paths);
-  return text.split(/\r?\n/).filter(line=>!removed.has(line.trim())).join('\n').trim();
+/** Remove the exact recorded reference tokens so a rendered preview leaves no path
+ * (and no dangling `@`) behind. Ordinary prose is preserved verbatim. */
+export function stripStagedImageTokens(text:string,tokens:readonly string[]):string{
+  if(!tokens.length)return text;
+  let result=text;
+  for(const token of tokens){
+    if(!token)continue;
+    const at=result.indexOf(token);
+    if(at<0)continue;
+    result=result.slice(0,at)+result.slice(at+token.length);
+  }
+  return result.replace(/[ \t]+$/gm,'').replace(/\n{3,}/g,'\n\n').trim();
 }

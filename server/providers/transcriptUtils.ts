@@ -61,6 +61,9 @@ const INJECTED_USER_PREFIXES = [
   '<multi_agent_mode>',
   '# AGENTS.md instructions',
   '<skill>',
+  // CodeBuddy records its own tool hints (including staged attachment paths) as a
+  // user-role reminder; it is bookkeeping, never a public turn.
+  '<system-reminder',
 ];
 
 export function isSystemInjectedUserText(trimmed: string, includeUserSettingsChange = false): boolean {

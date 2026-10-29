@@ -51,3 +51,13 @@ The other adapters use the same native discovery methods as the
 support come from those provider responses. Codex native menu selection and
 `/fast` were checked in an owned PTY. Claude catalog discovery was checked, while
 its native trust prompt was preserved and interactive mutation remains unverified.
+
+Claude acknowledges `/model` and `/effort` in its rendered transcript rather than a
+contiguous byte stream, and its Ink renderer can emit one acknowledgement in several
+positioned writes. A setting is therefore confirmed from the rendered screen *below
+that command's own echo*, so an older acknowledgement still visible above it can never
+confirm a new request. A recorded `system/local_command` row is still accepted, and
+Claude records it with an empty argument list, so the acknowledged model — not the
+absent argument — must name the requested model or its catalog label. `Kept model as`
+names the model Claude kept; when it names a different model it never confirms a new
+selection.

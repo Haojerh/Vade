@@ -68,3 +68,19 @@ test('queued user messages and incomplete history do not invent round ownership'
   const late:ConversationTimelineEntry={kind:'tools',id:'late',at:iso(36),tools:[{...tools[0],id:'late',at:iso(36)}]};
   const result=groupSettledRounds([...entries().slice(0,-1),late,entries().at(-1)!],[round]);assert.ok(result.some(entry=>entry.id==='late'&&entry.kind==='tools'),'unsettled trailing activity remains outside the fold');
 });
+
+test('a settlement only claims the turn it followed, never an older or later one',()=>{
+  const older=[message('user','user',0),message('answer','agent',30)];
+  const timeline=()=>groupConversationTimeline(conversationTimeline(older,tools,false));
+  // A round recorded on a later day (for example after resuming the session elsewhere)
+  // must not fold an older turn's activity into a settlement it never had.
+  const laterDay={...round,id:'later-day',startedAt:'2026-10-29T09:19:03.346Z',endedAt:'2026-10-29T09:19:05.356Z',workedMs:2010,partial:true};
+  assert.ok(!groupSettledRounds(timeline(),[laterDay]).some(entry=>entry.kind==='round'));
+  // A settlement that starts after this turn's last visible record is not this turn's.
+  const afterBody={...round,id:'after',startedAt:iso(45),endedAt:iso(50)};
+  assert.ok(!groupSettledRounds(timeline(),[afterBody]).some(entry=>entry.kind==='round'));
+  // Native turn starts can precede the recorded prompt slightly; that still matches.
+  const slightlyEarly={...round,id:'early',startedAt:iso(-1),endedAt:iso(35)};
+  assert.ok(groupSettledRounds(timeline(),[slightlyEarly]).some(entry=>entry.kind==='round'));
+  assert.ok(groupSettledRounds(timeline(),[round]).some(entry=>entry.kind==='round'),'the matching settlement still folds');
+});

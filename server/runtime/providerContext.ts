@@ -37,6 +37,9 @@ export function readDatabaseContext(record: SessionRecord, file: string): AgentC
       : db.prepare(`SELECT time_created, CASE WHEN length(CAST(data AS BLOB)) <= 262144 THEN data END AS data FROM message WHERE session_id = ? ORDER BY rowid DESC LIMIT 20`).all(record.providerThreadId);
     let bytes = 0;
     let selectedModel: string | null = null;
+    // A failed or aborted request is not a measurement. Skip it and fall back to the
+    // newest request that actually reported usage for the same model, labelled as such.
+    let skippedUnmeasured = false;
     const modelId = (message: any): string | null => {
       const model = message?.model;
       const id = message?.modelID ?? message?.modelId ?? model?.modelID ?? model?.id;
@@ -62,13 +65,18 @@ export function readDatabaseContext(record: SessionRecord, file: string): AgentC
       if (selectedModel && measuredModel && selectedModel !== measuredModel) return unknown('The model changed; context will update after its next request.');
       const tokens = message.tokens;
       const input = count(tokens?.input), output = count(tokens?.output), read = count(tokens?.cache?.read), write = count(tokens?.cache?.write);
-      // A missing/zero latest request must not resurrect an earlier model's usage.
-      if (input === null || output === null || tokens?.cache?.read !== undefined && read === null || tokens?.cache?.write !== undefined && write === null) return unknown('The latest native request has not reported token usage yet.');
+      // An aborted request, or one that never reported tokens, is not a measurement.
+      if (message.error !== undefined || input === null || output === null || tokens?.cache?.read !== undefined && read === null || tokens?.cache?.write !== undefined && write === null) { skippedUnmeasured = true; continue; }
       const used = input + (read ?? 0) + (write ?? 0);
-      if (!Number.isSafeInteger(used) || used <= 0) return unknown('The latest native request has not reported token usage yet.');
-      return { usedTokens: used, windowTokens: null, ...(measuredModel ? { model: measuredModel } : {}), inputTokens: input, outputTokens: output, ...(read !== null ? { cacheReadTokens: read } : {}), ...(write !== null ? { cacheWriteTokens: write } : {}), observedAt: toIsoOrNull(message.time?.completed ?? message.time?.created ?? row.time_created), source: 'Native session database', measurement: 'last-request', reason: 'The native history records request input usage, but does not report the model context limit.' };
+      if (!Number.isSafeInteger(used) || used <= 0) { skippedUnmeasured = true; continue; }
+      return { usedTokens: used, windowTokens: null, ...(measuredModel ? { model: measuredModel } : {}), inputTokens: input, outputTokens: output, ...(read !== null ? { cacheReadTokens: read } : {}), ...(write !== null ? { cacheWriteTokens: write } : {}), observedAt: toIsoOrNull(message.time?.completed ?? message.time?.created ?? row.time_created), source: 'Native session database', measurement: 'last-request',
+        reason: skippedUnmeasured
+          ? 'The latest native request reported no token usage; showing the most recent request that did. The native history does not report the model context limit.'
+          : 'The native history records request input usage, but does not report the model context limit.' };
     }
-    return unknown('No model request has reported context usage in this session yet.');
+    return unknown(skippedUnmeasured
+      ? 'Recent native requests reported no token usage; context will update after the next completed request.'
+      : 'No model request has reported context usage in this session yet.');
   } catch { return unknown('Context measurements are unavailable for this native session format.'); }
   finally { db?.close(); }
 }

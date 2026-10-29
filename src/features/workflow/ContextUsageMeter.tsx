@@ -12,12 +12,24 @@ export function formatContextTokens(count: number | null | undefined): string {
   if (count == null) return 'Unknown';
   return count >= 1e6 ? `${Number((count / 1e6).toFixed(1))}m` : count >= 1e3 ? `${Number((count / 1e3).toFixed(1))}k` : String(count);
 }
+/** Providers whose native history can report context. An unknown reading still renders an
+ *  explicit `?` ring with its reason instead of disappearing from the composer. */
+const CONTEXT_PROVIDERS = new Set(['opencode', 'opencode2', 'kilo', 'kilocode', 'codebuddy', 'dsh', 'codex', 'claude', 'antigravity']);
 
-export function ContextUsageMeter({ usage: observed, projectId, nodeId, runId, provider }: { usage?: AgentContextUsage; projectId: string; nodeId: string; runId: string | null; provider: string | null }) {
+export function ContextUsageMeter({ usage: observed, projectId, nodeId, runId, provider, openRequest, onOpenRequestHandled }: { usage?: AgentContextUsage; projectId: string; nodeId: string; runId: string | null; provider: string | null; openRequest?: number | null; onOpenRequestHandled?: () => void }) {
   const trigger = useRef<HTMLButtonElement>(null), content = useRef<HTMLDivElement>(null), timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const card = useConfirmationState();
+  const handledOpenRequest = useRef(0);
   const [catalogWindow, setCatalogWindow] = useState<{ model: string; tokens: number } | null>(null);
   const [catalogLoading, setCatalogLoading] = useState(false);
+  useEffect(() => {
+    // A `/context` composer command opens the same card the ring trigger does.
+    if (!openRequest || openRequest === handledOpenRequest.current) return;
+    handledOpenRequest.current = openRequest;
+    clearTimeout(timer.current);
+    card.open();
+    onOpenRequestHandled?.();
+  }, [openRequest, card.open, onOpenRequestHandled]);
   useEffect(() => {
     if (observed?.usedTokens == null) { clearTimeout(timer.current); card.reset(); }
   }, [observed?.usedTokens == null, card.reset]);
@@ -44,7 +56,7 @@ export function ContextUsageMeter({ usage: observed, projectId, nodeId, runId, p
   const rows = [
     [usage?.cacheAccounting === 'included-in-input' ? 'Input (includes cache)' : usage?.cacheAccounting === 'separate' ? 'Uncached input' : 'Input', usage?.inputTokens], ['Cache read', usage?.cacheReadTokens], ['Cache write', usage?.cacheWriteTokens], ['Output', usage?.outputTokens],
   ] as const;
-  if (usage?.usedTokens == null) return null;
+  if (usage?.usedTokens == null && !CONTEXT_PROVIDERS.has(provider ?? '')) return null;
   return <div className="context-usage-control">
     <button ref={trigger} type="button" className={`context-usage-trigger${percent !== null && percent >= 90 ? ' is-critical' : ''}${percent === null ? ' is-unknown' : ''}`} aria-label={label} aria-expanded={card.present && !card.closing} aria-haspopup="dialog"
       onPointerEnter={event => { if (event.pointerType === 'mouse') hover(true); }} onPointerLeave={event => { if (event.pointerType === 'mouse') { if (event.relatedTarget instanceof globalThis.Node && content.current?.contains(event.relatedTarget)) clear(); else hover(false); } }}
@@ -55,6 +67,7 @@ export function ContextUsageMeter({ usage: observed, projectId, nodeId, runId, p
       onPointerEnter={clear} onPointerLeave={event => { if (event.pointerType === 'mouse') { if (event.relatedTarget instanceof globalThis.Node && trigger.current?.contains(event.relatedTarget)) clear(); else hover(false); } }}>
       <div className="context-usage-heading"><strong>Context</strong><span title={usage?.usedTokens != null ? `${usage.usedTokens.toLocaleString()} / ${usage.windowTokens?.toLocaleString() ?? 'unknown capacity'} tokens` : undefined}>{used}{usage?.windowTokens != null ? ` / ${total}` : ''}</span></div>
       {percent !== null && <><div className="context-usage-progress" role="progressbar" aria-label="Context used" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(filled)} aria-valuetext={`${Math.round(percent)}% used`}><span style={{ width: `${filled}%` }} /></div><p className="context-usage-remaining">{Math.round(percent)}% used · {Math.max(0, usage!.windowTokens! - usage!.usedTokens!).toLocaleString()} tokens remaining</p></>}
+      {usage?.autoCompactAtTokens != null && usage.autoCompactAtTokens !== usage.windowTokens && <p className="context-usage-remaining">Auto-compacts at {formatContextTokens(usage.autoCompactAtTokens)} tokens</p>}
       {rows.some(([, value]) => value != null) && <dl className="context-usage-breakdown">{rows.filter(([, value]) => value != null).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{value!.toLocaleString()}</dd></div>)}</dl>}
       <p className="context-usage-note">{usage?.reason ?? (usage?.usedTokens == null ? 'No native context reading is available yet.' : usage.windowTokens == null ? 'The provider reports token usage but has not reported this model’s context capacity.' : usage.estimated ? 'Provider estimate from the latest native context record.' : usage.measurement === 'last-request' ? 'Measured from the last native request. Context may change before the next request.' : 'Latest context measurement reported by the provider.')}</p>
       {catalogLoading && <p className="context-usage-note" role="status">Reading native model capacity…</p>}

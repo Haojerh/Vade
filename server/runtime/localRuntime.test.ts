@@ -725,6 +725,20 @@ test('Claude legacy idle notifications clear only at an empty native composer, w
   }finally{screen.dispose();}
 });
 
+test('Codex image chips are counted only in the current composer row', async () => {
+  const screen = new TerminalScreen(() => {}, () => {});
+  try {
+    screen.write('\x1b[2J\x1b[H\u203a \x1b[1;3H'); await screen.settled();
+    assert.equal(screen.codexComposerImageCount(), 0);
+    // A converted paste renders one chip per attached image.
+    screen.write('\x1b[2J\x1b[H\u203a [Image #1] [Image #2] fix it\x1b[1;28H'); await screen.settled();
+    assert.equal(screen.codexComposerImageCount(), 2);
+    // A transcript row above the composer is not a pending attachment.
+    screen.write('\x1b[2J\x1b[H\u203a [Image #9] old turn\r\n\u203a draft\x1b[2;8H'); await screen.settled();
+    assert.equal(screen.codexComposerImageCount(), 0);
+  } finally { screen.dispose(); }
+});
+
 test('Antigravity identity hook preserves user hooks and captures only its authenticated session ID', () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-hook-test-'));
   try {
@@ -1389,4 +1403,45 @@ test('chat controls distinguish native placeholders, typed drafts and Antigravit
     await write('\x1b[2K\r> typed draft\r\x1b[2C');
     assert.equal(screen.composerEmpty(true), false);
   } finally { screen.dispose(); }
+});
+
+test('compaction types the provider command once, requires a fresh acknowledgement and stays fenced', async () => {
+  const f = fixture();
+  const log = path.join(f.directory, 'compact-input.log');
+  // A minimal Claude-like prompt: `> ` is the empty native composer, and only the
+  // provider's own acknowledgement text is emitted after the command.
+  const script = String.raw`const fs=require('node:fs');
+process.stdout.write('\x1b[2J\x1b[Hclaude ready\r\n> ');
+process.stdin.on('data',data=>{const text=data.toString();
+  try{fs.appendFileSync(${JSON.stringify(log)},text);}catch{}
+  if(text.includes('/compact'))process.stdout.write('\r\n  Compacting conversation…');});`;
+  const sessions = new AdeSessions(f.runtime.store, () => ({ executable: process.execPath, args: ['-e', script, '--'] }), async () => '11234567-1234-1234-1234-123456789abc', undefined, () => {});
+  const deadline = async (condition: () => boolean) => {
+    const until = Date.now() + 10000;
+    while (!condition()) {
+      if (Date.now() > until) throw new Error('PTY did not reach the expected state');
+      await new Promise(resolve => setTimeout(resolve, 40));
+    }
+  };
+  try {
+    const project = await f.runtime.git.register(f.repo);
+    const tree = (await f.runtime.git.worktrees(project))[0];
+    const record = await sessions.launch(project.id, tree.id, tree.path, 'claude');
+    await deadline(() => sessions.page(project.id, record.id).data.includes('claude ready'));
+    await deadline(() => sessions.preview(project.id, record.id).output?.trimEnd().endsWith('>') === true);
+    const result = await sessions.compact(project.id, record.id);
+    assert.equal(result.ok, true);
+    assert.match(result.message ?? '', /Compaction started/);
+    // The exact native command was typed once, followed by a single submission
+    // (the PTY line discipline reports the Enter as CRLF).
+    await deadline(() => fs.existsSync(log) && fs.readFileSync(log, 'utf8').includes('\r'));
+    assert.equal(fs.readFileSync(log, 'utf8').replace(/\r\n/g, '\r'), '/compact\r');
+    // A provider without a verified command is rejected before any input is written;
+    // the capability table itself is covered by providerCompaction.test.ts.
+    // A typed draft blocks compaction instead of being overwritten.
+    await sessions.input(project.id, record.id, 'draft');
+    await deadline(() => sessions.preview(project.id, record.id).output?.includes('draft') === true);
+    await assert.rejects(() => sessions.compact(project.id, record.id), /Clear the draft|empty agent prompt/);
+    assert.equal(fs.readFileSync(log, 'utf8').replace(/\r\n/g, '\r'), '/compact\r', 'a refused compaction writes nothing');
+  } finally { sessions.close(); f.runtime.close(); await fs.promises.rm(f.directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); }
 });

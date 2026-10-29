@@ -27,3 +27,15 @@
   .agent-settings-popover, .agent-settings-popover.is-closing { transform: none; transition: opacity 100ms var(--ease-out); }
   @starting-style { .agent-settings-popover:popover-open { transform: none; } }
 }
+
+/* A `/model` or `/effort` composer command marks the section it opened for. */
+.agent-settings-models.is-highlighted, .agent-chat-option-row.is-highlighted { animation: composer-section-highlight 2s var(--ease-out); }
+.agent-settings-models.is-highlighted { background: var(--accent-surface); border-radius: 10px; }
+.agent-chat-option-row.is-highlighted { background: var(--accent-surface); }
+@keyframes composer-section-highlight {
+  0%, 55% { box-shadow: inset 0 0 0 2px var(--focus-ring); }
+  100% { box-shadow: inset 0 0 0 2px transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .agent-settings-models.is-highlighted, .agent-chat-option-row.is-highlighted { animation: none; box-shadow: inset 0 0 0 2px var(--focus-ring); }
+}

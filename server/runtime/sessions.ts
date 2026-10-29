@@ -22,6 +22,7 @@ import { codeBuddyCommandOutput,claudeSettingConfirmation } from './conversation
 import { AntigravityChatControls } from './antigravityChatControls.js';
 import { AgentWorkClock } from './agentWorkClock.js';
 import type { ChatControlIO } from './chatControlTypes.js';
+import { compactCommand, compactionOutcome } from './providerCompaction.js';
 import {ConversationRounds} from './conversationRounds.js';
 import { prepareDsh, dshBinding, dshOptions, dshReady, dshResumable, applyDshOption } from './dsh.js';
 import { resolveSessionLaunchPermission, withProviderPermissions, validateProviderPermissionRequest } from './providerPermissions.js';
@@ -845,6 +846,56 @@ export class AdeSessions {
     return record.provider==='codex'&&Boolean(this.live.get(record.id)?.live)&&Boolean(record.providerThreadId)&&codexPaginatedBinding(record.providerThreadId!,record.cwd,record.sourceCwd);
   }
 
+  /** Send the provider's own `/compact` command to its exact idle owned terminal. Only a
+   *  new native acknowledgement counts; an echoed command or silence stays unconfirmed
+   *  and is never replayed. */
+  async compact(projectId:string,id:string):Promise<import('../../shared/contracts.js').CompactConversationResponse>{
+    const record=this.require(projectId,id),live=this.live.get(id),command=compactCommand(record.provider);
+    if(!command)throw new CliError('RUNTIME_UNAVAILABLE','This provider does not expose a verified native compaction command.');
+    if(!live?.live)throw new CliError('RUNTIME_UNAVAILABLE','Open the running agent terminal before compacting its conversation.');
+    if(record.provider==='dsh'&&!dshReady(this.store.directory,record))throw new CliError('RUNTIME_UNAVAILABLE','Wait for DSH to finish opening its session before compacting.');
+    if(this.sending.has(id))throw new CliError('RATE_LIMITED','Input is already being sent to this agent.');
+    const verify=()=>{
+      if(this.shutdown.signal.aborted||this.live.get(id)!==live||!live.live||this.require(projectId,id).statusToken!==record.statusToken)throw new CliError('RUNTIME_UNAVAILABLE','The agent changed. Inspect Terminal before retrying.');
+      if(['working','waiting','blocked'].includes(this.status(projectId,id).data?.state??''))throw new CliError('RUNTIME_UNAVAILABLE','Wait until the agent is idle and finish any question or approval in Terminal before compacting.');
+    };
+    verify();
+    const inputRevision=live.inputRevision;
+    await live.screen?.settled();
+    verify();
+    if(this.sending.has(id)||live.inputRevision!==inputRevision)throw new CliError('RATE_LIMITED','Terminal input changed while reading its prompt. Try again.');
+    const before=live.screen?.viewportText()??'';
+    assertNoNativePermissionDialog(record.provider,before);
+    const composerEmpty=record.provider==='dsh'?live.screen?.dshPromptReady():isOpenCode(record.provider)?live.screen?.openCodePromptReady():live.screen?.composerEmpty(record.provider==='antigravity',record.provider==='codebuddy');
+    if(live.draftInput&&composerEmpty)live.draftInput=false;
+    if(live.draftInput)throw new CliError('RUNTIME_UNAVAILABLE','Clear the draft in Terminal before compacting.');
+    if(!composerEmpty)throw new CliError('RUNTIME_UNAVAILABLE','Leave an empty agent prompt in Terminal before compacting.');
+    if(record.provider==='antigravity'&&!antigravityPromptReady(before))throw new CliError('RUNTIME_UNAVAILABLE','Clear the Antigravity prompt before compacting.');
+    this.sending.add(id);
+    const start=live.start+live.buffer.length;
+    const fresh=()=>live.buffer.slice(Math.max(0,start-live.start)).slice(-65536).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'');
+    try{
+      for(const data of [command,'\r']){
+        verify();
+        await this.command(live,{type:'input',data});
+        await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      const deadline=Date.now()+20000;
+      while(Date.now()<deadline){
+        verify();
+        const after=live.screen?.viewportText()??'';
+        const outcome=compactionOutcome({fresh:fresh(),before,after});
+        if(outcome==='confirmed'){
+          this.changed(id);this.statusChanged(projectId,record);
+          return {ok:true,message:'Compaction started. Chat shows a divider once the provider records its native boundary.'};
+        }
+        if(outcome==='rejected')return {ok:false,message:'The provider rejected its compaction command. Inspect Terminal.'};
+        await new Promise(resolve=>setTimeout(resolve,50));
+      }
+      return {ok:false,message:'Compaction was submitted but not confirmed by the provider yet. Inspect Terminal; the command will not be replayed.'};
+    }finally{this.sending.delete(id);}
+  }
+
   async rewind(projectId:string,id:string,target:{beforeSeq?:number;beforeMessageId?:string;anchor?:NativeUserAnchor;materialize?:()=>Promise<string|undefined>;message:string;current:()=>boolean;receipt?:import('./store.js').SessionRecord['rewindPending']},token:string|undefined):Promise<import('../../shared/contracts.js').RewindConversationResponse>{
     const record=this.require(projectId,id),live=this.live.get(id);
     if(!['dsh','codex','claude'].includes(record.provider)||!record.providerThreadId||!live?.live||record.statusToken!==token)throw new CliError('RUNTIME_UNAVAILABLE','The native session changed. Refresh before rewinding.');
@@ -1022,7 +1073,24 @@ export class AdeSessions {
       };
       // Same provider-specific staging rules as Orca's agent-image-paste: native image chips
       // for Codex/Claude, file mentions for Antigravity and non-image attachments.
-      for (const file of files) if (usesNativeFileAttachment(record.provider, file)) await write(attachmentPaste(record.provider, file));
+      let imageChips = 0;
+      for (const file of files) if (usesNativeFileAttachment(record.provider, file)) {
+        await write(attachmentPaste(record.provider, file));
+        // Codex converts a pasted image path asynchronously; a prompt pasted into that
+        // window can cancel the conversion and leave the raw path as text. Wait for the
+        // rendered chip (bounded), then continue either way: the recorded path stays a
+        // readable reference and never becomes a retried or replayed write.
+        if (record.provider === 'codex') {
+          imageChips++;
+          const chipDeadline = Date.now() + 1500;
+          for (;;) {
+            await session!.screen?.settled(); writable();
+            if ((session!.screen?.codexComposerImageCount() ?? 0) >= imageChips) break;
+            if (Date.now() >= chipDeadline) break;
+            await new Promise(resolve => setTimeout(resolve, 40));
+          }
+        }
+      }
       const references = files.filter(file => !usesNativeFileAttachment(record.provider, file)).map(attachmentReference);
       const prompt = [...references, request.message.trim() || 'Please review the attached files.'].join('\n');
       await write(`\x1b[200~${prompt.replace(/\r\n?/g, '\n')}\x1b[201~`);

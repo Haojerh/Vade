@@ -12,8 +12,9 @@ import { DatabaseSync } from 'node:sqlite';
 
 import { publicTranscriptRecord, transcriptSettings } from './shared.js';
 
-import { readOpenCodePage, readOpenCodeModel } from './opencode.js';
-import {readOpenCodeV2Page} from './openCodeV2.js';
+import { readOpenCodePage, readOpenCodeModel, openCodeRecordedLine } from './opencode.js';
+import {readOpenCodeV2Page,openCodeV2RecordedLine} from './openCodeV2.js';
+import {readRecordedImage} from './conversationImages.js';
 
 
 
@@ -396,5 +397,48 @@ test('OpenCode v2 activity reads native errors and inline reasoning separately f
     assert.ok(!JSON.stringify(result).includes('PRIVATE THOUGHT'));
     insert.run('success', 'exact', 3, 'assistant', 3, JSON.stringify({ content: [{ type: 'text', text: 'A successful reply' }] }));
     assert.ok(databaseProviderActivity(file, 'exact', true).every(item => item.kind !== 'error'));
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+const JPEG_BYTES = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(24, 5)]);
+const jpegDataUrl = `data:image/jpeg;base64,${JPEG_BYTES.toString('base64')}`;
+
+test('OpenCode v1 image parts project as a recorded attachment and resolve by row cursor', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-v1-image-')), file = path.join(dir, 'kilo.db');
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('CREATE TABLE message (id TEXT, session_id TEXT, time_created INTEGER, data TEXT); CREATE TABLE part (id TEXT, session_id TEXT, message_id TEXT, data TEXT)');
+    const message = db.prepare('INSERT INTO message VALUES (?,?,?,?)'), part = db.prepare('INSERT INTO part VALUES (?,?,?,?)');
+    message.run('prompt', 'exact', 1, JSON.stringify({ role: 'user' }));
+    part.run('text', 'exact', 'prompt', JSON.stringify({ type: 'text', text: '\n[Image 1] dfe' }));
+    part.run('image', 'exact', 'prompt', JSON.stringify({ type: 'file', mime: 'image/jpeg', filename: 'ca1e130b-a5c4-46f8-b11a-ed4d7ba463c3.jpg', url: jpegDataUrl }));
+    part.run('host', 'exact', 'prompt', JSON.stringify({ type: 'file', mime: 'image/png', url: 'file:///C:/private/leak.png' }));
+    const page = readOpenCodePage(file, 'exact', null, 20);
+    assert.deepEqual(page.offsets, [1]);
+    const projected = publicMessage({ provider: 'kilo' } as SessionRecord, page.lines[0], 'source', page.offsets![0]);
+    assert.equal(projected?.text, 'dfe');
+    assert.deepEqual(projected?.images?.map(image => [image.mimeType, image.bytes]), [['image/jpeg', JPEG_BYTES.length]]);
+    assert.ok(!JSON.stringify(projected).includes('private/leak'));
+    const line = openCodeRecordedLine(file, 'exact', page.offsets![0])!;
+    assert.deepEqual(readRecordedImage('kilo', line, 0), { mimeType: 'image/jpeg', bytes: JPEG_BYTES });
+    assert.equal(openCodeRecordedLine(file, 'other', 1), null);
+  } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('OpenCode v2 recorded files project as attachments and resolve by sequence cursor', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-v2-image-')), file = path.join(dir, 'opencode.db');
+  const db = new DatabaseSync(file);
+  try {
+    db.exec('CREATE TABLE session_message (id TEXT, session_id TEXT, seq INTEGER, type TEXT, time_created INTEGER, data TEXT)');
+    db.prepare('INSERT INTO session_message VALUES (?,?,?,?,?,?)').run('prompt', 'exact', 7, 'user', 7,
+      JSON.stringify({ text: '[Image 1] \ntest', files: [{ data: JPEG_BYTES.toString('base64'), mime: 'image/jpeg', filename: 'shot.jpg' }, { data: 'AAAA', mime: 'text/plain', filename: 'notes.txt' }] }));
+    const page = readOpenCodeV2Page(file, 'exact', null, 20);
+    assert.deepEqual(page.offsets, [7]);
+    const projected = publicMessage({ provider: 'opencode2' } as SessionRecord, page.lines[0], 'source', page.offsets![0]);
+    assert.equal(projected?.text, 'test');
+    assert.deepEqual(projected?.images?.map(image => [image.mimeType, image.bytes]), [['image/jpeg', JPEG_BYTES.length]]);
+    const line = openCodeV2RecordedLine(file, 'exact', 7)!;
+    assert.deepEqual(readRecordedImage('opencode2', line, 0), { mimeType: 'image/jpeg', bytes: JPEG_BYTES });
+    assert.equal(openCodeV2RecordedLine(file, 'exact', 99), null);
   } finally { db.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 });

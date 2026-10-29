@@ -79,14 +79,22 @@ export class ProviderChatControls {
     await typeCommand(command, io);
     const desired = options.models.find(row => row.id === request.value);
     const desiredFast = request.key === 'fastMode' ? request.value === 'true' : typeof options.current.fastMode === 'boolean' ? !options.current.fastMode : undefined;
+    const strip = (value: string) => value.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
     const confirmed = await io.waitFor(screen => {
       if(options.provider==='claude'&&!fast&&io.settingConfirmed?.())return true;
-      const fresh = io.output().slice(before).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+      // Claude's Ink renderer can emit one acknowledgement in several positioned writes,
+      // so the raw byte stream may not contain the sentence contiguously. Read the
+      // rendered screen too, but only below this command's own echo so an older
+      // acknowledgement still visible in the transcript cannot confirm a new request.
+      const fresh = strip(io.output().slice(before));
+      const echo = screen.lastIndexOf(command);
+      const screenTail = echo >= 0 ? screen.slice(echo + command.length) : '';
+      const lines = [...fresh.split(/[\r\n]/), ...screenTail.split('\n')];
       const tier = fresh.match(/Service tier set to (priority|fast|default)\b/g)?.at(-1)?.split(' ').at(-1);
       const footer = options.provider === 'codex' ? codexFooter(options.models, screen) : {};
       const changedFooter = typeof footer.fastMode === 'boolean' && typeof beforeFooter.fastMode === 'boolean' && footer.fastMode !== beforeFooter.fastMode && (desiredFast === undefined || footer.fastMode === desiredFast);
       return fast ? changedFooter || (tier !== undefined && (desiredFast === undefined || (tier !== 'default') === desiredFast)) || (options.provider === 'claude' && /fast mode.*(?:on|off|enabled|disabled)/i.test(fresh))
-      : fresh.split(/[\r\n]/).some(line => request.key === 'model' ? /(?:set|switched|changed|kept).*model|model.*(?:set|switched|changed|kept)/i.test(line) && [desired?.id, desired?.label].some(value => value && norm(line).includes(norm(value)))
+      : lines.some(line => request.key === 'model' ? /(?:set|switched|changed|kept).*model|model.*(?:set|switched|changed|kept)/i.test(line) && [desired?.id, desired?.label].some(value => value && norm(line).includes(norm(value)))
         : claudeEffortAcknowledgement(line) === request.value);
     });
     const tier = io.output().slice(before).replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').match(/Service tier set to (priority|fast|default)\b/g)?.at(-1)?.split(' ').at(-1);

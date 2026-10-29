@@ -11,7 +11,7 @@ import { hashId, isPathInsideRoots, readBoundedTranscriptLines, readOlderTranscr
 import { issueStoredCursor, validateStoredCursor } from '../providers/conversationCursors.js';
 import { parseCoordinatorTranscriptLine } from '../providers/publicTranscript.js';
 import { CONVERSATION_PAGE_READ_BYTES, MAX_CONVERSATION_PAGE_IMAGE_BYTES, imageContentDigest, readRecordAt, readRecordedImage, recordedUserImages, recordsTranscriptImages, stripImagePromptMarkers, verifyConversationImageId } from '../providers/conversationImages.js';
-import {stagedUserImages,readStagedUserImage,stripStagedImagePaths} from './stagedConversationImages.js';
+import {stagedImagesFromText,stagedUserImages,readStagedUserImage,stripStagedImageTokens} from './stagedConversationImages.js';
 import {publicRewindTarget,type NativeUserAnchor} from './providerRewind.js';
 import {forkClaudeBefore} from './claudeRewind.js';
 import {codeBuddyBranch} from './codeBuddyBranch.js';
@@ -20,11 +20,12 @@ import { parseAntigravityTranscriptLine, readAntigravityModel, readAntigravityTo
 import { transcriptSettings, claudeLocalCommandEffort, claudeLocalCommandModel,stripAnsiCodes } from '../providers/shared.js';
 import { codeBuddyEffortAcknowledgement } from '../providers/codeBuddySettings.js';
 import { isOpenCode, verifyOpenCode, withOpenCode } from './openCodeSessions.js';
-import { readOpenCodePage, readOpenCodeModel } from '../providers/opencode.js';
-import { readOpenCodeV2Page, readOpenCodeV2Model, openCodeV2Tools } from '../providers/openCodeV2.js';
+import { readOpenCodePage, readOpenCodeModel, openCodeRecordedLine } from '../providers/opencode.js';
+import { readOpenCodeV2Page, readOpenCodeV2Model, openCodeV2RecordedLine, openCodeV2Tools } from '../providers/openCodeV2.js';
 import { databaseToolActivity, mergeToolActivity, transcriptToolActivity } from '../providers/toolActivity.js';
 import { dshTranscript } from './dsh.js';
 import { isContextRecord, transcriptContextUsage, unknownContext } from '../providers/contextUsage.js';
+import { claudeAutoCompactWindows } from '../providers/claudeSettings.js';
 import type { AgentContextUsage } from '../../shared/contracts.js';
 import { readDatabaseContext } from './providerContext.js';
 
@@ -182,11 +183,17 @@ export function claudeSettingConfirmation(record:SessionRecord,request:{key:stri
       const buffer=Buffer.alloc(length);fs.readSync(fd,buffer,0,length,offset);
       return buffer.toString('utf8').split('\n').slice(0,200).some(line=>{try{
         const row=JSON.parse(line);
-        if(row.sessionId!==record.providerThreadId||Date.parse(row.timestamp)<since||!Number.isFinite(Date.parse(row.timestamp))||row.isSidechain||row._fromSubAgent||row.isMeta||row.isSynthetic||row.type!=='system'||row.subtype!=='local_command'||row.commandRun?.command!==request.key||row.commandRun.args?.trim()!==request.value||typeof row.cwd!=='string'||![record.cwd,record.sourceCwd].some(cwd=>cwd&&path.relative(path.resolve(cwd),path.resolve(row.cwd))===''))return false;
+        if(row.sessionId!==record.providerThreadId||Date.parse(row.timestamp)<since||!Number.isFinite(Date.parse(row.timestamp))||row.isSidechain||row._fromSubAgent||row.isMeta||row.isSynthetic||row.type!=='system'||row.subtype!=='local_command'||row.commandRun?.command!==request.key||typeof row.cwd!=='string'||![record.cwd,record.sourceCwd].some(cwd=>cwd&&path.relative(path.resolve(cwd),path.resolve(row.cwd))===''))return false;
+        // Claude records the acknowledgement with an empty argument list; a recorded
+        // argument is still authoritative when the provider supplies one.
+        const recordedArgs=typeof row.commandRun.args==='string'?row.commandRun.args.trim():'';
+        if(recordedArgs&&recordedArgs!==request.value)return false;
         if(request.key==='effort')return claudeLocalCommandEffort(row)===request.value;
         const model=claudeLocalCommandModel(row);if(!model)return false;
+        // The acknowledgement must name the requested model: "Kept model as <other>"
+        // reports that Claude did not change, so it can never confirm a new selection.
         const normalize=(value:string)=>value.toLowerCase().replace(/[^a-z0-9]/g,'');
-        return /^<local-command-stdout>\s*(?:Set model to|Model set to)\b/.test(stripAnsiCodes(row.content).trim())||[request.value,expectedLabel].some(value=>value&&normalize(value)===normalize(model));
+        return [request.value,expectedLabel].some(value=>value&&normalize(value)===normalize(model));
       }catch{return false;}});
     }catch{return false;}finally{if(fd!==undefined)fs.closeSync(fd);}
   };
@@ -207,17 +214,19 @@ export function publicMessage(record: SessionRecord, line: string, sourceIdentit
   const projected = (message: ReturnType<typeof parseCoordinatorTranscriptLine>['message']) => {
     if (!message || message.role!=='user' || offset === undefined) return message;
     const { images, markerNumbers } = recordedUserImages(record.provider, line, sourceIdentity, offset);
-    const staged=!images.length&&attachmentRoot?stagedUserImages(record.provider,line,attachmentRoot,sourceIdentity,offset):{images:[],paths:[]};
+    // Every provider that records the staged attachment reference as public text
+    // (a bare path, an `@` mention or a quoted path) projects the same owned bytes.
+    const staged=!images.length&&attachmentRoot?stagedImagesFromText(message.text,attachmentRoot,sourceIdentity,offset):{images:[],tokens:[]};
     const kept: ConversationImage[] = [], keptMarkers: number[] = [];
-    const keptPaths:string[]=[];
+    const keptTokens:string[]=[];
     (images.length?images:staged.images).forEach((image, index) => {
       if (imageBudget && image.bytes > imageBudget.remaining) return;
       if (imageBudget) imageBudget.remaining -= image.bytes;
       kept.push(image);
-      if(staged.paths[index])keptPaths.push(staged.paths[index]);else keptMarkers.push(markerNumbers[index]!);
+      if(staged.tokens[index])keptTokens.push(...staged.tokens[index]!);else keptMarkers.push(markerNumbers[index]!);
     });
     if (!kept.length) return message;
-    return { ...message, text: stripStagedImagePaths(stripImagePromptMarkers(message.text, keptMarkers),keptPaths), images: kept };
+    return { ...message, text: stripStagedImageTokens(stripImagePromptMarkers(message.text, keptMarkers),keptTokens), images: kept };
   };
   try {
     const row = JSON.parse(line);
@@ -236,7 +245,7 @@ export function publicMessage(record: SessionRecord, line: string, sourceIdentit
       return message&&record.provider==='dsh'&&message.role==='user'&&!row.payload?.hasAttachments&&Number.isSafeInteger(row.payload?.nativeSeq)&&row.payload.nativeSeq>=0&&row.payload.nativeSeq<4000?{...message,rewindable:true}:message;
     }
     if (['USER_EXPLICIT', 'USER'].includes(row.source) && ['USER_INPUT', 'REQUEST'].includes(row.type)) {
-      return visible(parseAntigravityTranscriptLine(JSON.stringify({ ...row, type: 'USER_INPUT' }), sourceIdentity).message);
+      return projected(visible(parseAntigravityTranscriptLine(JSON.stringify({ ...row, type: 'USER_INPUT' }), sourceIdentity).message));
     }
     return (row.source === 'MODEL' && row.type === 'PLANNER_RESPONSE'||row.type==='CHECKPOINT'&&row.source==='SYSTEM') ? parseAntigravityTranscriptLine(line, sourceIdentity).message : null;
   } catch { return null; }
@@ -366,7 +375,8 @@ export class AdeConversations {
         result.providerActivity.meta.availability = 'unsupported';
       } else {
         const contextRows = await readOlderTranscriptLines(file, fs.statSync(file).size, 200, 4 * 1024 * 1024, false, line=>allowed(line)&&isContextRecord(line));
-        result.contextUsage = transcriptContextUsage(record.provider, id, contextRows.lines);
+        result.contextUsage = transcriptContextUsage(record.provider, id, contextRows.lines,
+          record.provider === 'claude' ? { claudeAutoCompact: claudeAutoCompactWindows() } : undefined);
         const settings = (line: string) => {
           if(!allowed(line))return {};
           try {
@@ -462,7 +472,11 @@ export class AdeConversations {
     if (!locator) throw new CliError('INVALID_ARGUMENT', 'This conversation image is not available.');
     const { file } = this.resolve(record);
     if (this.identity(record, file) !== sourceIdentity) throw new CliError('INVALID_ARGUMENT', 'Conversation changed. Reload the conversation before opening its images.');
-    const line = readRecordAt(file, locator.offset);
+    // Database-backed providers address one recorded row by its own row cursor, never by
+    // a byte offset into the database file.
+    const line = isOpenCode(record.provider)
+      ? (record.provider==='opencode2'?openCodeV2RecordedLine(file,record.providerThreadId!,locator.offset):openCodeRecordedLine(file,record.providerThreadId!,locator.offset))
+      : readRecordAt(file, locator.offset);
     if(line&&record.provider==='codebuddy'&&!codeBuddyBranch(file,record.providerThreadId!).allows(line))throw new CliError('RUNTIME_UNAVAILABLE','This image is not in the active conversation branch.');
     // A structurally valid image token must still refer to a public root user
     // turn. Re-check session and sidechain filters on the serving path too.

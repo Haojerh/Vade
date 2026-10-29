@@ -1,6 +1,34 @@
 import { DatabaseSync } from 'node:sqlite';
 import type { BoundedTranscriptReadResult } from '../providers/transcriptUtils.js';
 
+/** One recorded part as a public content block. Images are the provider's own recorded
+ * attachment bytes (a data URL); any other file reference stays private. */
+function partContent(value: any): any[] {
+  if (value.type === 'file' && typeof value.url === 'string' && value.url.startsWith('data:image/')) return [{ type: 'input_image', image_url: value.url }];
+  return value.type === 'text' && !value.synthetic && typeof value.text === 'string' && value.text.trim() ? [{ type: 'text', text: value.text }] : [];
+}
+
+/** Rebuild the exact public row for one recorded message cursor, so the image route can
+ * re-read one attachment without scanning a page. */
+export function openCodeRecordedLine(file: string, sessionId: string, rowId: number): string | null {
+  const db = new DatabaseSync(file, { readOnly: true });
+  try {
+    db.exec('PRAGMA busy_timeout=100');
+    const row = db.prepare(`SELECT id, time_created, CASE WHEN length(CAST(data AS BLOB)) <= 2097152 THEN data END AS data
+      FROM message WHERE session_id = ? AND rowid = ?`).get(sessionId, rowId) as any;
+    if (!row?.data) return null;
+    const message = JSON.parse(row.data);
+    if (!['user', 'assistant'].includes(message.role)) return null;
+    const parts = db.prepare(`SELECT CASE WHEN length(CAST(data AS BLOB)) <= 2097152 THEN data END AS data
+      FROM part WHERE session_id = ? AND message_id = ? ORDER BY rowid LIMIT 1001`).all(sessionId, row.id) as any[];
+    if (parts.length > 1000) return null;
+    const content = parts.flatMap(part => part.data ? partContent(JSON.parse(part.data)) : []);
+    if (!content.length) return null;
+    return JSON.stringify({ type: 'response_item', timestamp: new Date(row.time_created).toISOString(), payload: { type: 'message', role: message.role, id: row.id, content } });
+  } catch { return null; }
+  finally { db.close(); }
+}
+
 export function readOpenCodePage(
   file: string,
   sessionId: string,
@@ -12,6 +40,7 @@ export function readOpenCodePage(
   try {
     let bytes = 0;
     const lines: string[] = [];
+    const offsets: number[] = [];
     let maxScannedRowId = offset ?? 0;
     let hasMoreNewer = false;
     let hasMoreOlder = false;
@@ -45,8 +74,7 @@ export function readOpenCodePage(
           compacted = true;
           return [];
         }
-        return value.type === 'text' && !value.synthetic && typeof value.text === 'string' && value.text.trim()
-          ? [{ type: 'text', text: value.text }] : [];
+        return partContent(value);
       });
       if (compacted) return JSON.stringify({
         type: 'compacted',
@@ -86,6 +114,7 @@ export function readOpenCodePage(
           if (line !== null) {
             oldestIncludedRowId = row.rowid;
             lines.push(line);
+            offsets.push(row.rowid);
             if (lines.length >= limit) break;
           }
         }
@@ -97,9 +126,11 @@ export function readOpenCodePage(
       }
 
       lines.reverse();
+      offsets.reverse();
 
       return {
         lines,
+        offsets,
         hasMore: direction === 'older' && hasMoreOlder,
         limited: hasMoreOlder,
         nextByteOffset: direction === 'older' ? oldestIncludedRowId ?? 0 : maxScannedRowId,
@@ -121,6 +152,7 @@ export function readOpenCodePage(
           const line = decodeMessage(row);
           if (line !== null) {
             lines.push(line);
+            offsets.push(row.rowid);
             if (lines.length >= limit) break;
           }
         }
@@ -131,6 +163,7 @@ export function readOpenCodePage(
 
       return {
         lines,
+        offsets,
         hasMore: hasMoreNewer,
         limited: false,
         nextByteOffset: maxScannedRowId,

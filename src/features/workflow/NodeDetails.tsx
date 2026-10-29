@@ -12,7 +12,7 @@ import { ProviderActivity } from './ProviderActivity';
 import { useAgentDraft } from '../../hooks/useAgentDraft';
 import { WORKFLOW_CONFIRMATION_MESSAGE } from '../../../shared/contracts';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
-import { sendNodeMessage, interruptAgent, openChatTerminal, resumeTerminal, openNativeRewindPicker } from '../../api/client';
+import { sendNodeMessage, interruptAgent, openChatTerminal, resumeTerminal, openNativeRewindPicker, fetchAgentSkills, compactConversation } from '../../api/client';
 import { useConfirmationState } from '../../hooks/useConfirmationState';
 import { MessageAttachments } from './MessageAttachments';
 import { AgentChatControls } from './AgentChatControls';
@@ -21,6 +21,9 @@ import { AgentPermissionControl } from './AgentPermissionControl';
 import { ConversationRewind } from './ConversationRewind';
 import { DictationButton } from './DictationButton';
 import { appendDictation } from './dictation';
+import { ComposerReferenceMenu } from './ComposerReferenceMenu';
+import { applySkillReference, composerEntries, composerPrefix, composerPrefixes, composerTrigger } from './composerCommands';
+import type { AgentSkillSummary } from '../../../shared/contracts';
 import { HandoffDialog, HandoffNotice } from './HandoffDialog';
 import { readAgentView } from '../../app/agentViewPreference';
 const AgentTerminal = lazy(() => import('./AgentTerminal').then(module => ({ default: module.AgentTerminal })));
@@ -105,6 +108,18 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const [chatSending, setChatSending] = useState<boolean>(false);
   const [dictating, setDictating] = useState(false);
   const [chatStatus, setChatStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  // Composer references: a leading `/` (or `$` on Codex) lists Chat commands and skills.
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  const [skills, setSkills] = useState<AgentSkillSummary[]>([]);
+  const [skillsLoading, setSkillsLoading] = useState(false);
+  const [skillsError, setSkillsError] = useState<string | null>(null);
+  const [referenceIndex, setReferenceIndex] = useState(0);
+  const [dismissedReference, setDismissedReference] = useState<string | null>(null);
+  const [chatControlsRequest, setChatControlsRequest] = useState<{ id: number; section: 'model' | 'effort' } | null>(null);
+  const [contextRequest, setContextRequest] = useState<number | null>(null);
+  const referenceRequest = useRef(0);
+  const clearChatControlsRequest = React.useCallback(() => setChatControlsRequest(null), []);
+  const clearContextRequest = React.useCallback(() => setContextRequest(null), []);
   const workflowConfirmation = useConfirmationState<{ message: string; files: File[] }>();
   const handoff = useConfirmationState();
   const chatRequest = useRef<AbortController | null>(null);
@@ -182,6 +197,95 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const tools = chatToolCallsEnabled ? (selectedNode?.id === selectedNodeId ? selectedNode.toolActivity?.data : undefined) ?? node?.toolActivity?.data ?? [] : [];
 
   const isWorktree = node?.kind === 'worktree';
+  const referencePrefixes = composerPrefixes(node?.agentType);
+  const referencePrefix = composerPrefix(node?.agentType);
+  const referenceTrigger = composerTrigger(chatMessage, referencePrefixes);
+  const referenceOpen = Boolean(referenceTrigger && referenceTrigger.query !== dismissedReference && !chatSending && !isClosing);
+  const referenceEntries = referenceTrigger && referenceOpen ? composerEntries(referenceTrigger, skills, node?.agentType, { compact: node?.chatCompact === true }) : [];
+  const activeReference = referenceEntries.length ? Math.min(referenceIndex, referenceEntries.length - 1) : -1;
+  // One shared read per composer, tracked in a ref: closing the menu must never abort
+  // the read and strand the list on "Loading skills…".
+  const skillsRequest = useRef({ requested: false, loading: false });
+  const loadSkills = React.useCallback(() => {
+    const state = skillsRequest.current;
+    if (state.requested || state.loading) return;
+    state.requested = true;
+    state.loading = true;
+    setSkillsLoading(true);
+    fetchAgentSkills().then(section => {
+      setSkills(section.data ?? []);
+      setSkillsError(section.meta.issue?.message ?? (section.meta.stale ? 'Installed skills may be out of date.' : null));
+    }).catch(reason => {
+      // A failed read stays retryable the next time the menu opens.
+      state.requested = false;
+      setSkillsError(reason instanceof Error ? reason.message : 'Unable to read installed skills.');
+    }).finally(() => { state.loading = false; setSkillsLoading(false); });
+  }, []);
+  useEffect(() => { if (referenceOpen) loadSkills(); }, [referenceOpen, loadSkills]);
+  useEffect(() => { setReferenceIndex(0); }, [referenceTrigger?.query, referencePrefix]);
+  const selectReference = (index: number) => {
+    const entry = referenceEntries[index];
+    if (!entry) return;
+    setDismissedReference(null);
+    setReferenceIndex(0);
+    if (entry.kind === 'skill') {
+      // A skill reference stays in the draft so the provider's own resolver sees it.
+      setChatMessage(applySkillReference(entry.token));
+      setChatStatus(null);
+      composerRef.current?.focus();
+      return;
+    }
+    setChatMessage('');
+    setChatStatus(null);
+    if (entry.command === 'context') {
+      if (node?.contextUsage?.usedTokens == null) {
+        setChatStatus({ type: 'error', text: 'No native context reading is available for this session yet.' });
+        return;
+      }
+      referenceRequest.current += 1;
+      setContextRequest(referenceRequest.current);
+      return;
+    }
+    if (entry.command === 'compact') {
+      void compactConversationNow();
+      return;
+    }
+    referenceRequest.current += 1;
+    setChatControlsRequest({ id: referenceRequest.current, section: entry.command });
+  };
+  /** `/compact` submits the provider's own compaction command. The result is reported
+   *  exactly as the backend observed it; an unconfirmed submission is a warning, never
+   *  a success, and nothing is replayed. */
+  const compacting = useRef(false);
+  const compactConversationNow = async () => {
+    if (!projectId || !node || compacting.current) return;
+    if (node.chatCompact !== true) {
+      setChatStatus({ type: 'error', text: 'This provider has no verified native compaction command.' });
+      return;
+    }
+    if (node.liveness !== 'live') {
+      setChatStatus({ type: 'error', text: 'Open Terminal and start this agent before compacting its conversation.' });
+      return;
+    }
+    compacting.current = true;
+    setChatSending(true);
+    setChatStatus({ type: 'success', text: 'Compacting…' });
+    const owner = chatTarget.current;
+    try {
+      const result = await compactConversation(projectId, node.id);
+      if (owner !== chatTarget.current) return;
+      setChatStatus(result.ok
+        ? { type: 'success', text: result.message ?? 'Compaction started.' }
+        : { type: 'error', text: result.message ?? 'Compaction was not confirmed by the provider.' });
+      onRefresh();
+      onSessionChange?.();
+    } catch (error) {
+      if (owner === chatTarget.current) setChatStatus({ type: 'error', text: error instanceof Error ? error.message : 'Compaction was not confirmed. Inspect Terminal.' });
+    } finally {
+      compacting.current = false;
+      if (owner === chatTarget.current) setChatSending(false);
+    }
+  };
   const canInterrupt = Boolean(details?.session?.chat && node?.state === 'working' && node?.liveness === 'live' && !chatMessage.trim() && !chatFiles.length);
   const interrupting = useRef(false);
   const [interruptRequested,setInterruptRequested]=useState(false);
@@ -351,8 +455,8 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                                 {attachButton}
                                 {projectId && <AgentPermissionControl key={`permission:${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} runId={selectedRunId??null} disabled={chatSending||dictating||isClosing||Boolean(chatMessage.trim())||chatFiles.length>0||['working','waiting','blocked'].includes(node.state)} />}
                               </div>
-                              {projectId && <AgentChatControls projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} model={node.model} effort={node.effort} disabled={chatSending || isClosing || ['working', 'waiting', 'blocked'].includes(node.state)} />}
-                              {projectId && <ContextUsageMeter key={`context:${projectId}:${node.id}:${selectedRunId ?? ''}`} projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} provider={node.agentType} usage={node.contextUsage} />}
+                              {projectId && <AgentChatControls projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} model={node.model} effort={node.effort} disabled={chatSending || isClosing || ['working', 'waiting', 'blocked'].includes(node.state)} openRequest={chatControlsRequest} onOpenRequestHandled={clearChatControlsRequest} />}
+                              {projectId && <ContextUsageMeter key={`context:${projectId}:${node.id}:${selectedRunId ?? ''}`} projectId={projectId} nodeId={node.id} runId={selectedRunId ?? null} provider={node.agentType} usage={node.contextUsage} openRequest={contextRequest} onOpenRequestHandled={clearContextRequest} />}
                               <DictationButton iconOnly key={`dictation:${projectId}:${node.id}:${selectedRunId ?? ''}`} disabled={chatSending || isClosing}
                                 onText={(text) => setChatMessage((draft) => appendDictation(draft, text))} onActiveChange={setDictating} />
                               <button
@@ -366,14 +470,43 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                             </div>
                           )}
                         >
+                          {referenceOpen && <ComposerReferenceMenu entries={referenceEntries} activeIndex={activeReference} loading={skillsLoading} error={skillsError}
+                            emptyMessage={referenceTrigger?.prefix === '$' ? 'No installed skills match.' : 'No matching commands.'}
+                            onHover={setReferenceIndex} onSelect={entry => selectReference(referenceEntries.indexOf(entry))} />}
                           <textarea
+                            ref={composerRef}
                             className="chatbox-textarea"
                             placeholder={`Message ${node.label}…`}
                             aria-label={`Message ${node.label}`}
-                            title="Enter to send, Shift+Enter for a new line"
+                            title={referencePrefixes.length > 1
+                              ? 'Enter to send, Shift+Enter for a new line. Type / for commands, $ for skills.'
+                              : 'Enter to send, Shift+Enter for a new line. Type / for commands and skills.'}
                             value={chatMessage}
+                            role="combobox"
+                            aria-expanded={referenceOpen}
+                            aria-controls={referenceOpen ? 'composer-reference-list' : undefined}
+                            aria-activedescendant={referenceOpen && activeReference >= 0 ? `composer-reference-${activeReference}` : undefined}
+                            aria-autocomplete={referenceOpen ? 'list' : undefined}
                             onChange={(e) => setChatMessage(e.target.value)}
                             onKeyDown={(e) => {
+                              if (referenceOpen && referenceEntries.length && !e.nativeEvent.isComposing) {
+                                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                                  e.preventDefault();
+                                  const step = e.key === 'ArrowDown' ? 1 : -1;
+                                  setReferenceIndex(current => (Math.min(current, referenceEntries.length - 1) + step + referenceEntries.length) % referenceEntries.length);
+                                  return;
+                                }
+                                if (e.key === 'Enter' && !e.shiftKey || e.key === 'Tab') {
+                                  e.preventDefault();
+                                  selectReference(activeReference);
+                                  return;
+                                }
+                              }
+                              if (e.key === 'Escape' && referenceOpen) {
+                                e.preventDefault();
+                                setDismissedReference(referenceTrigger?.query ?? '');
+                                return;
+                              }
                               if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                                 e.preventDefault();
                                 handleSendMessage();

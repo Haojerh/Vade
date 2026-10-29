@@ -120,11 +120,11 @@ export function ConversationHistory({ projectId, nodeId, runId, page, scrollCont
         if(message.kind==='compaction'){const label=message.text==='Context checkpoint'?'Context checkpoint':'Context compacted';return <div key={message.id} className="conversation-compaction" data-history-row role="separator" aria-label={label}><span>{label}</span></div>;}
         return <div key={message.id} role="article" tabIndex={message.role === 'user' ? -1 : undefined} data-conversation-position={message.role === 'user' ? message.id : undefined} aria-label={message.role==='agent'?'Agent response':'Your message'} className={`chat-bubble-row ${message.role === 'agent' ? 'row-agent' : 'row-user'}`}>
         <div className={`chat-bubble ${message.role === 'agent' ? 'bubble-agent' : 'bubble-user'}`}>
-          <div data-history-row className={`chat-bubble-text message-markdown ${message.role==='user'&&message.text.length > 800 && !expanded.has(message.id) ? 'message-collapsed' : ''}`}><MessageMarkdown text={message.text} /></div>
+          <ConversationImages projectId={projectId} nodeId={nodeId} source={page.sourceIdentity} images={message.images} />
+          {message.text.trim() && <div data-history-row className={`chat-bubble-text message-markdown ${message.role==='user'&&message.text.length > 800 && !expanded.has(message.id) ? 'message-collapsed' : ''}`}><MessageMarkdown text={message.text} /></div>}
           {message.role==='user'&&message.text.length > 800 && <button type="button" className="btn-read-more" aria-expanded={expanded.has(message.id)} onClick={() => setExpanded(current => {
             const next = new Set(current); if (next.has(message.id)) next.delete(message.id); else next.add(message.id); return next;
           })}>{expanded.has(message.id) ? 'Read Less' : 'Read More'}</button>}
-          <ConversationImages projectId={projectId} nodeId={nodeId} source={page.sourceIdentity} images={message.images} />
         </div>
         {message.role==='user'&&<UserMessageMeta message={message}/>}
         {message.role==='agent'&&<ResponseActions message={message}/>}

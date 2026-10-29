@@ -26,6 +26,8 @@ Chat requires the native channel's `ready` flag plus an empty rendered composer.
 
 The observer reads the installed TUI's registered channel, models, model-specific effort levels and current selection. Generic fallback effort ladders are excluded. Changes use native slash commands under the input lock; both the rendered command and resulting channel state must confirm the change.
 
+`/compact` in Chat sends the TUI's own manual session compaction under the same fences, plus DSH's opened-session check. The shipped TUI documents `/compact` as manual compaction and rejects it mid-turn, which is why Chat requires an idle empty prompt first; a native rejection is reported instead of assumed.
+
 Workflow model discovery uses the shipped metadata-only `dsh-tui cli models list --output-format json` command. Model-specific efforts come from an observed Vade-owned session; offline catalog rows do not invent support. Explicit workflow settings are confirmed before dispatch. Setup can block dispatch until completed in Terminal. Fast mode and subscription quotas are not claimed.
 
 ## Evidence

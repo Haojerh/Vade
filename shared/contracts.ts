@@ -140,6 +140,8 @@ export interface Node {
   preview: string | null;
   outputAvailable: boolean;
   chatAvailable?: boolean;
+  /** Provider exposes a verified native compaction command for this session. */
+  chatCompact?: boolean;
   /** Observed empty native prompt; automatic queue dispatch revalidates before input. */
   chatReady?: boolean;
   workflow?: { runId: string; role: 'orchestrator' | 'worker'; stepState?: WorkflowStep['state'] };
@@ -157,6 +159,8 @@ export interface AgentContextUsage {
   cacheAccounting?: 'included-in-input' | 'separate';
   usedTokens: number | null;
   windowTokens: number | null;
+  /** Native auto-compact threshold, when the provider states one separately from the window. */
+  autoCompactAtTokens?: number;
   inputTokens?: number;
   outputTokens?: number;
   cacheReadTokens?: number;
@@ -559,6 +563,14 @@ export interface AgentCatalogResponse {
   available: AgentCatalogEntry[];
   defaultAgentId?: string | null;
 }
+
+/** One installed agent skill the Chat composer can reference. The name is the recorded
+ *  directory identity; the composer applies the provider's own reference prefix. */
+export interface AgentSkillSummary {
+  name: string;
+  description: string;
+  scope: 'personal';
+}
 /** Bounded cross-project observations; handling is shared by the local backend. */
 export interface InboxItem {
   id: Id;
@@ -654,6 +666,9 @@ export interface SourceDiff { path:string; original:string; modified:string; bin
 /** Fixed native interruption on the exact working owned agent. No client keys. */
 export type InterruptAgentRequest = Record<string, never>;
 export interface InterruptAgentResponse { ok: true }
+/** A native compaction command was submitted. `ok` requires a fresh native
+ *  acknowledgement; an unconfirmed submission is reported without claiming success. */
+export interface CompactConversationResponse { ok: boolean; message?: string }
 export interface TerminalResizeRequest { cols: number; rows: number }
 export type TerminalClientMessage = { type: 'input'; data: string } | { type: 'resize'; cols: number; rows: number } | { type: 'ack'; cursor: number };
 export type TerminalServerMessage = { type: 'output'; page: TerminalPage } | { type: 'error'; message: string };

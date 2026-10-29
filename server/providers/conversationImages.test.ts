@@ -167,11 +167,34 @@ test('recorded image responses declare the sniffed type and forbid sniffing, scr
 
 test('providers without a verified transcript image record project no attachments', () => {
   const row = JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [imageBlock(PNG), { type: 'input_text', text: 'hi' }] } });
-  // DSH conversations carry no recorded image events, and these providers do not expose
-  // user images through the transcript row this reader projects.
-  for (const provider of ['dsh', 'antigravity', 'opencode', 'opencode2', 'kilo']) {
+  // DSH conversations carry no recorded image events, and Antigravity keeps user turns
+  // in protobuf blobs. Their staged attachment references are projected separately from
+  // the public text, never from a fabricated image block.
+  for (const provider of ['dsh', 'antigravity']) {
     assert.deepEqual(recordedUserImages(provider, row, 'src', 0).images, [], provider);
   }
+});
+
+test('OpenCode-family attachment parts project as recorded images and drop their placeholder', () => {
+  const record = { provider: 'kilo' } as SessionRecord;
+  const row = JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [
+    { type: 'text', text: '\n[Image 1] dfe' },
+    { type: 'input_image', image_url: `data:image/jpeg;base64,${b64(JPEG)}` },
+  ] } });
+  const { images, markerNumbers } = recordedUserImages('kilo', row, 'src', 7);
+  assert.deepEqual(markerNumbers, [1]);
+  assert.deepEqual(images.map(image => [image.mimeType, image.bytes]), [['image/jpeg', JPEG.length]]);
+  const message = publicMessage(record, row, 'src', 7);
+  assert.equal(message?.text, 'dfe');
+  assert.equal(message?.images?.length, 1);
+  for (const provider of ['opencode', 'opencode2', 'kilocode']) {
+    assert.equal(recordedUserImages(provider, row, 'src', 7).images.length, 1, provider);
+  }
+  // A remote or host-path attachment is never a served image.
+  const remote = JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'user', content: [
+    { type: 'input_image', image_url: 'https://example.test/a.png' }, { type: 'text', text: 'hi' },
+  ] } });
+  assert.deepEqual(recordedUserImages('opencode2', remote, 'src', 1).images, []);
 });
 
 test('image-only public turns render while foreign sessions and sidechains remain excluded',()=>{

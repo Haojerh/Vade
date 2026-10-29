@@ -13,7 +13,9 @@ export const MAX_CONVERSATION_RECORD_BYTES = 6 * 1024 * 1024;
 /** Page read window for providers that record images. A smaller window would silently
  *  drop an image-bearing turn whose serialized row is larger than the window. */
 export const CONVERSATION_PAGE_READ_BYTES = MAX_CONVERSATION_RECORD_BYTES;
-const IMAGE_TRANSCRIPT_PROVIDERS = new Set(['claude', 'codebuddy', 'codex']);
+const IMAGE_TRANSCRIPT_PROVIDERS = new Set(['claude', 'codebuddy', 'codex', 'opencode', 'opencode2', 'kilo', 'kilocode']);
+/** These providers project their own recorded attachment parts as `input_image` blocks. */
+const OPEN_CODE_IMAGE_PROVIDERS = new Set(['opencode', 'opencode2', 'kilo', 'kilocode']);
 
 /** Whether this provider records user images on the transcript row this reader projects. */
 export function recordsTranscriptImages(provider: string): boolean {
@@ -100,10 +102,11 @@ function imageCandidates(provider: string, line: string): ImageCandidate[] {
   try { record = JSON.parse(line); } catch { return []; }
   if (!record || typeof record !== 'object') return [];
   if (provider === 'claude' || provider === 'codebuddy') return claudeFamilyCandidates(record);
-  if (provider === 'codex') return codexCandidates(record);
+  if (provider === 'codex' || OPEN_CODE_IMAGE_PROVIDERS.has(provider)) return codexCandidates(record);
   // No shipped evidence records user images for these providers: DSH conversations carry
-  // no image events, Antigravity keeps user turns in protobuf blobs, and the OpenCode
-  // families project their own part tables. They stay explicitly unavailable.
+  // no image events and Antigravity keeps user turns in protobuf blobs. A staged
+  // attachment reference in their public text is projected separately. They stay
+  // explicitly unavailable here.
   return [];
 }
 
@@ -199,10 +202,11 @@ export function readRecordAt(file: string, offset: number): string | null {
 
 /** Replace sent image markers with nothing once the turn actually carries images, so a
  *  rendered attachment does not leave a dangling `[Image #N]` in the public text. Only
- *  positions backed by servable bytes are removed; others stay literal. */
+ *  positions backed by servable bytes are removed; others stay literal. OpenCode-family
+ *  composers record the same placeholder without the `#`. */
 export function stripImagePromptMarkers(text: string, markerNumbers: readonly number[]): string {
   if (!markerNumbers.length) return text;
   const removable = new Set(markerNumbers);
-  const stripped = text.replace(/[ \t]*\[Image #(\d+)\][ \t]*/g, (match, number: string) => removable.has(Number(number)) ? '' : match);
-  return stripped === text ? text : stripped.replace(/^[ \t]+|[ \t]+$/g, '');
+  const stripped = text.replace(/[ \t]*\[Image #?(\d+)\][ \t]*/g, (match, number: string) => removable.has(Number(number)) ? '' : match);
+  return stripped === text ? text : stripped.replace(/^[ \t\n]+|[ \t\n]+$/g, '');
 }

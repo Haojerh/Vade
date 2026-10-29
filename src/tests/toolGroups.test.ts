@@ -222,8 +222,9 @@ test('ConversationHistory interleaves grouped tool calls and user image attachme
   const secondGroupIndex = html.indexOf('Edited 1 file, Ran 1 command');
   const finalAgentIndex = html.indexOf('Final agent answer');
 
-  assert.ok(userIndex >= 0 && imageIndex > userIndex);
-  assert.ok(firstGroupIndex > imageIndex);
+  // A user turn renders its recorded attachments above the prompt text.
+  assert.ok(imageIndex >= 0 && userIndex > imageIndex);
+  assert.ok(firstGroupIndex > userIndex);
   assert.ok(midAgentIndex > firstGroupIndex);
   assert.ok(secondGroupIndex > midAgentIndex);
   assert.ok(finalAgentIndex > secondGroupIndex);

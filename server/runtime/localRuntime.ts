@@ -20,6 +20,7 @@ import { WorkspaceActions } from './workspaceActions.js';
 import { SourceControl } from './sourceControl.js';
 import { SessionHandoffs } from './sessionHandoff.js';
 import { WorkflowSetup } from './workflowSetup.js';
+import { compactCommand } from './providerCompaction.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
   const now = new Date().toISOString();
@@ -89,6 +90,7 @@ export class LocalRuntime {
         const workflow = workflows.find(run => run.orchestratorId === record.id || run.steps.some(step => step.sessionId === record.id));
         nodes.push({ ...base(record.id, this.store.title(record.id, record.title)), kind: record.provider === 'terminal' ? 'terminal' : 'agent', worktreeId: record.worktreeId,
           ...metadata, path: record.cwd, agentType: record.provider, liveness: terminal.live ? 'live' : 'exited', outputAvailable: true, chatAvailable: record.provider !== 'terminal',
+          chatCompact: compactCommand(record.provider) !== null,
           chatReady: this.sessions.handoffPromptReady(projectId, record.id),
           state: status.meta.availability === 'ready' && status.data ? status.data.state : 'unknown', rawState: status.data?.event ?? null,
           agentStatus: status, lastActivityAt: status.meta.observedAt,
@@ -145,6 +147,11 @@ export class LocalRuntime {
     const tree=await this.git.requireWorktree(this.store.project(projectId),record.worktreeId);
     if(tree.locked||path.relative(tree.path,record.cwd))throw new CliError('INVALID_ARGUMENT','The original unlocked session workspace is no longer available.');
     return this.sessions.openNativeRewindPicker(projectId,nodeId);
+  }
+
+  async compact(projectId:string,nodeId:string){
+    this.sessions.require(projectId,nodeId);
+    return this.sessions.compact(projectId,nodeId);
   }
 
   async rewind(projectId:string,nodeId:string,request:import('../../shared/contracts.js').RewindConversationRequest){

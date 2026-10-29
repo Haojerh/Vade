@@ -28,7 +28,15 @@ test('database context reads latest exact-session request input with both caches
     assert.equal(usage.usedTokens, 140); assert.equal(usage.windowTokens, null);
     assert.equal(usage.outputTokens, 20); assert.equal(usage.cacheReadTokens, 30); assert.equal(usage.cacheWriteTokens, 10);
     assert.equal(readDatabaseContext({ ...record, cwd: path.dirname(directory) }, file).usedTokens, null);
+    // An aborted or token-less request is not a measurement: fall back to the newest
+    // request that reported usage, and say so rather than showing nothing.
     insert('ses_exact', { role: 'assistant', tokens: { input: 0, output: 0 } });
+    assert.equal(readDatabaseContext(record, file).usedTokens, 140);
+    assert.match(readDatabaseContext(record, file).reason!, /reported no token usage/);
+    insert('ses_exact', { role: 'assistant', error: { name: 'MessageAbortedError', data: { message: 'Aborted' } }, tokens: { input: 0, output: 0, cache: { read: 0, write: 0 } } });
+    assert.equal(readDatabaseContext(record, file).usedTokens, 140);
+    // A compaction summary still stops the scan: pre-compaction usage is not current.
+    insert('ses_exact', { role: 'assistant', summary: true, tokens: { input: 90, output: 6 } });
     assert.equal(readDatabaseContext(record, file).usedTokens, null);
     insert('ses_exact', { role: 'assistant', modelID: 'nvidia/model:free', providerID: 'kilo', tokens: { input: 70, output: 4 } });
     assert.equal(readDatabaseContext(record,file).model,'kilo/nvidia/model:free');

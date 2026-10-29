@@ -220,6 +220,12 @@ export async function openNativeRewindPicker(projectId:string,nodeId:string,sign
   return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/rewind-picker`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}',signal}));
 }
 
+/** Submit the provider's own compaction command. `ok` reflects a fresh native
+ *  acknowledgement; an unconfirmed submission is returned as a warning. */
+export async function compactConversation(projectId:string,nodeId:string):Promise<import('../../shared/contracts').CompactConversationResponse>{
+  return handleResponse(await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/compact`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}));
+}
+
 const openingTerminals=new Map<string,Promise<import('../../shared/contracts').TerminalPage>>();
 /** Share one opening-time recovery across Chat mounts. Observed exits stay stopped. */
 export function openChatTerminal(projectId:string,nodeId:string) {
@@ -250,6 +256,23 @@ export async function fetchProjects(signal?: AbortSignal): Promise<Section<Inven
     signal,
   });
   return handleResponse<Section<Inventory>>(res);
+}
+
+let skillsCache: { value: import('../../shared/contracts').Section<import('../../shared/contracts').AgentSkillSummary[]>; expires: number } | null = null;
+let skillsPending: Promise<import('../../shared/contracts').Section<import('../../shared/contracts').AgentSkillSummary[]>> | null = null;
+/** Installed personal skills for composer references. The read is shared so several
+ *  composers on screen never repeat it, and a stale result is never reported as fresh. */
+export async function fetchAgentSkills(signal?: AbortSignal, force = false): Promise<import('../../shared/contracts').Section<import('../../shared/contracts').AgentSkillSummary[]>> {
+  signal?.throwIfAborted();
+  if (!force && skillsCache && Date.now() < skillsCache.expires) return skillsCache.value;
+  if (!skillsPending) {
+    const pending = fetch('/api/skills', { headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(15000) })
+      .then(handleResponse<import('../../shared/contracts').Section<import('../../shared/contracts').AgentSkillSummary[]>>)
+      .then(value => { skillsCache = { value, expires: Date.now() + 30000 }; return value; })
+      .finally(() => { if (skillsPending === pending) skillsPending = null; });
+    skillsPending = pending;
+  }
+  const result = await skillsPending; signal?.throwIfAborted(); return result;
 }
 
 export async function fetchSnapshot(

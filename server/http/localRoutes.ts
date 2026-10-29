@@ -11,6 +11,7 @@ import { addProject } from '../runtime/projects.js';
 import { projectShortcuts, runProjectShortcut, saveProjectShortcuts } from '../runtime/projectShortcuts.js';
 import { notificationScope, notificationState, updateNotificationState } from '../runtime/notificationState.js';
 import { conversationImageHeaders } from '../providers/conversationImages.js';
+import { readInstalledSkills } from '../runtime/skills.js';
 
 function text(value: unknown, label: string, max = 100): string {
   if (typeof value !== 'string' || !value.trim() || value.length > max || /[\x00-\x1f\x7f]/.test(value)) throw new CliError('INVALID_ARGUMENT', `Invalid ${label}`);
@@ -217,6 +218,11 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       catalog.defaultAgentId = catalog.installed.find(agent => agent.id === preferences.defaultAgent)?.id ?? catalog.installed[0]?.id ?? null;
       sendJson(200, catalog); return;
     }
+    if (pathname === '/api/skills') {
+      requireMethod('GET'); queryKeys();
+      // Personal skills are a bounded directory read; a missing directory is an empty list.
+      sendJson(200, section(readInstalledSkills())); return;
+    }
     if (pathname === '/api/connections') { requireMethod('GET'); queryKeys('scope', 'refresh'); if (query.has('refresh') && query.get('refresh') !== '1') throw new CliError('INVALID_ARGUMENT', 'Invalid refresh'); const scope = query.get('scope') ?? 'all'; if (scope !== 'all' && scope !== 'accounts' && scope !== 'integrations') throw new CliError('INVALID_ARGUMENT', 'Invalid connection scope'); sendJson(200, await runtime.connectionsService.connections(scope, query.get('refresh') === '1')); return; }
     if (pathname === '/api/usage') { requireMethod('GET'); queryKeys('refresh'); if (query.has('refresh') && query.get('refresh') !== '1') throw new CliError('INVALID_ARGUMENT', 'refresh must be 1'); sendJson(200, await runtime.connectionsService.usage(query.get('refresh') === '1')); return; }
     if (pathname === '/api/computer-awake') {
@@ -273,7 +279,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       } else { requireMethod('GET'); sendJson(200, section({ projects: await runtime.git.projects() })); }
       return;
     }
-    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|interrupt|terminal|terminal-input|terminal-attachments|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|rewind|rewind-picker|events|conversation-image))?)$/);
+    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|interrupt|compact|terminal|terminal-input|terminal-attachments|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|rewind|rewind-picker|events|conversation-image))?)$/);
     if (!match) { sendError(404, 'INVALID_ARGUMENT', 'Unknown standalone ADE endpoint'); return; }
     const [, projectId, route, nodeId, action] = match;
     const project = runtime.store.project(projectId);
@@ -439,6 +445,7 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       await runtime.sessions.resume(projectId, nodeId);
     }
     else if (action === 'interrupt') { queryKeys(); await body<import('../../shared/contracts.js').InterruptAgentRequest>([]); await runtime.sessions.interrupt(projectId,nodeId); }
+    else if (action === 'compact') { requireMethod('POST'); queryKeys(); await body<Record<string, never>>([]); sendJson(200, await runtime.compact(projectId, nodeId)); return; }
     else if(action==='terminal-attachments'){ queryKeys(); const request=await body<import('../../shared/contracts.js').TerminalAttachmentsRequest>(['attachments'],29*1024*1024); sendJson(200,await runtime.sessions.pasteTerminalAttachments(projectId,nodeId,request)); return; }
     else if (action === 'terminal-input') { const request = await body<{ data: string }>(['data'], 65536); await runtime.sessions.input(projectId, nodeId, request.data); }
     else if (action === 'terminal-resize') { const request = await body<{ cols: number; rows: number }>(['cols', 'rows']); await runtime.sessions.resize(projectId, nodeId, request.cols, request.rows); }

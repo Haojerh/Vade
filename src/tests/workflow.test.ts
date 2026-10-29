@@ -20,8 +20,16 @@ test('context meter distinguishes unknown capacity, zero usage and over-limit re
   const unknown = renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, usage: { ...usage, windowTokens: null } }));
   assert.match(unknown, /capacity unknown/);
   assert.doesNotMatch(unknown, /NaN|0% used/);
-  assert.equal(renderToStaticMarkup(createElement(ContextUsageMeter, props)), '');
-  assert.equal(renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, usage: { ...usage, usedTokens: null } })), '');
+  // A provider that can report context keeps an explicit unknown ring instead of
+  // disappearing from the composer; an unsupported provider renders nothing.
+  const missing = renderToStaticMarkup(createElement(ContextUsageMeter, props));
+  assert.match(missing, /is-unknown/);
+  assert.match(missing, /Context usage unavailable/);
+  assert.match(missing, />\?</);
+  const unavailable = renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, usage: { ...usage, usedTokens: null } }));
+  assert.match(unavailable, /is-unknown/);
+  assert.equal(renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, provider: 'terminal' })), '');
+  assert.equal(renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, provider: 'terminal', usage: { ...usage, usedTokens: null } })), '');
 });
 import { bindWorkflowPinch } from '../features/workflow/workflowTouch';
 import { compareWorkflowNodes } from '../features/workflow/workflowOrder';

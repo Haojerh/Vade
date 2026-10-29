@@ -1,11 +1,11 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import fs from 'node:fs';import os from 'node:os';import path from 'node:path';
 import {publicMessage,AdeConversations} from './conversation.js';
-import {readStagedUserImage,stagedUserImages} from './stagedConversationImages.js';
+import {readStagedUserImage,stagedReferences,stagedUserImages} from './stagedConversationImages.js';
 import type {SessionRecord} from './store.js';
 const png=Buffer.concat([Buffer.from('89504e470d0a1a0a','hex'),Buffer.alloc(40,1)]);
 const name='0a049702-e9c8-495e-85f7-0dea1b449f89.png';
-const row=(provider:string,text:string,extra:Record<string,unknown>={})=>JSON.stringify(provider==='codex'?{type:'response_item',payload:{type:'message',role:'user',id:'u',content:[{type:'input_text',text}]},...extra}:{type:'user',sessionId:'native',cwd:'/work',uuid:'u',message:{role:'user',content:[{type:'text',text}]},...extra});
+const row=(provider:string,text:string,extra:Record<string,unknown>={})=>JSON.stringify(['codex','dsh'].includes(provider)?{type:'response_item',payload:{type:'message',role:'user',id:'u',content:[{type:'input_text',text}]},...extra}:provider==='codebuddy'?{type:'message',role:'user',sessionId:'native',cwd:'/work',id:'u',content:[{type:'input_text',text}],...extra}:{type:'user',sessionId:'native',cwd:'/work',uuid:'u',message:{role:'user',content:[{type:'text',text}]},...extra});
 
 for(const provider of ['codex','claude'])test(`${provider} plain staged image path becomes an image preview and preserves the actual prompt`,()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'ade-staged-images-'));
@@ -25,10 +25,38 @@ for(const provider of ['codex','claude'])test(`${provider} plain staged image pa
   }finally{fs.rmSync(root,{recursive:true,force:true});}
 });
 
-test('staged previews reject external paths, traversal, mentions, non-user and private records',()=>{
+test('a provider that records the staged reference inline or as a mention still previews it',()=>{
+  const root=fs.mkdtempSync(path.join(os.tmpdir(),'ade-staged-inline-'));fs.writeFileSync(path.join(root,name),png);
+  try{
+    // Codex joins the pasted path and the prompt on one line when its own image
+    // conversion does not run; Antigravity, DSH and CodeBuddy record an `@` mention.
+    const forward=path.join(root,name).replaceAll('\\','/');
+    for(const [provider,text,expected] of [
+      ['codex',forward+' Please review the attached files.','Please review the attached files.'],
+      ['dsh','@'+forward+' test','test'],
+      ['codebuddy','@'+forward+'\nhello','hello'],
+    ] as const){
+      const record={provider,providerThreadId:'native'} as SessionRecord;
+      const message=publicMessage(record,row(provider,text),'src',3,undefined,root);
+      assert.equal(message?.images?.length,1,provider);
+      assert.equal(message?.text,expected,provider);
+      assert.equal(readStagedUserImage(provider,row(provider,text),root,0)?.bytes.length,png.length,provider);
+    }
+    // Antigravity keeps its user turn in a protobuf-derived row shape.
+    const antigravity=JSON.stringify({type:'USER_INPUT',source:'USER_EXPLICIT',step_index:2,content:'@'+forward+'\nPlease review the attached files.'});
+    const antigravityMessage=publicMessage({provider:'antigravity',providerThreadId:'native'} as SessionRecord,antigravity,'src',4,undefined,root);
+    assert.equal(antigravityMessage?.images?.length,1);
+    assert.equal(antigravityMessage?.text,'Please review the attached files.');
+    assert.equal(readStagedUserImage('antigravity',antigravity,root,0)?.bytes.length,png.length);
+  }finally{fs.rmSync(root,{recursive:true,force:true});}
+});
+
+test('staged previews reject external paths, traversal, non-user and private records',()=>{
   const root=fs.mkdtempSync(path.join(os.tmpdir(),'ade-staged-reject-'));fs.writeFileSync(path.join(root,name),png);
   try{
-    for(const value of [path.join(os.tmpdir(),name),root+'/../'+name,root+'/nested/'+name,'@'+path.join(root,name),'Please read '+path.join(root,name),root+'/arbitrary.png'])assert.equal(stagedUserImages('codex',row('codex',value),root,'src',1).images.length,0,value);
+    for(const value of [path.join(os.tmpdir(),name),root+'/../'+name,root+'/nested/'+name,root+'/arbitrary.png'])assert.equal(stagedUserImages('codex',row('codex',value),root,'src',1).images.length,0,value);
+    // Only the bounded owned token is a reference; surrounding prose stays public.
+    assert.equal(stagedReferences('Please read '+path.join(root,name),root).length,1);
     for(const flags of [{isSidechain:true},{isMeta:true},{isSynthetic:true}])assert.equal(publicMessage({provider:'claude',providerThreadId:'native'} as SessionRecord,row('claude',path.join(root,name),flags),'src',1,undefined,root),null);
     const agent=JSON.stringify({type:'response_item',payload:{type:'message',role:'assistant',content:[{type:'output_text',text:path.join(root,name)}]}});
     assert.equal(publicMessage({provider:'codex'} as SessionRecord,agent,'src',1,undefined,root)?.images,undefined);

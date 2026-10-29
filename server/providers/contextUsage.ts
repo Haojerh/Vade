@@ -1,6 +1,7 @@
 import type { AgentContextUsage } from '../../shared/contracts.js';
 import { toIsoOrNull } from './transcriptUtils.js';
 import {claudeLocalCommandModel} from './shared.js';
+import {claudeAutoCompactWindow,type ClaudeAutoCompactWindows} from './claudeSettings.js';
 
 export const tokenCount = (value: unknown): number | null => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 && value <= 1e12 ? value : null;
 const capacity = (value: unknown) => { const count = tokenCount(value); return count && count > 0 ? count : null; };
@@ -8,8 +9,13 @@ export function unknownContext(source: string, reason = 'No context measurement 
   return { usedTokens: null, windowTokens: null, observedAt: null, source, measurement: 'last-request', reason };
 }
 
+/** Claude compares a session against its configured auto-compact window, and its native
+ *  `/context` report prints that same threshold as the denominator. The settings file
+ *  supplies it before any `/context` run; an absent configuration leaves it unknown. */
+export interface ContextUsageOptions { claudeAutoCompact?: ClaudeAutoCompactWindows }
+
 /** Fold native records in source order; never add cumulative session spend. */
-export function transcriptContextUsage(provider: string, sessionId: string, lines: string[]): AgentContextUsage {
+export function transcriptContextUsage(provider: string, sessionId: string, lines: string[], options: ContextUsageOptions = {}): AgentContextUsage {
   let result = unknownContext(provider), model: string | undefined;
   let reportedWindow: { model:string; tokens:number } | undefined;
   for (const line of lines) {
@@ -36,11 +42,30 @@ export function transcriptContextUsage(provider: string, sessionId: string, line
           const reportedModel=index>0?/([a-zA-Z0-9][a-zA-Z0-9_.:/\[\]-]{0,199})\s*$/.exec(lines[index-1])?.[1]:undefined;
           const parse=(value:string)=>{const match=/^(\d+(?:\.\d+)?)([kKmM]?)$/.exec(value);return match?tokenCount(Math.round(Number(match[1])*({k:1000,m:1000000}[match[2].toLowerCase()]??1))):null;};
           const used=values?parse(values[1]):null,window=values?parse(values[2]):null;
-          if(reportedModel&&used!==null&&window&&used<=window){
+          // Claude reports the native window even when the session already exceeds it
+          // ("682.3k/272k tokens (251%)"), so an over-limit ratio is still a real capacity.
+          if(reportedModel&&used!==null&&window){
             // Bind the report to the exact response model observed in this session;
             // configured aliases are not normalized into guessed model identities.
-            model??=reportedModel;reportedWindow={model,tokens:window};
-            result={usedTokens:used,windowTokens:window,observedAt:toIsoOrNull(row.timestamp),source:'Claude /context report (rounded)',measurement:'reported',estimated:true,reason:'Native context estimate. Capacity is the window reported by /context.'};
+            model??=reportedModel;
+            // The ratio denominator is the auto-compact window Claude compares this
+            // session against, and it is what the native report itself displays
+            // ("682.3k/272k tokens (251%)"). A `[1m]` model label describes the model's
+            // own window, not the threshold this session actually runs under.
+            reportedWindow={model,tokens:window};
+            result={usedTokens:used,windowTokens:window,observedAt:toIsoOrNull(row.timestamp),source:'Claude /context report (rounded)',measurement:'reported',estimated:true,
+              autoCompactAtTokens:window,
+              reason:'Native /context estimate. Capacity is the auto-compact window this session is compared against; the session can already exceed it.'};
+          } else if(!values){
+            // A newer report can omit the ratio row; its explicit auto-compact window is
+            // still the native capacity Claude compares the session against. It applies to
+            // the measured model only when the report does not name a different one.
+            const auto=/Auto-compact window:\s*([\d.]+[kKmM]?)\s*tokens/i.exec(report);
+            const autoWindow=auto?parse(auto[1]):null;
+            if(autoWindow&&model&&(!reportedModel||reportedModel===model)){
+              reportedWindow={model,tokens:autoWindow};
+              if(result.usedTokens!==null&&result.windowTokens===null)result={...result,windowTokens:autoWindow,autoCompactAtTokens:autoWindow};
+            }
           }
         }
       }
@@ -85,8 +110,14 @@ export function transcriptContextUsage(provider: string, sessionId: string, line
         // Claude reports uncached input separately; CodeBuddy input includes caches.
         const used = input + (provider === 'claude' ? (read ?? 0) + (write ?? 0) : 0);
         if (used === 0) continue;
-        result = { usedTokens: used, windowTokens: capacity(usage.contextWindow ?? usage.model_context_window) ?? (reportedWindow?.model === model ? reportedWindow?.tokens ?? null : null), inputTokens: input, cacheAccounting: provider === 'claude' ? 'separate' : 'included-in-input',
+        // A request-level reading carries the used count only. For Claude the capacity is
+        // the configured auto-compact window, so the meter matches what `/context` would
+        // print even when the user has not run it in this session.
+        const configured = provider === 'claude' ? claudeAutoCompactWindow(model, options.claudeAutoCompact) : null;
+        const observedWindow = capacity(usage.contextWindow ?? usage.model_context_window) ?? (reportedWindow?.model === model ? reportedWindow?.tokens ?? null : null);
+        result = { usedTokens: used, windowTokens: configured ?? observedWindow, inputTokens: input, cacheAccounting: provider === 'claude' ? 'separate' : 'included-in-input',
           ...(read !== null ? { cacheReadTokens: read } : {}), ...(write !== null ? { cacheWriteTokens: write } : {}), ...(output !== null ? { outputTokens: output } : {}),
+          ...(configured ? { autoCompactAtTokens: configured, reason: 'Capacity is the configured Claude auto-compact window; the used count is measured from the last native request.' } : {}),
           observedAt: toIsoOrNull(row.timestamp), source: provider === 'claude' ? 'Claude response usage' : 'CodeBuddy response usage', measurement: 'last-request' };
       }
     } catch { /* Malformed native records cannot supply context facts. */ }

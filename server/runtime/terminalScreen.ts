@@ -201,6 +201,17 @@ export class TerminalScreen {
     }
     return false;
   }
+  /** Native image chips rendered in Codex's current composer. A pasted image path is
+   * converted asynchronously, so the chip count is the only proof the conversion ran. */
+  codexComposerImageCount(): number {
+    const buffer = this.terminal.buffer.active, row = buffer.baseY + buffer.cursorY;
+    for (let current = row; current >= Math.max(buffer.baseY, row - 50); current--) {
+      const line = buffer.getLine(current)?.translateToString(true) ?? '';
+      if (!/^\s*[\u203a\u276f>]/.test(line)) continue;
+      return line.match(/\[Image #\d+\]/g)?.length ?? 0;
+    }
+    return 0;
+  }
   text(): string | null {
     const buffer = this.terminal.buffer.active;
     const lines: string[] = [];

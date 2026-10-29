@@ -2,7 +2,7 @@
 
 Native Chat includes a context ring with provider-reported token details and a right-side message rail for previewing and jumping to your prompts. Unknown capacity stays explicit. See [context sources and navigation](docs/chat-context-navigation.md).
 
-Native Chat also groups consecutive tool calls, displays verified recorded user images, and offers native DSH permissions and text-message rewind when available. Unsupported actions stay hidden. See [native Chat activity and actions](docs/native-chat-features.md).
+Native Chat also groups consecutive tool calls, displays verified recorded user images, and offers native DSH permissions and text-message rewind when available. Unsupported actions stay hidden. Type `/` in the Chat draft for `/context`, `/model`, `/effort` and `/compact` (when the provider exposes its own compaction command), or to reference an installed skill; Codex lists skills under `$`. See [native Chat activity and actions](docs/native-chat-features.md).
 
 DeepSeek Harness (`dsh-tui`) supports Vade-owned Chat history, native turn status and work timing, model/effort selection, guarded sending, interruption, exact-session resume and workflows. Complete native setup in Terminal. See [DSH integration and verification limits](docs/dsh-integration.md).
 
