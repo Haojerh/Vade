@@ -21,6 +21,9 @@ export interface WorktreeBoxProps {
   registerRef: (id: string, el: HTMLElement | null) => void;
   previewEvents: (node: Node) => Record<string, any>;
   renderChatExtension: (node: Node) => React.ReactNode;
+  onOpenSubagent?: (subagent: import('../../../shared/contracts').Subagent, nodeId: string) => void;
+  onSubagentPreview?: (subagent: import('../../../shared/contracts').Subagent, anchor: HTMLElement, nodeId: string) => void;
+  onSubagentPreviewLeave?: () => void;
   isValidReorder: (
     membersList: Node[],
     draggedId: string,
@@ -65,6 +68,9 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
   registerRef,
   previewEvents,
   renderChatExtension,
+  onOpenSubagent,
+  onSubagentPreview,
+  onSubagentPreviewLeave,
   isValidReorder,
   onSelectNode,
   onResumeHistory,
@@ -366,6 +372,9 @@ export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
                     showPreviewText={true}
                     showStaleTag={true}
                     chatExtension={renderChatExtension(ag)}
+                    onOpenSubagent={subagent => onOpenSubagent?.(subagent, ag.id)}
+                    onSubagentPreview={(subagent, anchor) => onSubagentPreview?.(subagent, anchor, ag.id)}
+                    onSubagentPreviewLeave={onSubagentPreviewLeave}
                   />
                 </div>
 

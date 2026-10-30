@@ -235,7 +235,12 @@ export function AgentTerminal({ projectId, nodeId, provider, onStatusChange, str
     return () => { active = false; imageUpload?.abort();surface.removeEventListener('paste',pasteEvent,true);disposeVisibility(); window.removeEventListener('ade:session-closed', closedTab); window.removeEventListener('focus', claimViewport); document.removeEventListener('visibilitychange', claimViewport); surface.removeEventListener('pointerdown', claimViewport, true); surface.removeEventListener('wheel', claimViewport, true); clearTimeout(inputTimer); cancelAnimationFrame(frame); socket?.close(); observer.disconnect(); input.dispose(); disposeTouch(); terminal.dispose(); };
   }, [projectId, nodeId, retry, streamPath, provider, surfaceReady]);
   return <section className="agent-terminal" aria-label="Agent terminal" aria-busy={live === null && !error}>
-    {error && <div className="panel-alert alert-error" role="alert">{error} <button className="btn btn-secondary btn-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button><span> Inspect the terminal before repeating input.</span></div>}
+    {error && <div className="panel-alert alert-error agent-terminal-error" role="alert">
+      <p>{error}</p>
+      <div className="panel-alert-actions">
+        <button type="button" className="btn btn-secondary btn-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>
+      </div>
+    </div>}
     <div className="agent-terminal-screen"><div ref={host} className="agent-terminal-viewport" /></div>
     <div className="agent-terminal-footer"><p className="text-xs text-muted" role="status">{streamPath ? error ? `${setupLabel} terminal unavailable. Use Reconnect to try again.` : live === null ? `Opening ${setupLabel.toLowerCase()} terminal…` : live === false ? `${setupLabel} terminal stopped. Reopen setup to start a new one.` : `${setupLabel} terminal · press Enter to run the staged command.` : resuming ? restartable ? 'Opening a fresh shell…' : 'Resuming the same conversation…' : live === false ? restartable ? 'Shell stopped. Reopen in the same folder. Previous commands will not be replayed.' : resumable ? 'Session stopped. Resume to continue the same conversation.' : 'Session stopped. This session has no recovery binding; close its tab and start a new agent.' : 'Native terminal · authentication and permission prompts appear here.'}</p>
     {live === false && (resumable || restartable) && !resuming && <button type="button" className="btn btn-secondary" onClick={() => void resume()}><Icon name={restartable ? 'terminal' : 'play'} size={14} />{restartable ? 'Reopen terminal' : 'Resume session'}</button>}</div>

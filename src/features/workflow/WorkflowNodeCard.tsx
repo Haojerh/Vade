@@ -139,7 +139,46 @@ export interface WorkflowNodeCardBodyProps {
   showPreviewText?: boolean;
   showStaleTag?: boolean;
   chatExtension?: React.ReactNode;
+  onOpenSubagent?: (subagent: import('../../../shared/contracts').Subagent) => void;
+  onSubagentPreview?: (subagent: import('../../../shared/contracts').Subagent, anchor: HTMLElement) => void;
+  onSubagentPreviewLeave?: () => void;
 }
+
+/** Native child agents render as a connected stack under their parent card. */
+const SubagentStack: React.FC<{
+  subagents: import('../../../shared/contracts').Subagent[];
+  onOpen?: (subagent: import('../../../shared/contracts').Subagent) => void;
+  onPreview?: (subagent: import('../../../shared/contracts').Subagent, anchor: HTMLElement) => void;
+  onPreviewLeave?: () => void;
+}> = ({ subagents, onOpen, onPreview, onPreviewLeave }) => {
+  if (!subagents.length) return null;
+  return (
+    <div className="node-subagent-stack">
+      {subagents.map(subagent => (
+        <button
+          type="button"
+          key={subagent.id}
+          className="node-subagent-card"
+          onPointerDown={event => event.stopPropagation()}
+          onPointerEnter={event => { if (event.pointerType !== 'touch') onPreview?.(subagent, event.currentTarget); }}
+          onPointerLeave={event => {
+            // Moving between sibling child cards keeps the same preview host.
+            if (!(event.relatedTarget instanceof Element) || !event.relatedTarget.closest('.node-subagent-card')) onPreviewLeave?.();
+          }}
+          onFocus={event => onPreview?.(subagent, event.currentTarget)}
+          onBlur={onPreviewLeave}
+          onClick={event => { event.stopPropagation(); onOpen?.(subagent); }}
+          onKeyDown={event => event.stopPropagation()}
+          title={subagent.role ?? subagent.label}
+        >
+          <span className={`subagent-dot state-${subagent.state}`} aria-hidden="true" />
+          <span className="node-subagent-label">{subagent.label}</span>
+          <span className="node-subagent-state font-mono text-xs">{subagent.state}</span>
+        </button>
+      ))}
+    </div>
+  );
+};
 
 export const WorkflowNodeCardBody: React.FC<WorkflowNodeCardBodyProps> = ({
   node,
@@ -148,6 +187,9 @@ export const WorkflowNodeCardBody: React.FC<WorkflowNodeCardBodyProps> = ({
   showPreviewText = true,
   showStaleTag = false,
   chatExtension,
+  onOpenSubagent,
+  onSubagentPreview,
+  onSubagentPreviewLeave,
 }) => {
   return (
     <>
@@ -200,6 +242,7 @@ export const WorkflowNodeCardBody: React.FC<WorkflowNodeCardBodyProps> = ({
       </div>
 
       {chatExtension}
+      <SubagentStack subagents={node.subagents?.data ?? []} onOpen={onOpenSubagent} onPreview={onSubagentPreview} onPreviewLeave={onSubagentPreviewLeave} />
     </>
   );
 };

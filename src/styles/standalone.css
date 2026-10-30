@@ -219,7 +219,14 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .system-popover-note { line-height: 1.6; margin: 10px 4px; }
 .awake-popover > button { display: flex; gap: 10px; width: 100%; padding: 12px 4px; text-align: left; border: 0; background: transparent; color: var(--text-main); cursor: pointer; border-radius: 6px; }
 .awake-popover > button:hover { background: var(--surface-active); }
-.awake-mode-mark { width: 14px; padding-top: 3px; }
+/* The selection mark centers against the whole row, so it stays put across one- and two-line labels. */
+.awake-mode-mark { display: flex; flex: 0 0 14px; align-self: center; align-items: center; justify-content: center; width: 14px; }
+.awake-mode-dot { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--text-main); }
+/* Higher specificity than `.system-popover > header > span`, which would mute the tone color. */
+/* The leading dot is absolutely positioned so no flex layout can shrink or stretch it out of round. */
+.system-popover > header > .awake-status-badge { position: relative; display: inline-flex; align-items: center; padding: 2px 8px 2px 19px; border: 1px solid var(--state-failed-border); border-radius: 999px; background: var(--state-failed-bg); color: var(--state-failed-text); font-size: 11px; font-weight: 600; line-height: 1.6; }
+.system-popover > header > .awake-status-badge.is-active { border-color: var(--state-completed-border); background: var(--state-completed-bg); color: var(--state-completed-text); }
+.system-popover > header > .awake-status-badge::before { content: ''; position: absolute; left: 8px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: currentColor; }
 .awake-popover small { display: block; margin-top: 5px; color: var(--text-secondary); }
 .resources-popover .disclosure-trigger { width: 100%; }
 .resource-group-memory { margin-left: auto; color: var(--text-secondary); }

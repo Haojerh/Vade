@@ -21,6 +21,7 @@ import { SourceControl } from './sourceControl.js';
 import { SessionHandoffs } from './sessionHandoff.js';
 import { WorkflowSetup } from './workflowSetup.js';
 import { compactCommand } from './providerCompaction.js';
+import { discoverSubagents, readSubagentTranscript } from './subagents.js';
 
 export function section<T>(data: T | null, availability: SourceMeta['availability'] = 'ready', message?: string): Section<T> {
   const now = new Date().toISOString();
@@ -92,6 +93,7 @@ export class LocalRuntime {
           ...metadata, path: record.cwd, agentType: record.provider, liveness: terminal.live ? 'live' : 'exited', outputAvailable: true, chatAvailable: record.provider !== 'terminal',
           chatCompact: compactCommand(record.provider) !== null,
           chatReady: this.sessions.handoffPromptReady(projectId, record.id),
+          ...(record.provider === 'terminal' ? {} : { subagents: await discoverSubagents(record) }),
           state: status.meta.availability === 'ready' && status.data ? status.data.state : 'unknown', rawState: status.data?.event ?? null,
           agentStatus: status, lastActivityAt: status.meta.observedAt,
           ...(workflow ? { workflow: { runId: workflow.id, role: workflow.orchestratorId === record.id ? 'orchestrator' as const : 'worker' as const, stepState: workflow.steps.find(step => step.sessionId === record.id)?.state } } : {}) });
@@ -179,6 +181,16 @@ export class LocalRuntime {
         ...(() => { const handoff = this.sessions.require(projectId, nodeId).handoff; return handoff ? { handoff: { sourceId: handoff.sourceId, context: handoff.context, delivery: handoff.delivery } } : {}; })(),
         ...(node.agentType === 'antigravity' && !this.sessions.require(projectId, nodeId).providerThreadId ? { reason: 'Antigravity has not reported a saved conversation yet. Complete a first turn in Terminal to bind chat and enable recovery.' } : {}) } : undefined,
       conversation: node.kind === 'agent' ? await this.conversations.read(this.sessions.require(projectId, nodeId), query) : section<ConversationPage>(null, 'unsupported', 'Workspaces do not have conversation history.') };
+  }
+
+  /** Native child agents recorded for one exact session. */
+  async subagents(projectId: string, nodeId: string) {
+    return await discoverSubagents(this.sessions.require(projectId, nodeId));
+  }
+
+  /** Public turns and observed tool calls of one recorded child agent. */
+  async subagentConversation(projectId: string, nodeId: string, subagentId: string, query: NodeDetailsQuery = {}) {
+    return readSubagentTranscript(this.sessions.require(projectId, nodeId), subagentId, query);
   }
 
   close(): void {

@@ -196,8 +196,17 @@ export class OrganizationRuntime {
     const supplied = Buffer.from(token ?? ''), expected = Buffer.from(identity?.token ?? '');
     if (!identity || supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected) || identity.runId !== request.runId) throw new CliError('FORBIDDEN_ORIGIN', 'Workflow identity is invalid or expired');
     const run = this.get(identity.runId), coordinator = run.orchestratorId === identity.sessionId;
-    if (this.sessions.require(run.projectId, identity.sessionId).statusToken !== identity.launchToken) invalid('This terminal restarted; its workflow lease has expired. Cancel the run before starting a new workflow.');
     if (terminal(run)) invalid('This workflow has ended');
+    const participant = this.sessions.require(run.projectId, identity.sessionId);
+    if (participant.statusToken !== identity.launchToken) {
+      // The lease binds the session, not one process incarnation. A participant that was
+      // relaunched or recovered keeps its assignment, so refresh the recorded token; a stopped
+      // terminal never inherits it.
+      if (!this.sessions.page(run.projectId, identity.sessionId).live) invalid('This terminal is stopped, so its workflow lease ended. Resume the terminal or cancel the run.');
+      identity.launchToken = participant.statusToken;
+      try { fs.writeFileSync(identity.file, JSON.stringify({ ...identity, endpoint: this.endpoint }), { mode: 0o600 }); }
+      catch { /* This call is still fenced by the session identity; the file is rewritten next time. */ }
+    }
     const step = run.steps.find(item => item.sessionId === identity.sessionId);
     if (!coordinator && (!step || !['running', 'completed', 'failed', 'interrupted'].includes(step.state))) invalid('Worker assignment is no longer active');
     if (request.action === 'context') { fields(request, ['action', 'runId', 'sessionId']); return this.view(run, identity.sessionId); }

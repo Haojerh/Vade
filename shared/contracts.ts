@@ -149,6 +149,8 @@ export interface Node {
   effort?: string | null;
   toolActivity?: Section<ToolActivity[]>;
   providerActivity?: Section<ProviderActivity[]>;
+  /** Native child agents this exact session spawned; absence means the provider records none. */
+  subagents?: Section<Subagent[]>;
   contextUsage?: AgentContextUsage;
 }
 
@@ -212,6 +214,36 @@ export interface ToolActivity {
   detail?: string;
   edits?: ToolEditPreview[];
   children?: ToolActivity[];
+}
+
+/** Observed state of one native child agent. `unknown` is a real answer: a provider that
+ *  records no completion signal never gets an inferred one. */
+export type SubagentState = 'working' | 'waiting' | 'idle' | 'completed' | 'failed' | 'unknown';
+
+/** One child agent recorded by the provider harness for an exact parent session.
+ *  The ID is an opaque source-bound token; it never carries a transcript path. */
+export interface Subagent {
+  id: Id;
+  label: string;
+  /** Provider-declared role or agent type, when the harness records one. */
+  role: string | null;
+  state: SubagentState;
+  model: string | null;
+  startedAt: ISO | null;
+  lastActivityAt: ISO | null;
+  /** Bounded last public message text; never tool output or reasoning. */
+  preview: string | null;
+  /** Whether this child's own transcript is recorded and readable right now. */
+  transcript: 'available' | 'unavailable';
+  /** Why a transcript is unavailable, for display next to the child. */
+  reason?: string;
+}
+
+/** One recorded child agent's public turns plus its observed tool calls, kept separate
+ *  from conversation history exactly like native chat does. */
+export interface SubagentConversation {
+  conversation: Section<ConversationPage>;
+  tools: ToolActivity[];
 }
 
 export interface OrchestrationMessage {

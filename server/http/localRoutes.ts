@@ -279,7 +279,15 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       } else { requireMethod('GET'); sendJson(200, section({ projects: await runtime.git.projects() })); }
       return;
     }
-    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|interrupt|compact|terminal|terminal-input|terminal-attachments|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|rewind|rewind-picker|events|conversation-image))?)$/);
+    const subagentTranscript = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/nodes\/([a-zA-Z0-9_.-]+)\/subagents\/([a-zA-Z0-9_.-]+)\/conversation$/);
+    if (subagentTranscript) {
+      requireMethod('GET'); queryKeys('cursor', 'limit', 'direction');
+      if ((query.has('cursor') && query.get('cursor')!.length > 512) || (query.has('direction') && query.get('direction') !== 'older')) throw new CliError('INVALID_ARGUMENT', 'Invalid subagent conversation cursor or direction');
+      if (query.has('limit') && (!/^[1-9][0-9]*$/.test(query.get('limit')!) || Number(query.get('limit')) > 200)) throw new CliError('INVALID_ARGUMENT', 'Invalid subagent conversation limit');
+      sendJson(200, await runtime.subagentConversation(subagentTranscript[1], subagentTranscript[2], subagentTranscript[3],
+        { direction: query.get('direction') === 'older' ? 'older' : undefined, cursor: query.get('cursor'), limit: Number(query.get('limit') ?? 20) })); return;
+    }
+    const match = pathname.match(/^\/api\/projects\/([a-zA-Z0-9_.-]+)\/(snapshot|events|github|commit-graph|worktrees|nodes\/([a-zA-Z0-9_.-]+)(?:\/(handoff|handoff-message|interaction|interrupt|compact|terminal|terminal-input|terminal-attachments|terminal-resize|resume|create-agent|close-tab|rename|rename-worktree|delete-worktree|worktree|message|chat-options|rewind|rewind-picker|events|conversation-image|subagents))?)$/);
     if (!match) { sendError(404, 'INVALID_ARGUMENT', 'Unknown standalone ADE endpoint'); return; }
     const [, projectId, route, nodeId, action] = match;
     const project = runtime.store.project(projectId);
@@ -352,6 +360,10 @@ export async function handleLocalRoute(runtime: LocalRuntime, req: http.Incoming
       const raw = query.get('cursor') ?? '0';
       if (!/^\d{1,16}$/.test(raw) || !Number.isSafeInteger(Number(raw))) throw new CliError('INVALID_ARGUMENT', 'Invalid terminal cursor');
       sendJson(200, runtime.sessions.page(projectId, nodeId, Number(raw))); return;
+    }
+    if (action === 'subagents') {
+      requireMethod('GET'); queryKeys();
+      sendJson(200, await runtime.subagents(projectId, nodeId!)); return;
     }
     if (action === 'conversation-image') {
       requireMethod('GET'); queryKeys('source', 'id');

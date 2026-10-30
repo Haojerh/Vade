@@ -7,17 +7,9 @@ import { useHistoryRendering } from '../../hooks/useHistoryRendering';
 import { ConversationPositionRail } from './ConversationPositionRail';
 import { ConversationImages } from './ConversationImages';
 import {ConversationRoundGroup,ConversationRoundActivity,ConversationRoundState,groupSettledRounds,mergeRoundObservations,type RoundEntry} from './conversationRounds';
-import { ConversationToolGroup, groupConversationTimeline } from './toolGroups';
+import { ConversationToolGroup, conversationTimeline, groupConversationTimeline } from './toolGroups';
 
-export { ConversationToolGroup, classifyToolActivity, formatToolClause, groupConversationTimeline, summarizeToolGroup, toolGroupClauses, toolGroupIcon } from './toolGroups';
-
-export function conversationTimeline(messages: ConversationMessage[], tools: ToolActivity[], limited: boolean) {
-  const first = messages.find(message => message.at)?.at;
-  const cutoff = limited && first ? Date.parse(first) : -Infinity;
-  const items = [...messages.map(message => ({ id: message.id, at: message.at, message, tool: null as ToolActivity | null })),
-    ...tools.filter(tool => !tool.at || Date.parse(tool.at) >= cutoff).map(tool => ({ id: tool.id, at: tool.at, message: null as ConversationMessage | null, tool }))];
-  return items.sort((a, b) => (a.at ? Date.parse(a.at) : Infinity) - (b.at ? Date.parse(b.at) : Infinity));
-}
+export { ConversationToolGroup, classifyToolActivity, conversationTimeline, formatToolClause, groupConversationTimeline, summarizeToolGroup, toolGroupClauses, toolGroupIcon } from './toolGroups';
 
 export function mergeConversationMessages(older: ConversationMessage[], current: ConversationMessage[]): ConversationMessage[] {
   const seen = new Set<string>();

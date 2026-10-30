@@ -10,6 +10,7 @@ import { ProviderActivity } from '../features/workflow/ProviderActivity';
 import type { Node } from '../../shared/contracts';
 import { readAgentDraft, writeAgentDraft } from '../hooks/useAgentDraft';
 import { handoffNoticeKey, handoffNoticeDismissed, dismissHandoffNotice } from '../features/workflow/handoffNotices';
+import { SubagentDetailsDialog } from '../features/workflow/SubagentTray';
 
 test('uncertain handoff notice dismissal is scoped to its project, target and source without changing delivery state', () => {
   const key=handoffNoticeKey('notice-project','target','source');
@@ -750,4 +751,31 @@ test('agent history exposes workspace/project/all scopes and an explicit target 
   for (const label of ['Workspace', 'Project', 'All', 'Target worktree', 'Search sessions', 'Refresh session history']) assert.ok(html.includes(label));
   assert.match(html, /Main checkout/);
   assert.match(html, /Drag a stopped session/);
+});
+
+test('subagent details use the shared overlay close control and the chat thread, not a footer bar', () => {
+  const subagent = { id: 'sub_x', label: 'Leibniz', role: '/root/chat_navigation', state: 'working' as const, model: null,
+    startedAt: '2026-10-30T08:00:00.000Z', lastActivityAt: '2026-10-30T08:05:00.000Z', preview: null, transcript: 'available' as const };
+  const html = renderToStaticMarkup(createElement(SubagentDetailsDialog, {
+    projectId: 'project', nodeId: 'node', provider: 'codex', subagent, onClose: () => {},
+  }));
+  // The close affordance is the shared top-right overlay button, not a bottom action bar.
+  assert.match(html, /overlay-close-button/);
+  assert.match(html, /aria-label="Close subagent details"/);
+  assert.doesNotMatch(html, /subagent-details-actions/);
+  // The body is the same conversation thread and bubble markup native chat uses.
+  assert.match(html, /class="conversation-thread"/);
+  assert.match(html, /Leibniz/);
+  assert.match(html, /state-working/);
+});
+
+test('an unavailable child transcript states the reason instead of rendering an empty thread', () => {
+  const subagent = { id: 'sub_y', label: 'Explore', role: null, state: 'unknown' as const, model: null,
+    startedAt: null, lastActivityAt: null, preview: null, transcript: 'unavailable' as const, reason: 'DSH child sessions are recorded natively but not projected into chat.' };
+  const html = renderToStaticMarkup(createElement(SubagentDetailsDialog, {
+    projectId: 'project', nodeId: 'node', provider: 'dsh', subagent, onClose: () => {},
+  }));
+  assert.match(html, /subagent-details-note/);
+  assert.match(html, /not projected into chat/);
+  assert.doesNotMatch(html, /class="conversation-thread"/);
 });

@@ -26,10 +26,11 @@ export function isClaudeInterruptionNotice(record:any):boolean {
 
 // Only public user/assistant text is projected. Tool output, thinking, and
 // provider-injected bookkeeping never become conversation turns.
-export function publicTranscriptRecord(line: string, provider: string): any | null {
+// `includeSidechain` is set only when reading one recorded child agent's own transcript.
+export function publicTranscriptRecord(line: string, provider: string, includeSidechain = false): any | null {
   if (!localTranscriptProviders.includes(provider)) return null;
   const record = JSON.parse(line);
-  if(record.isSidechain||record._fromSubAgent)return null;
+  if(!includeSidechain&&(record.isSidechain||record._fromSubAgent))return null;
   if (provider === 'codebuddy') {
     if (record.type !== 'message' || !['user','assistant'].includes(record.role) || record.providerData?.skipRun || record.isMeta || record.isSynthetic) return null;
     return { type: 'response_item', timestamp: record.timestamp, payload: { type: 'message', role: record.role, id: record.id, content: Array.isArray(record.content) ? record.content.filter((p: any) => ['input_text','output_text','text'].includes(p.type) && typeof p.text === 'string') : [] } };

@@ -9,6 +9,7 @@ import { RefreshIcon } from '../../components/ui/RefreshIcon';
 const ConversationHistory = lazy(() => import('./ConversationHistory').then(module => ({ default: module.ConversationHistory })));
 import { ConversationToolCall } from './ConversationToolCall';
 import { ProviderActivity } from './ProviderActivity';
+import { SubagentDetailsDialog, SubagentTray } from './SubagentTray';
 import { useAgentDraft } from '../../hooks/useAgentDraft';
 import { WORKFLOW_CONFIRMATION_MESSAGE } from '../../../shared/contracts';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
@@ -108,6 +109,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
   const [chatSending, setChatSending] = useState<boolean>(false);
   const [dictating, setDictating] = useState(false);
   const [chatStatus, setChatStatus] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [openSubagent, setOpenSubagent] = useState<import('../../../shared/contracts').Subagent | null>(null);
   // Composer references: a leading `/` (or `$` on Codex) lists Chat commands and skills.
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const [skills, setSkills] = useState<AgentSkillSummary[]>([]);
@@ -385,7 +387,13 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
                 )}
 
                 {!isWorktree && details?.session && projectId && <>
-                  {sessionView==='chat'&&(terminalError||chatTerminal&&!chatTerminal.live)&&<div className="panel-alert alert-info" role="status"><p>{terminalError??'The agent terminal is stopped. Resume it to continue this conversation.'}</p>{chatTerminal?.resumable&&<button type="button" className="btn btn-secondary btn-sm" disabled={openingTerminal} onClick={async()=>{const owner=chatTarget.current;setOpeningTerminal(true);try{await resumeTerminal(projectId,node.id);const page=await openChatTerminal(projectId,node.id);if(owner===chatTarget.current){setChatTerminal(page);setTerminalError(null);onSessionChange?.();}}catch(error){if(owner===chatTarget.current)setTerminalError(error instanceof Error?error.message:'Unable to resume the agent.');}finally{if(owner===chatTarget.current)setOpeningTerminal(false);}}}>Resume session</button>}<button type="button" className="btn btn-secondary btn-sm" onClick={()=>setSessionView('terminal')}>Open Terminal</button></div>}
+                  {sessionView==='chat'&&(terminalError||chatTerminal&&!chatTerminal.live)&&<div className="panel-alert alert-info agent-session-notice" role="status">
+                    <p className="agent-session-notice-text">{terminalError??'The agent terminal is stopped. Resume it to continue this conversation.'}</p>
+                    <div className="agent-session-notice-actions">
+                      {chatTerminal?.resumable&&<button type="button" className="btn btn-secondary btn-sm" disabled={openingTerminal} onClick={async()=>{const owner=chatTarget.current;setOpeningTerminal(true);try{await resumeTerminal(projectId,node.id);const page=await openChatTerminal(projectId,node.id);if(owner===chatTarget.current){setChatTerminal(page);setTerminalError(null);onSessionChange?.();}}catch(error){if(owner===chatTarget.current)setTerminalError(error instanceof Error?error.message:'Unable to resume the agent.');}finally{if(owner===chatTarget.current)setOpeningTerminal(false);}}}>{openingTerminal?'Resuming…':'Resume session'}</button>}
+                      <button type="button" className="btn btn-secondary btn-sm" onClick={()=>setSessionView('terminal')}>Open Terminal</button>
+                    </div>
+                  </div>}
                   {details.session.handoff && <HandoffNotice key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} info={details.session.handoff} onRefresh={onRefresh} />}
                   {sessionView==='terminal'&&terminalError&&<div className="panel-alert alert-error" role="alert">{terminalError}</div>}
                   {(sessionView === 'terminal' || !details.session.chat) && <Suspense fallback={<p role="status">Opening terminal…</p>}><AgentTerminal key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} provider={node.agentType ?? undefined} onStatusChange={onSessionChange} /></Suspense>}
@@ -425,6 +433,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
 
                 {activeVisibleSections.chatbox && !isWorktree && (!details?.session || (sessionView === 'chat' && details.session.chat)) && (
                   <div className="modal-section agent-chatbox-section">
+                    {projectId && node.subagents && <SubagentTray key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} provider={node.agentType} subagents={node.subagents} onOpen={setOpenSubagent} />}
                     {projectId && details?.session?.chat && <AgentInteraction key={`${projectId}:${node.id}`} projectId={projectId} nodeId={node.id} waiting={node.state === 'waiting'} onTerminal={() => setSessionView('terminal')} />}
                     {chatStatus?.type === 'error' && <div className="section-header-row">
 
@@ -539,6 +548,7 @@ export const NodeDetails: React.FC<NodeDetailsProps> = ({
         </div>
       </Modal>
 
+      <SubagentDetailsDialog projectId={projectId ?? ''} nodeId={node?.id ?? ''} provider={node?.agentType ?? null} subagent={openSubagent} onClose={() => setOpenSubagent(null)} />
       <NodeDetailsActionDialogs
         node={node}
         detailsNodeLabel={details?.node?.label || ''}

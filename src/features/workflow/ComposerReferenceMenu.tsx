@@ -13,9 +13,17 @@ interface Props {
   onHover: (index: number) => void;
 }
 
+/** Each built-in command keeps its own icon so the list is scannable without reading labels. */
+const COMMAND_ICONS: Record<import('./composerCommands').ComposerCommandId, import('../../components/ui/Icon').IconName> = {
+  context: 'layers',
+  model: 'sliders-horizontal',
+  effort: 'gauge',
+  compact: 'collapse',
+};
+
 function entryIcon(entry: ComposerEntry) {
   if (entry.kind === 'skill') return <Icon name="sparkles" size={14} className="composer-reference-icon" />;
-  return <Icon name={entry.command === 'context' ? 'gauge' : 'sliders-horizontal'} size={14} className="composer-reference-icon" />;
+  return <Icon name={COMMAND_ICONS[entry.command]} size={14} className="composer-reference-icon" />;
 }
 
 /** Composer reference list. Commands and skills stay in their own labelled groups, and

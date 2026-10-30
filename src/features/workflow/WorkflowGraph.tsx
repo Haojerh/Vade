@@ -14,6 +14,7 @@ import { useWorktreeMemberOrder } from './useWorktreeMemberOrder';
 import { useWorkflowOverlays, WorkflowOverlays } from './WorkflowOverlays';
 import { useLiveGraphActivity } from './useLiveGraphActivity';
 import { ToolActivityOverlay } from './ToolActivityOverlay';
+import { SubagentDetailsDialog } from './SubagentTray';
 import { buildCardPrompt, KANBAN_DRAG_TYPE, type KanbanCard } from '../kanban/kanban';
 import type { HistoryDrag } from '../agents/historyDrag';
 import { ProjectShortcuts } from '../projects/ProjectShortcuts';
@@ -107,7 +108,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
   const [shortcutDrag, setShortcutDrag] = useState<HistoryDrag | null>(null);
   const prefersReducedMotion = usePrefersReducedMotion();
   const { tools, packets, holdTool } = useLiveGraphActivity(`${projectId}:${runId}`, nodes, edges, toolActivityEnabled && !isLocallyStale);
-  const [preview, setPreview] = useState<{ nodeId: string; anchor: HTMLElement } | null>(null);
+  const [preview, setPreview] = useState<{ nodeId: string; anchor: HTMLElement; subagent?: import('../../../shared/contracts').Subagent } | null>(null);
+  const [openSubagent, setOpenSubagent] = useState<{ nodeId: string; subagent: import('../../../shared/contracts').Subagent } | null>(null);
   const suppressPreviewRef = useRef(false);
   const closePreview = useCallback(() => setPreview(null), []);
 
@@ -289,7 +291,17 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       ) {
         return;
       }
-      setPreview((current) => (current?.nodeId === nodeId ? current : { nodeId, anchor }));
+      setPreview((current) => (current?.nodeId === nodeId && !current.subagent ? current : { nodeId, anchor }));
+    },
+    [draggingNodeId, isCanvasPanning, isDraggingGitHubItem, chatOpenNodeId]
+  );
+
+  /** A child card previews that child's own newest reply, never its parent's. */
+  const showSubagentPreview = useCallback(
+    (nodeId: string, subagent: import('../../../shared/contracts').Subagent, anchor: HTMLElement) => {
+      if (draggingNodeId || isCanvasPanning || isDraggingGitHubItem || chatOpenNodeId || suppressPreviewRef.current) return;
+      setPreview((current) => (current?.nodeId === nodeId && current.subagent?.id === subagent.id && current.anchor === anchor
+        ? current : { nodeId, anchor, subagent }));
     },
     [draggingNodeId, isCanvasPanning, isDraggingGitHubItem, chatOpenNodeId]
   );
@@ -455,6 +467,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
 
   const previewEvents = (node: Node) => ({
     onPointerEnter: (event: React.PointerEvent<HTMLElement>) => {
+      // Child cards own their own preview; the parent must not claim these pointers.
+      if ((event.target as HTMLElement).closest('.node-subagent-card')) return;
       if (
         chatOpenNodeId ||
         draggingNodeId ||
@@ -466,6 +480,7 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       if (!selectedNodeId && event.pointerType !== 'touch') showPreview(node.id, event.currentTarget);
     },
     onPointerMove: (event: React.PointerEvent<HTMLElement>) => {
+      if ((event.target as HTMLElement).closest('.node-subagent-card')) return;
       if (
         chatOpenNodeId ||
         selectedNodeId ||
@@ -482,13 +497,15 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
     },
     onPointerLeave: (event: React.PointerEvent<HTMLElement>) => {
       if (!selectedNodeId && !draggingNodeId && !isCanvasPanning) suppressPreviewRef.current = false;
-      if (!(event.relatedTarget instanceof Element) || !event.relatedTarget.closest('.node-message-preview'))
-        closePreview();
+      if (event.relatedTarget instanceof Element
+        && (event.relatedTarget.closest('.node-message-preview') || event.relatedTarget.closest('.node-subagent-card'))) return;
+      closePreview();
     },
     onFocus: (event: React.FocusEvent<HTMLElement>) => {
       if (
         chatOpenNodeId ||
         (event.target as HTMLElement).closest('.node-card-chat-extension') ||
+        (event.target as HTMLElement).closest('.node-subagent-card') ||
         draggingNodeId ||
         isCanvasPanning ||
         isDraggingGitHubItem
@@ -503,7 +520,10 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
       suppressPreviewRef.current = true;
       closePreview();
     },
-    onBlur: closePreview,
+    onBlur: (event: React.FocusEvent<HTMLElement>) => {
+      if (event.relatedTarget instanceof Element && event.relatedTarget.closest('.node-subagent-card')) return;
+      closePreview();
+    },
     onPointerDown: closePreview,
     'aria-describedby': preview?.nodeId === node.id ? 'node-message-preview' : undefined,
   });
@@ -558,10 +578,11 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         preview &&
         nodes.some((node) => node.id === preview.nodeId) && (
           <NodeMessagePreview
-            key={`${projectId}:${runId}:${preview.nodeId}`}
+            key={`${projectId}:${runId}:${preview.nodeId}:${preview.subagent?.id ?? ''}`}
             projectId={projectId}
             runId={runId}
             nodeId={preview.nodeId}
+            subagent={preview.subagent ?? null}
             anchor={preview.anchor}
             onLeave={closePreview}
           />
@@ -739,6 +760,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                               showPreviewText={true}
                               showStaleTag={false}
                               chatExtension={renderChatExtension(orch)}
+                              onOpenSubagent={subagent => setOpenSubagent({ nodeId: orch.id, subagent })}
+                              onSubagentPreview={(subagent, anchor) => showSubagentPreview(orch.id, subagent, anchor)}
+                              onSubagentPreviewLeave={closePreview}
                             />
                           </div>
                         </div>
@@ -771,6 +795,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                     registerRef={registerRef}
                     previewEvents={previewEvents}
                     renderChatExtension={renderChatExtension}
+                    onOpenSubagent={(subagent, nodeId) => setOpenSubagent({ nodeId, subagent })}
+                    onSubagentPreview={(subagent, anchor, nodeId) => showSubagentPreview(nodeId, subagent, anchor)}
+                    onSubagentPreviewLeave={closePreview}
                     isValidReorder={isValidReorder}
                     onSelectNode={onSelectNode}
                     historyDrag={shortcutDrag ?? historyDrag}
@@ -871,6 +898,9 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
                             showPreviewText={false}
                             showStaleTag={false}
                             chatExtension={renderChatExtension(ag)}
+                            onOpenSubagent={subagent => setOpenSubagent({ nodeId: ag.id, subagent })}
+                            onSubagentPreview={(subagent, anchor) => showSubagentPreview(ag.id, subagent, anchor)}
+                            onSubagentPreviewLeave={closePreview}
                           />
                         </div>
                       );
@@ -885,6 +915,8 @@ export const WorkflowGraph: React.FC<WorkflowGraphProps> = ({
         </div>
       </div>
       <WorkflowZoomControls zoom={zoom} onChange={changeZoom} />
+      {projectId && <SubagentDetailsDialog projectId={projectId} nodeId={openSubagent?.nodeId ?? ''} provider={nodes.find(node => node.id === openSubagent?.nodeId)?.agentType ?? null}
+        subagent={openSubagent?.subagent ?? null} onClose={() => setOpenSubagent(null)} />}
     </section>
   );
 };

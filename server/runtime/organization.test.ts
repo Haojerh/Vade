@@ -291,7 +291,7 @@ test('contacted agent orchestrates; dependency reports, leases, mailboxes and fi
   } finally { f.close(); }
 });
 
-test('shared work is serialized and a restarted terminal loses its lease', async () => {
+test('shared work is serialized and a relaunched participant keeps its lease', async () => {
   const f = fixture(); try {
     const value = config(); value.edges = [];
     const { record } = await f.start(value);
@@ -299,8 +299,14 @@ test('shared work is serialized and a restarted terminal loses its lease', async
     await f.call(record.id, 'dispatch', { nodeId: 'implement', task: 'implement' });
     await assert.rejects(f.call(record.id, 'dispatch', { nodeId: 'review', task: 'review' }), /one worker/);
     const worker = f.store.sessions(f.project.id).find(row => row.id !== record.id)!;
+    // A recovered or resumed terminal is the same assignment: the lease follows the session.
     f.store.saveSession({ ...worker, statusToken: 'new-launch' });
-    await assert.rejects(f.call(worker.id, 'result', { outcome: 'completed', summary: 'stale' }), /lease has expired/);
+    await f.call(worker.id, 'result', { outcome: 'completed', summary: 'recovered worker reported' });
+    assert.equal(f.runtime.runs()[0].steps.find(step => step.nodeId === 'implement')?.state, 'completed');
+    // A stopped terminal never inherits the assignment, even after another relaunch.
+    f.live.delete(worker.id);
+    f.store.saveSession({ ...worker, statusToken: 'third-launch' });
+    await assert.rejects(f.call(worker.id, 'result', { outcome: 'failed', summary: 'stopped' }), /lease ended/);
     await f.runtime.cancel(f.runtime.runs()[0].id); assert.equal(f.runtime.runs()[0].state, 'cancelled');
   } finally { f.close(); }
 });

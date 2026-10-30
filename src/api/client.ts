@@ -328,6 +328,30 @@ export async function fetchNodeDetails(
   return handleResponse<NodeDetails>(res);
 }
 
+/** Native child agents recorded for this exact session. */
+export async function fetchSubagents(projectId: string, nodeId: string, signal?: AbortSignal): Promise<import('../../shared/contracts').Section<import('../../shared/contracts').Subagent[]>> {
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/subagents`, { headers: { Accept: 'application/json' }, signal });
+  return handleResponse(res);
+}
+
+/** Public turns and observed tool calls of one recorded child agent. */
+export async function fetchSubagentConversation(
+  projectId: string,
+  nodeId: string,
+  subagentId: string,
+  options?: { cursor?: string | null; limit?: number; direction?: 'older' },
+  signal?: AbortSignal,
+): Promise<import('../../shared/contracts').SubagentConversation> {
+  const params = new URLSearchParams();
+  if (options?.cursor) params.set('cursor', options.cursor);
+  if (options?.direction) params.set('direction', options.direction);
+  if (options?.limit !== undefined) params.set('limit', String(options.limit));
+  const query = params.toString() ? `?${params}` : '';
+  const res = await fetch(`/api/projects/${encodeURIComponent(projectId)}/nodes/${encodeURIComponent(nodeId)}/subagents/${encodeURIComponent(subagentId)}/conversation${query}`,
+    { headers: { Accept: 'application/json' }, signal });
+  return handleResponse(res);
+}
+
 export async function fetchGitHub(
   projectId: string,
   query: GitHubQuery = { scope: 'general' },

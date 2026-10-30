@@ -137,6 +137,17 @@ export function toolGroupIcon(tools: readonly ToolActivity[]): IconName {
   return clauses.length === 1 ? CATEGORY_ICONS[clauses[0].category] : 'wrench';
 }
 
+/** Merge public turns and observed tool calls into one chronological timeline. Kept here so
+ *  the pure ordering rules stay with the grouping they feed, and lightweight consumers do not
+ *  pull in the lazy chat module. */
+export function conversationTimeline(messages: ConversationMessage[], tools: ToolActivity[], limited: boolean): TimelineItem[] {
+  const first = messages.find(message => message.at)?.at;
+  const cutoff = limited && first ? Date.parse(first) : -Infinity;
+  const items = [...messages.map(message => ({ id: message.id, at: message.at, message, tool: null as ToolActivity | null })),
+    ...tools.filter(tool => !tool.at || Date.parse(tool.at) >= cutoff).map(tool => ({ id: tool.id, at: tool.at, message: null as ConversationMessage | null, tool }))];
+  return items.sort((a, b) => (a.at ? Date.parse(a.at) : Infinity) - (b.at ? Date.parse(b.at) : Infinity));
+}
+
 /** Group only consecutive tool calls between public messages, preserving chronological order and provenance. */
 export function groupConversationTimeline(timeline: readonly TimelineItem[]): ConversationTimelineEntry[] {
   const entries: ConversationTimelineEntry[] = [];
