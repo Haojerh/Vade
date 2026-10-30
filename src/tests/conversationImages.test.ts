@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ConversationImage } from '../../shared/contracts';
-import { ConversationImages, conversationImageLabel, conversationImageUrl } from '../features/workflow/ConversationImages';
+import { ConversationImages, conversationImageLabel, conversationImageUrl } from '../features/workflow/chat/ConversationImages';
 
 const images: ConversationImage[] = [
   { id: 'img.sg.0.AbCdEfGhIjKl.MnOpQrStUvWxYz012345', mimeType: 'image/png', bytes: 2048 },

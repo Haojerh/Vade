@@ -8,8 +8,8 @@ import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { SegmentedControl } from '../../components/ui/SegmentedControl';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
-import { MessageMarkdown } from '../workflow/MessageMarkdown';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
+import { MessageMarkdown } from '../workflow/chat/MessageMarkdown';
 import './workflowRuns.css';
 
 const ended=(state:string)=>['completed','failed','cancelled'].includes(state);

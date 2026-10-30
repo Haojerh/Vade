@@ -2,9 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createElement} from 'react';
 import {renderToStaticMarkup} from 'react-dom/server';
-import {ConversationRewind} from '../features/workflow/ConversationRewind';
-import {UserMessageMeta} from '../features/workflow/ResponseActions';
-import {permissionPresentation} from '../features/workflow/permissionPresentation';
+import {ConversationRewind} from '../features/workflow/chat/ConversationRewind';
+import {UserMessageMeta} from '../features/workflow/chat/ResponseActions';
+import {permissionPresentation} from '../features/workflow/chat/permissionPresentation';
 import type {ConversationMessage,ConversationPage} from '../../shared/contracts';
 
 test('rewind is visible only for a verified public user boundary in a capable source',()=>{

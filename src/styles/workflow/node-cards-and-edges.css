@@ -1,0 +1,535 @@
+/* Cards (Orchestrators & Agents) - Compact ~260px width & Fixed Geometry Hover */
+.graph-node-card {
+  display: flex;
+  flex-direction: column;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-main);
+  background: var(--surface-2);
+  color: var(--text-main);
+  cursor: pointer;
+  position: relative;
+  z-index: 3;
+  box-sizing: border-box;
+  overflow: hidden;
+  transition: border-color 160ms var(--ease-out), background 160ms var(--ease-out), box-shadow 160ms var(--ease-out);
+}
+
+.graph-node-card.orchestrator-card {
+  width: 260px;
+  max-width: 260px;
+  cursor: pointer;
+}
+
+.graph-node-card.agent-card {
+  width: 260px;
+  max-width: 260px;
+}
+
+.node-draggable {
+  touch-action: none;
+}
+
+.graph-node-card.orchestrator-card .drag-grip-icon {
+  cursor: grab;
+}
+
+.is-dragging-node,
+.is-dragging-node * {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.is-dragging-node {
+  z-index: 25 !important;
+  box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5) !important;
+  transition: none !important;
+}
+
+@media (pointer: fine) {
+  .graph-node-card::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    border-radius: inherit;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0) 50%, rgba(255, 255, 255, 0.02) 100%);
+    opacity: 0;
+    transition: opacity 160ms var(--ease-out);
+  }
+
+  .graph-node-card:hover {
+    border-color: var(--border-strong);
+    background: var(--surface-hover);
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+  }
+
+  .graph-node-card:hover::after {
+    opacity: 1;
+  }
+}
+
+.graph-node-card:active {
+  background: var(--surface-active);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .graph-node-card,
+  .graph-node-card::after {
+    transition: none !important;
+  }
+}
+
+.node-selected {
+  border-color: var(--focus-ring) !important;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+.node-stale {
+  opacity: 0.75;
+}
+
+.node-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+  gap: 6px;
+}
+.agent-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.agent-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-card-title {
+  font-size: 12px;
+  color: var(--text-main);
+  margin-bottom: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-card-preview {
+  margin-top: 4px;
+  margin-bottom: 6px;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.node-card-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-top: 6px;
+  min-width: 0;
+}
+.node-footer-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-shrink: 0;
+}
+.node-footer-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  margin-left: auto;
+  overflow: hidden;
+}
+.node-model-name {
+  color: var(--text-muted);
+  font-size: 10px;
+  max-width: 85px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.node-effort-badge {
+  font-size: 9px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: var(--surface-1);
+  border: 1px solid var(--border-subtle);
+  color: var(--text-secondary);
+  text-transform: lowercase;
+  flex-shrink: 0;
+}
+.badge-liveness-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.dot-live { background-color: #10b981; }
+.dot-exited { background-color: #6b7280; }
+.dot-unknown { background-color: #f59e0b; }
+.dot-unverifiable { background-color: #9ca3af; }
+
+.badge-stale-tag {
+  font-size: 9px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: var(--state-waiting-bg);
+  color: var(--state-waiting-text);
+  border: 1px solid var(--state-waiting-border);
+}
+
+.node-badge-state {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: capitalize;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+.node-badge-state.state-working {
+  background: var(--state-working-bg);
+  color: var(--state-working-text);
+  border: 1px solid var(--state-working-border);
+  box-shadow: 0 0 6px rgba(59, 130, 246, 0.25);
+}
+.node-badge-state.state-waiting {
+  background: var(--state-waiting-bg);
+  color: var(--state-waiting-text);
+  border: 1px solid var(--state-waiting-border);
+}
+.node-badge-state.state-blocked {
+  background: var(--state-blocked-bg);
+  color: var(--state-blocked-text);
+  border: 1px solid var(--state-blocked-border);
+}
+.node-badge-state.state-completed {
+  background: var(--state-completed-bg);
+  color: var(--state-completed-text);
+  border: 1px solid var(--state-completed-border);
+}
+.node-badge-state.state-failed,
+.node-badge-state.state-interrupted {
+  background: var(--state-failed-bg);
+  color: var(--state-failed-text);
+  border: 1px solid var(--state-failed-border);
+}
+.node-badge-state.state-idle,
+.node-badge-state.state-unknown {
+  background: var(--state-idle-bg);
+  color: var(--state-idle-text);
+  border: 1px solid var(--state-idle-border);
+}
+
+/* Card State Colors OFF (Default Neutral) */
+[data-card-colors="false"] .graph-node-card,
+[data-card-colors="false"] .graph-node-card.state-working,
+[data-card-colors="false"] .graph-node-card.state-completed,
+[data-card-colors="false"] .graph-node-card.state-idle,
+[data-card-colors="false"] .graph-node-card.state-waiting,
+[data-card-colors="false"] .graph-node-card.state-interrupted,
+[data-card-colors="false"] .graph-node-card.state-blocked,
+[data-card-colors="false"] .graph-node-card.state-failed,
+[data-card-colors="false"] .graph-node-card.state-unknown,
+[data-card-colors="false"] .graph-node-card.orchestrator-card,
+[data-card-colors="false"] .graph-node-card.agent-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border-main);
+  color: var(--text-main);
+  box-shadow: none;
+  animation: none;
+}
+
+/* Optional State-Based Card Coloring (active when enabled via Display Settings) */
+[data-card-colors="true"] .graph-node-card.state-working {
+  background: var(--card-working-bg);
+  border-color: var(--card-working-border);
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.25);
+  animation: activeWorkingBlueGlow 2.4s ease-in-out infinite alternate;
+}
+[data-card-colors="true"] .graph-node-card.state-completed {
+  background: var(--card-completed-bg);
+  border-color: var(--card-completed-border);
+}
+[data-card-colors="true"] .graph-node-card.state-idle {
+  background: var(--card-idle-bg);
+  border-color: var(--card-idle-border);
+}
+[data-card-colors="true"] .graph-node-card.state-waiting {
+  background: var(--state-waiting-bg);
+  border-color: var(--state-waiting-border);
+}
+[data-card-colors="true"] .graph-node-card.state-blocked,
+[data-card-colors="true"] .graph-node-card.state-interrupted,
+[data-card-colors="true"] .graph-node-card.state-failed {
+  background: var(--state-failed-bg);
+  border-color: var(--state-failed-border);
+}
+[data-card-colors="true"] .graph-node-card.state-unknown {
+  background: var(--state-unknown-bg);
+  border-color: var(--state-unknown-border);
+}
+
+@keyframes activeWorkingBlueGlow {
+  0% {
+    box-shadow: 0 0 6px rgba(59, 130, 246, 0.2);
+  }
+  100% {
+    box-shadow: 0 0 16px rgba(59, 130, 246, 0.45);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-card-colors="true"] .graph-node-card.state-working {
+    animation: none;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.25);
+  }
+}
+
+/* SVG Edges with Glowing and Delivery Effect */
+.graph-edge-path {
+  transition: stroke 160ms var(--ease-out);
+}
+.edge-idle {
+  stroke: var(--edge-idle);
+  stroke-width: 1.5px;
+}
+.edge-active {
+  stroke: var(--edge-active);
+  stroke-width: 2.2px;
+  filter: drop-shadow(0 0 4px var(--edge-active));
+}
+
+/* Ambient glow layer along active paths */
+.graph-edge-glow {
+  stroke: var(--edge-active);
+  stroke-width: 7px;
+  opacity: 0.35;
+  filter: blur(3px);
+  pointer-events: none;
+}
+
+/* Traveling delivery packet along active paths */
+.delivery-packet {
+  pointer-events: none;
+}
+.edge-delivery-halo {
+  fill: var(--edge-active);
+  opacity: 0.55;
+  filter: blur(2px);
+}
+.edge-delivery-bead {
+  fill: #ffffff;
+  filter: drop-shadow(0 0 4px #60a5fa);
+}
+
+
+/* ==========================================================================
+   Node Drag & Drop Glowing Target Indicator
+   ========================================================================== */
+.node-drag-target-glow {
+  box-shadow: 0 0 0 2px var(--accent), 0 0 14px rgba(59, 130, 246, 0.45) !important;
+  border-color: var(--accent) !important;
+  animation: pulse-node-glow 1.8s infinite ease-in-out;
+}
+
+@keyframes pulse-node-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 2px var(--accent), 0 0 10px rgba(59, 130, 246, 0.35);
+  }
+  50% {
+    box-shadow: 0 0 0 3px var(--accent), 0 0 22px rgba(59, 130, 246, 0.7);
+  }
+}
+
+.node-drop-hover {
+  box-shadow: 0 0 0 3px #10b981, 0 0 24px rgba(16, 185, 129, 0.7) !important;
+  border-color: #10b981 !important;
+  background: var(--surface-hover) !important;
+  transform: scale(1.02);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .node-drag-target-glow {
+    animation: none !important;
+  }
+  .node-drop-hover {
+    transform: none !important;
+  }
+}
+
+/* ==========================================================================
+   Node Card Extended Chatbox (Right-click & Drop)
+   ========================================================================== */
+.orchestrator-group:has(.node-chat-extended),
+.worktree-box-container:has(.node-chat-extended) {
+  position: relative;
+  z-index: 20;
+}
+.graph-node-card.node-chat-extended {
+  z-index: 20;
+}
+[data-card-colors] .graph-node-card.node-chat-extended {
+  background: var(--surface-2);
+}
+.node-card-chat-extension {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  cursor: default;
+}
+
+.node-card-chat-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 11px;
+  font-family: inherit;
+  line-height: 1.4;
+  border-radius: 4px;
+  border: 1px solid var(--border-main);
+  background: var(--surface-1);
+  color: var(--text-main);
+  resize: vertical;
+  min-height: 64px;
+}
+
+.node-card-chat-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2);
+}
+
+.node-card-chat-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.node-card-chat-actions-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+/* Worktree Agent Drag-to-Reorder styles */
+.worktree-agents-stack .graph-node-card {
+  position: relative;
+  will-change: transform;
+}
+
+.worktree-agents-stack .graph-node-card.is-member-dragging {
+  opacity: 0.3;
+  filter: grayscale(40%);
+  border-style: dashed !important;
+  box-shadow: none !important;
+}
+
+/* Worktree Drag & Drop Preview Slot & Card */
+.worktree-drop-preview-slot {
+  width: 260px;
+  max-width: 260px;
+  box-sizing: border-box;
+  animation: dropSlotFadeIn 0.15s ease-out;
+  pointer-events: none;
+}
+
+@keyframes dropSlotFadeIn {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.worktree-drop-preview-card {
+  width: 260px;
+  max-width: 260px;
+  box-sizing: border-box;
+  background: rgba(16, 185, 129, 0.08);
+  border: 1.5px dashed #10b981;
+  border-radius: 8px;
+  padding: 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+  box-shadow: 0 0 12px rgba(16, 185, 129, 0.22);
+}
+
+.worktree-drop-preview-card .node-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 0;
+  min-width: 0;
+  width: 100%;
+}
+
+.worktree-drop-preview-card .agent-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+
+.worktree-drop-preview-card .agent-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worktree-drop-preview-card .node-badge-state.preview-pill {
+  background: #059669 !important;
+  color: #ffffff !important;
+  border: 1px solid #10b981 !important;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  letter-spacing: 0.01em;
+}
+
+.worktree-drop-preview-card .node-badge-state.preview-pill span,
+.worktree-drop-preview-card .node-badge-state.preview-pill svg {
+  color: #ffffff !important;
+}
+
+.worktree-drop-preview-card .preview-hint-text {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  display: block;
+}

@@ -7,8 +7,8 @@ import { Modal } from '../components/ui/Modal';
 import { Select } from '../components/ui/Select';
 import { Disclosure } from '../components/ui/Disclosure';
 import { DialogActions, DialogError } from '../components/ui/DialogActions';
-import { usePopoverState } from '../hooks/usePopoverState';
-import { useConfirmationState } from '../hooks/useConfirmationState';
+import { usePopoverState } from '../hooks/ui/usePopoverState';
+import { useConfirmationState } from '../hooks/ui/useConfirmationState';
 
 const modes = [{ id: 'on', label: 'On', text: 'Keep this computer awake continuously.' }, { id: 'agent', label: 'Agent', text: 'Stay awake while an agent is working.' }, { id: 'off', label: 'Off', text: 'Allow normal system sleep behavior.' }] as const;
 function useComputerAwake() {

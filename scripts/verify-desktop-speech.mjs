@@ -11,7 +11,7 @@ export async function verifyDesktopSpeech(output) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'vade-speech-smoke-'));
   try {
     const result = await build({ stdin: { contents: `
-      import { speechModulePath } from './server/runtime/speech.ts';
+      import { speechModulePath } from './server/runtime/speech/speech.ts';
       import fs from 'node:fs';
       const file = speechModulePath();
       if (!file) throw new Error('Packaged speech addon could not be resolved');

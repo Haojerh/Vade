@@ -1,5 +1,5 @@
 import React, { useRef } from 'react';
-import { useHistoryRendering } from '../../hooks/useHistoryRendering';
+import { useHistoryRendering } from '../../hooks/ui/useHistoryRendering';
 import type { Activity } from '../../../shared/contracts';
 
 interface ActivityPanelProps {

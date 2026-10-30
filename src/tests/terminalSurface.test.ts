@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { whenTerminalSurfaceReady } from '../features/workflow/terminalSurface';
-import { observeTerminalVisibility } from '../features/workflow/terminalVisibility';
+import { whenTerminalSurfaceReady } from '../features/workflow/terminal/terminalSurface';
+import { observeTerminalVisibility } from '../features/workflow/terminal/terminalVisibility';
 
 test('terminal visibility pauses hidden or collapsed surfaces and disposes every observer', () => {
   const previous = { ResizeObserver: globalThis.ResizeObserver, IntersectionObserver: globalThis.IntersectionObserver };

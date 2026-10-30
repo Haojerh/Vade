@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { InboxItem, InboxData, NotificationState, Section } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
-import { useSharedNotifications } from '../notifications/useSharedNotifications';
+import { useSharedNotifications } from '../../hooks/workspace/useSharedNotifications';
 
 const key = 'vade:agent-notifications:v1';
 export function notificationWasHandled(state: NotificationState | null, id: string): boolean {

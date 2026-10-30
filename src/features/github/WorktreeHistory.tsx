@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useGitHubActivity } from './useGitHubActivity';
+import { useGitHubActivity } from '../../hooks/github/useGitHubActivity';
 import { GitHubPanel } from './GitHubPanel';
 
 export function WorktreeHistory({ projectId, nodeId, branch, commitGraphEnabled }: { projectId: string; nodeId: string; branch?: string; commitGraphEnabled: boolean }) {

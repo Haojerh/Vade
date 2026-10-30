@@ -4,7 +4,7 @@ import { deleteProject } from '../../api/client';
 import { Modal } from '../../components/ui/Modal';
 import { DialogActions, DialogError } from '../../components/ui/DialogActions';
 import { Icon } from '../../components/ui/Icon';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 
 export function DeleteProject({ project, onDeleted }: { project: Project; onDeleted: () => void }) {
   const overlay = useConfirmationState();

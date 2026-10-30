@@ -1,7 +1,7 @@
 import { useId, useRef, useState } from 'react';
 import type { AgentCatalogEntry } from '../../../shared/contracts';
 import { ProviderIcon } from '../providers/ProviderIcon';
-import { usePopoverState } from '../../hooks/usePopoverState';
+import { usePopoverState } from '../../hooks/ui/usePopoverState';
 import { Icon } from './Icon';
 import { Popover } from './Popover';
 

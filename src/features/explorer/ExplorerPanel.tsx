@@ -9,10 +9,10 @@ import { Popover } from '../../components/ui/Popover';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { BinaryControl } from '../../components/ui/BinaryControl';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
-import { usePopoverState } from '../../hooks/usePopoverState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
+import { usePopoverState } from '../../hooks/ui/usePopoverState';
 import { FileOverlay, warmWorkspaceEditor } from './FileOverlay';
-import { useExplorerActions } from './useExplorerActions';
+import { useExplorerActions } from '../../hooks/explorer/useExplorerActions';
 import './explorer.css';
 
 const errorText = (error: unknown) => error instanceof Error ? error.message.replace(/^\[[A-Z_]+\]\s*/, '') : 'Unable to access workspace files';

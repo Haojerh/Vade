@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createElement} from 'react';import {renderToStaticMarkup} from 'react-dom/server';
-import {publicMessage,codexRecordedUserAnchors} from '../../server/runtime/conversation';import type {SessionRecord} from '../../server/runtime/store';import type {Node,ConversationPage} from '../../shared/contracts';
-import {AgentWorkTime} from '../features/workflow/AgentWorkTime';import {ConversationHistory} from '../features/workflow/ConversationHistory';import {ConversationToolGroup} from '../features/workflow/toolGroups';
+import {publicMessage,codexRecordedUserAnchors} from '../../server/runtime/chat/conversation';import type {SessionRecord} from '../../server/runtime/store';import type {Node,ConversationPage} from '../../shared/contracts';
+import {AgentWorkTime} from '../features/workflow/chat/AgentWorkTime';import {ConversationHistory} from '../features/workflow/chat/ConversationHistory';import {ConversationToolGroup} from '../features/workflow/chat/toolGroups';
 
 test('Codex rewind binds recorded UserMessage events rather than incompatible response IDs',()=>{
  const user=(id:string)=>({type:'response_item',payload:{type:'message',role:'user',id,content:[{type:'input_text',text:'same text'}]}});

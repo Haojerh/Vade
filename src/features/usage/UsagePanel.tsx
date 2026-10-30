@@ -5,8 +5,8 @@ import { fetchUsage } from '../../api/client';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { Icon } from '../../components/ui/Icon';
-import { usePopoverState } from '../../hooks/usePopoverState';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { usePopoverState } from '../../hooks/ui/usePopoverState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 import { detailedWindow, primaryWindow, remainingTime, resetDescription, shortWindow, updatedDescription, usageGroups, usageWindows } from './usagePresentation';
 

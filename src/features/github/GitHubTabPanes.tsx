@@ -1,7 +1,7 @@
 import React, { lazy, Suspense } from 'react';
 import { Icon } from '../../components/ui/Icon';
 const CommitHistoryGraph = lazy(() => import('./CommitHistoryGraph').then(module => ({ default: module.CommitHistoryGraph })));
-import type { useCommitGraph } from './useCommitGraph';
+import type { useCommitGraph } from '../../hooks/github/useCommitGraph';
 import type {
   Commit,
   GitHubData,

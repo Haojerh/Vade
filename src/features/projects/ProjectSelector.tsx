@@ -3,7 +3,7 @@ import React from 'react';
 import type { DashboardSnapshot, Inventory, Section } from '../../../shared/contracts';
 import {
   type NodeDetailsVisibleSections,
-} from '../workflow/NodeDetails';
+} from '../workflow/node-details/NodeDetails';
 import { Icon } from '../../components/ui/Icon';
 import { RegisterProject } from './RegisterProject';
 import { DeleteProject } from './DeleteProject';

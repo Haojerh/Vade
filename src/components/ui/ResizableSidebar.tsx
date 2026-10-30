@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { useDismissLayer } from '../../hooks/useDismissLayer';
+import { useDismissLayer } from '../../hooks/ui/useDismissLayer';
 
 interface ResizableSidebarProps {
   side: 'left' | 'right';

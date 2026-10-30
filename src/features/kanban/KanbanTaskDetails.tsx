@@ -1,8 +1,8 @@
 import { Modal } from '../../components/ui/Modal';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 import { Icon } from '../../components/ui/Icon';
-import { MessageMarkdown } from '../workflow/MessageMarkdown';
-import { AttachmentPreview } from '../workflow/MessageAttachments';
+import { MessageMarkdown } from '../workflow/chat/MessageMarkdown';
+import { AttachmentPreview } from '../workflow/chat/MessageAttachments';
 import type { KanbanCard } from './kanban';
 import { useState } from 'react';
 

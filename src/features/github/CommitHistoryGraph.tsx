@@ -1,12 +1,12 @@
 import React, { useEffect,useRef,useState } from 'react';
 import { layoutCommitGraph } from './commitGraphLayout';
-import type { useCommitGraph } from './useCommitGraph';
+import type { useCommitGraph } from '../../hooks/github/useCommitGraph';
 import type { CommitFiles } from '../../../shared/contracts';
 import { fetchCommitFiles } from '../../api/client';
 import { Icon } from '../../components/ui/Icon';
 import { FileTypeIcon } from '../../components/ui/FileTypeIcon';
 import { Skeleton } from '../../components/ui/Skeleton';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 import { FileOverlay } from '../explorer/FileOverlay';
 
 const colors = ['#3899ff', '#f5b700', '#e34ba0', '#40ba94', '#a78bfa', '#e98549'];

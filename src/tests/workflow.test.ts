@@ -2,10 +2,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup, renderToReadableStream } from 'react-dom/server';
-import { latestAgentMessage } from '../features/workflow/conversation';
-import { MessageMarkdown } from '../features/workflow/MessageMarkdown';
-import { ConversationHistory, mergeConversationMessages, mergeLiveConversation } from '../features/workflow/ConversationHistory';
-import { ContextUsageMeter, contextPercentage } from '../features/workflow/ContextUsageMeter';
+import { latestAgentMessage } from '../features/workflow/chat/conversation';
+import { MessageMarkdown } from '../features/workflow/chat/MessageMarkdown';
+import { ConversationHistory, mergeConversationMessages, mergeLiveConversation } from '../features/workflow/chat/ConversationHistory';
+import { ContextUsageMeter, contextPercentage } from '../features/workflow/chat/ContextUsageMeter';
 import type { AgentContextUsage } from '../../shared/contracts';
 
 test('context meter distinguishes unknown capacity, zero usage and over-limit readings without inventing a window', () => {
@@ -31,18 +31,18 @@ test('context meter distinguishes unknown capacity, zero usage and over-limit re
   assert.equal(renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, provider: 'terminal' })), '');
   assert.equal(renderToStaticMarkup(createElement(ContextUsageMeter, { ...props, provider: 'terminal', usage: { ...usage, usedTokens: null } })), '');
 });
-import { bindWorkflowPinch } from '../features/workflow/workflowTouch';
-import { compareWorkflowNodes } from '../features/workflow/workflowOrder';
-import { separateWorkflowBoxes } from '../features/workflow/workflowCollision';
-import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/NodeDetails';
-import { WorkflowGraph } from '../features/workflow/WorkflowGraph';
-import { validateMessageFiles, MessageAttachments } from '../features/workflow/MessageAttachments';
+import { bindWorkflowPinch } from '../features/workflow/canvas/workflowTouch';
+import { compareWorkflowNodes } from '../features/workflow/canvas/workflowOrder';
+import { separateWorkflowBoxes } from '../features/workflow/canvas/workflowCollision';
+import { DEFAULT_VISIBLE_SECTIONS, NodeDetails } from '../features/workflow/node-details/NodeDetails';
+import { WorkflowGraph } from '../features/workflow/canvas/WorkflowGraph';
+import { validateMessageFiles, MessageAttachments } from '../features/workflow/chat/MessageAttachments';
 import type { Node, Edge, NodeDetails as NodeDetailsType } from '../../shared/contracts';
 import type { ConversationMessage } from '../../shared/contracts';
 import type { OrganizationConfig } from '../../shared/contracts';
 import { arrangeOrganization, connectionCreatesCycle } from '../features/organization/organizationGraph';
-import { deferHistoryRendering } from '../hooks/useHistoryRendering';
-import { conversationPositions, conversationPositionTicks, conversationPositionKey, conversationViewport, jumpToConversationPosition } from '../features/workflow/conversationNavigation';
+import { deferHistoryRendering } from '../hooks/ui/useHistoryRendering';
+import { conversationPositions, conversationPositionTicks, conversationPositionKey, conversationViewport, jumpToConversationPosition } from '../features/workflow/chat/conversationNavigation';
 import { sidePopoverPosition } from '../components/ui/Popover';
 
 test('chat navigator centers above a visible composer and keeps its preview inside the modal', () => {
@@ -147,12 +147,12 @@ test('live conversation updates replace matching IDs, retain loaded history and 
   assert.deepEqual(result, [old, updated]);
   assert.deepEqual(mergeLiveConversation(result, [updated]), result);
 });
-import { WorkflowEdgesSvg } from '../features/workflow/WorkflowEdgesSvg';
-import { ToolActivityOverlay } from '../features/workflow/ToolActivityOverlay';
-import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts, toolCardConnectionPath, roundedToolPath } from '../features/workflow/toolActivityLayout';
-import { placeNewWorktree } from '../features/workflow/newWorktreePlacement';
-import { clampWorkflowZoom, workflowBox, zoomScrollOffset } from '../features/workflow/workflowZoom';
-import { ToolEditDiff } from '../features/workflow/ToolActivityCard';
+import { WorkflowEdgesSvg } from '../features/workflow/canvas/WorkflowEdgesSvg';
+import { ToolActivityOverlay } from '../features/workflow/chat/ToolActivityOverlay';
+import { boxesOverlap, placeToolCard, toolConnectionPath, toolPorts, toolCardConnectionPath, roundedToolPath } from '../features/workflow/chat/toolActivityLayout';
+import { placeNewWorktree } from '../features/workflow/canvas/newWorktreePlacement';
+import { clampWorkflowZoom, workflowBox, zoomScrollOffset } from '../features/workflow/canvas/workflowZoom';
+import { ToolEditDiff } from '../features/workflow/chat/ToolActivityCard';
 
 test('tool edit hover renders safe before/after code, location and truncation', () => {
   const html = renderToStaticMarkup(createElement(ToolEditDiff, { edits: [{ path: 'src/app.ts', location: '@@ main', truncated: true,
@@ -1110,7 +1110,7 @@ test('WorkflowGraph respects worktreeMemberOrder from localStorage to order work
   }
 });
 
-import { placeWorkflowMember } from '../features/workflow/workflowOrder';
+import { placeWorkflowMember } from '../features/workflow/canvas/workflowOrder';
 test('resumed sessions insert at the selected member position without duplicating existing members', () => {
   const original = ['a', 'b', 'c'];
   assert.deepEqual(placeWorkflowMember(original, 'resumed', 'b', 'before'), ['a', 'resumed', 'b', 'c']);

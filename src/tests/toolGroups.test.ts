@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { ConversationMessage, ConversationPage, ToolActivity } from '../../shared/contracts';
-import { ConversationHistory, conversationTimeline } from '../features/workflow/ConversationHistory';
+import { ConversationHistory, conversationTimeline } from '../features/workflow/chat/ConversationHistory';
 import {
   ConversationToolGroup,
   classifyToolActivity,
@@ -12,7 +12,7 @@ import {
   summarizeToolGroup,
   toolGroupClauses,
   toolGroupIcon,
-} from '../features/workflow/toolGroups';
+} from '../features/workflow/chat/toolGroups';
 
 test('summarizeToolGroup counts consecutive tool calls in first-seen category order without inferring outcomes', () => {
   const tools: ToolActivity[] = [

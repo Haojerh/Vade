@@ -1,0 +1,365 @@
+/* 7. Workflow Graph Presentation (The Authoritative Sketch!) */
+.workflow-graph-wrapper {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  position: relative;
+  background: var(--canvas-bg);
+  overflow: hidden;
+}
+.graph-canvas-container { touch-action: none; }
+
+.graph-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 36px;
+  background: var(--canvas-bg);
+  font-size: 12px;
+}
+.toolbar-title-group {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.graph-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0;
+  line-height: 1.2;
+}
+.node-count-badge {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.2;
+}
+.graph-toolbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+@media (max-width: 600px) {
+  .graph-toolbar { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px 28px; }
+  .toolbar-title-group { width: 100%; gap: 4px; }
+  .graph-title { white-space: nowrap; }
+  .graph-toolbar-actions { flex-wrap: wrap; gap: 8px; width: 100%; }
+  .graph-toolbar-actions > .btn { flex: 0 0 auto; white-space: nowrap; }
+  .graph-legend { gap: 10px; margin-right: auto; flex-wrap: wrap; font-size: 10px; }
+}
+.btn-reset-layout {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.graph-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.legend-swatch {
+  width: 12px;
+  height: 3px;
+  border-radius: 1px;
+  display: inline-block;
+}
+.swatch-active { background: var(--edge-active); }
+.swatch-idle { background: var(--edge-idle); }
+
+/* Wrap against the actual center-column width, including when both sidebars are open. */
+.graph-toolbar { flex-wrap: wrap; gap: 12px; padding: 12px 20px; }
+.toolbar-title-group { flex: 0 0 auto; }
+.graph-title { white-space: nowrap; }
+.graph-toolbar-actions { flex: 0 1 auto; min-width: 0; max-width: 100%; flex-wrap: wrap; gap: 8px; }
+.graph-toolbar-actions > .btn { flex-shrink: 0; white-space: nowrap; }
+.graph-legend { flex-wrap: wrap; gap: 10px; }
+.legend-item { white-space: nowrap; }
+
+.graph-canvas-container {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-gutter: stable;
+  overflow-anchor: none;
+  padding: 0;
+  cursor: grab;
+}
+
+.graph-canvas-container.is-canvas-panning {
+  cursor: grabbing !important;
+  user-select: none;
+}
+
+.workflow-zoom-extent {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+  overflow: clip;
+}
+.workflow-zoom-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 24px 32px;
+  box-sizing: border-box;
+  transform-origin: top left;
+}
+.workflow-zoom-controls {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  z-index: 15;
+  display: flex;
+  align-items: center;
+  padding: 2px;
+  border: 1px solid var(--border-main);
+  border-radius: 10px;
+  background: var(--surface-1);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
+}
+.workflow-zoom-controls button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+.workflow-zoom-controls button:hover:not(:disabled) { background: var(--surface-hover); color: var(--text-main); }
+.workflow-zoom-controls button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.workflow-zoom-controls button:disabled { opacity: 0.35; cursor: default; }
+.workflow-zoom-controls .workflow-zoom-value {
+  width: 46px;
+  margin: 0 2px;
+  border-left: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+  border-radius: 0;
+  color: var(--text-main);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  gap: 1px;
+}
+.workflow-zoom-value span { color: var(--text-muted); font-size: 10px; }
+
+.graph-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  text-align: center;
+}
+.empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+  margin-bottom: 6px;
+}
+.empty-description {
+  font-size: 12px;
+  color: var(--text-muted);
+  max-width: 320px;
+}
+
+/* Sketch Layout: Orchestrator Left, Worktrees Right */
+.sketch-graph-layout {
+  width: max-content;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 80px;
+  min-width: max-content;
+}
+
+/* Left Orchestrator Lane */
+.orchestrator-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 260px;
+  min-width: 260px;
+  flex-shrink: 0;
+}
+.lane-header {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding-bottom: 4px;
+}
+.orchestrator-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 260px;
+  position: relative;
+  touch-action: none;
+}
+.orchestrator-group.is-dragging-node {
+  box-shadow: none !important;
+}
+.orchestrator-drag-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.orchestrator-drag-header:hover .drag-grip-icon {
+  opacity: 0.95;
+  color: var(--text-main);
+}
+.orchestrator-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* Right Worktrees Lane */
+.worktrees-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  min-width: 250px;
+  flex-shrink: 0;
+}
+
+/* Large Worktree Bounding Box */
+.worktree-box-container {
+  border: 1.5px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--surface-1);
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 240px;
+  width: max-content;
+  max-width: 560px;
+  box-sizing: border-box;
+  box-shadow: var(--shadow-sm);
+  z-index: 1;
+}
+
+.worktree-selected {
+  border-color: var(--focus-ring);
+}
+
+.worktree-box-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.worktree-drag-handle {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.worktree-drag-handle:active {
+  cursor: grabbing !important;
+}
+.drag-grip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  letter-spacing: -1px;
+  color: var(--text-muted);
+  opacity: 0.5;
+  transition: opacity 160ms var(--ease-out), color 160ms var(--ease-out);
+  margin-right: 4px;
+  user-select: none;
+  cursor: grab;
+}
+.drag-grip-icon:hover {
+  opacity: 0.95;
+  color: var(--text-main);
+  cursor: grab;
+}
+.drag-grip-icon:active {
+  cursor: grabbing !important;
+}
+.worktree-title-group {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.worktree-title-group .drag-grip-icon {
+  flex-shrink: 0;
+}
+.worktree-title-group .worktree-title-label {
+  flex: 1 1 200px;
+}
+.worktree-title-group .worktree-branch-badge {
+  flex: 0 1 160px;
+  box-sizing: border-box;
+}
+.worktree-title-label {
+  color: var(--text-main);
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 200px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.worktree-branch-badge {
+  max-width: 180px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-main);
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.worktree-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* Member Agents Stack Inside Container - Centered Horizontally */
+.worktree-agents-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+}
+.worktree-empty-agents {
+  padding: 12px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+}

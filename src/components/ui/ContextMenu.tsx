@@ -1,8 +1,8 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react';
 import { createPortal } from 'react-dom';
-import { useDismissLayer } from '../../hooks/useDismissLayer';
+import { useDismissLayer } from '../../hooks/ui/useDismissLayer';
 import { Icon, type IconName } from './Icon';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 
 export interface ContextMenuAction { label: string; icon: IconName | ReactElement; onSelect: () => void; danger?: boolean; disabled?: boolean; separatorBefore?: boolean; shortcut?: string }
 export function ContextMenu({ position, label, actions, onClose, preferLeft = false, className = '', animateExit = false }: { position: { x: number; y: number }; label: string; actions: ContextMenuAction[]; onClose: () => void; preferLeft?: boolean; className?: string; animateExit?: boolean }) {

@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowDown, ArrowUp, Columns2, GitCompareArrows, PanelTop, FileQuestion, FolderOpen, FileText, CodeXml } from 'lucide-react';
 import type { WorkspaceFile,SourceDiff } from '../../../shared/contracts';
 import { workspaceFilesRequest,sourceRequest,fetchCommitDiff } from '../../api/client';
-import { MessageMarkdown } from '../workflow/MessageMarkdown';
+import { MessageMarkdown } from '../workflow/chat/MessageMarkdown';
 import { Modal } from '../../components/ui/Modal';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
@@ -10,7 +10,7 @@ import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { SegmentedControl } from '../../components/ui/SegmentedControl';
 import { Skeleton } from '../../components/ui/Skeleton';
 import { FileTypeIcon } from '../../components/ui/FileTypeIcon';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 import { useEditorAutosave } from './editorPreferences';
 import { ImagePreview, fileSize } from './ImagePreview';
 

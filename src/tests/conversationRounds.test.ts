@@ -1,6 +1,6 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createElement} from 'react';import {renderToStaticMarkup} from 'react-dom/server';
-import {ConversationHistory,conversationTimeline} from '../features/workflow/ConversationHistory';import {groupConversationTimeline,type ConversationTimelineEntry} from '../features/workflow/toolGroups';
-import {groupSettledRounds,roundLabel,readRoundExpansion,persistRoundExpansion} from '../features/workflow/conversationRounds';import type {ConversationMessage,ConversationPage,ConversationRound,ToolActivity} from '../../shared/contracts';
+import {ConversationHistory,conversationTimeline} from '../features/workflow/chat/ConversationHistory';import {groupConversationTimeline,type ConversationTimelineEntry} from '../features/workflow/chat/toolGroups';
+import {groupSettledRounds,roundLabel,readRoundExpansion,persistRoundExpansion} from '../features/workflow/chat/conversationRounds';import type {ConversationMessage,ConversationPage,ConversationRound,ToolActivity} from '../../shared/contracts';
 const iso=(seconds:number)=>new Date(Date.UTC(2026,9,28,12,0,seconds)).toISOString();
 const message=(id:string,role:'user'|'agent',seconds:number,text=id):ConversationMessage=>({id,role,at:iso(seconds),text});
 const round:ConversationRound={id:'round',startedAt:iso(1),endedAt:iso(35),workedMs:34000,partial:false,outcome:'completed',measurement:'observed-work'};

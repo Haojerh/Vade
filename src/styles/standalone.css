@@ -228,8 +228,9 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .system-popover > header > .awake-status-badge.is-active { border-color: var(--state-completed-border); background: var(--state-completed-bg); color: var(--state-completed-text); }
 .system-popover > header > .awake-status-badge::before { content: ''; position: absolute; left: 8px; top: 50%; width: 6px; height: 6px; margin-top: -3px; border-radius: 50%; background: currentColor; }
 .awake-popover small { display: block; margin-top: 5px; color: var(--text-secondary); }
-.resources-popover .disclosure-trigger { width: 100%; }
-.resource-group-memory { margin-left: auto; color: var(--text-secondary); }
+.resources-popover .disclosure-trigger { width: 100%; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.resources-popover .disclosure-trigger > span:not(.resource-group-memory) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.resource-group-memory { margin-left: auto; color: var(--text-secondary); white-space: nowrap; flex-shrink: 0; font-variant-numeric: tabular-nums; }
 .resource-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
 .resource-table :is(th, td) { text-align: right; padding: 9px 5px; border-bottom: 1px solid var(--border-subtle); white-space: nowrap; }
 .resource-table :is(th, td):first-child { text-align: left; max-width: 210px; overflow: hidden; text-overflow: ellipsis; }

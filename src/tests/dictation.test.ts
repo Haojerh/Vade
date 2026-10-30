@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendDictation, createDictationSession, dictationSupport, type SpeechRecognizer } from '../features/workflow/dictation';
-import { pcmResampler } from '../features/workflow/localDictation';
+import { appendDictation, createDictationSession, dictationSupport, type SpeechRecognizer } from '../features/workflow/voice/dictation';
+import { pcmResampler } from '../features/workflow/voice/localDictation';
 
 test('local microphone resampling preserves sample boundaries and produces 16 kHz mono PCM', () => {
   const input = Float32Array.from({ length: 48000 }, (_, index) => Math.sin(index / 100));

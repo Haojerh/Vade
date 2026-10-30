@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { GitHubPanel } from '../features/github/GitHubPanel';
-import { mergeGitHubItems, retainGitHubHistory } from '../features/github/useGitHubPagination';
-import { buildGitHubPrompt } from '../features/workflow/WorkflowGraph';
+import { mergeGitHubItems, retainGitHubHistory } from '../hooks/github/useGitHubPagination';
+import { buildGitHubPrompt } from '../features/workflow/canvas/WorkflowGraph';
 import type { GitHubData } from '../../shared/contracts';
 
 test('GitHub refresh preserves the previous first-page boundary across all activity types', () => {

@@ -3,14 +3,14 @@ import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { normalizeProvider, ProviderIcon } from '../components/providers/ProviderIcon';
-import { ORCA_PROVIDER_IMAGES } from '../components/providers/OrcaProviderAssets';
+import { PROVIDER_IMAGES } from '../components/providers/ProviderAssets';
 import { ProjectSelector } from '../features/projects/ProjectSelector';
 import { TopBar } from '../app/TopBar';
-import { ProviderActivity } from '../features/workflow/ProviderActivity';
+import { ProviderActivity } from '../features/workflow/chat/ProviderActivity';
 import type { Node } from '../../shared/contracts';
-import { readAgentDraft, writeAgentDraft } from '../hooks/useAgentDraft';
-import { handoffNoticeKey, handoffNoticeDismissed, dismissHandoffNotice } from '../features/workflow/handoffNotices';
-import { SubagentDetailsDialog } from '../features/workflow/SubagentTray';
+import { readAgentDraft, writeAgentDraft } from '../hooks/agents/useAgentDraft';
+import { handoffNoticeKey, handoffNoticeDismissed, dismissHandoffNotice } from '../features/workflow/node-details/handoffNotices';
+import { SubagentDetailsDialog } from '../features/workflow/chat/SubagentTray';
 
 test('uncertain handoff notice dismissal is scoped to its project, target and source without changing delivery state', () => {
   const key=handoffNoticeKey('notice-project','target','source');
@@ -74,9 +74,9 @@ import { SettingsPage } from '../app/SettingsPage';
 import { primaryWindow, remainingTime, usageGroups } from '../features/usage/usagePresentation';
 import { ProviderUsageDetails } from '../features/usage/UsagePanel';
 import type { ProviderUsage } from '../../shared/contracts';
-import { isTerminalReply, isTerminalClipboardShortcut } from '../features/workflow/terminalInput';
-import { ConversationToolCall, compactEditLines } from '../features/workflow/ConversationToolCall';
-import { conversationTimeline } from '../features/workflow/ConversationHistory';
+import { isTerminalReply, isTerminalClipboardShortcut } from '../features/workflow/terminal/terminalInput';
+import { ConversationToolCall, compactEditLines } from '../features/workflow/chat/ConversationToolCall';
+import { conversationTimeline } from '../features/workflow/chat/ConversationHistory';
 
 test('terminal protocol responses are excluded from keyboard input while commands and navigation remain input', () => {
   for (const reply of ['\x1b[I', '\x1b[O', '\x1b[?1;2c', '\x1b[1;2R', '\x1b]10;rgb:eded/eded/eded\x1b\\', '\x1b]11;rgb:1818/1818/1818\x07']) assert.equal(isTerminalReply(reply), true);
@@ -148,7 +148,7 @@ test('Settings is a dedicated page with category navigation and existing prefere
   assert.match(general, /current theme is light/);
   assert.ok(!general.includes('Live tool nodes'));
 });
-import { DEFAULT_VISIBLE_SECTIONS } from '../features/workflow/NodeDetails';
+import { DEFAULT_VISIBLE_SECTIONS } from '../features/workflow/node-details/NodeDetails';
 import { PrerequisitesGate } from '../components/ui/PrerequisitesGate';
 import { ConfirmationDialog } from '../components/ui/ConfirmationDialog';
 import { RenameDialog } from '../components/ui/RenameDialog';
@@ -157,10 +157,10 @@ import { AgentPicker } from '../components/ui/AgentPicker';
 import { Disclosure } from '../components/ui/Disclosure';
 import { Icon } from '../components/ui/Icon';
 import { popoverPortalHost } from '../components/ui/Popover';
-import { AgentChatControls } from '../features/workflow/AgentChatControls';
-import { useConfirmationState } from '../hooks/useConfirmationState';
+import { AgentChatControls } from '../features/workflow/chat/AgentChatControls';
+import { useConfirmationState } from '../hooks/ui/useConfirmationState';
 import type { PrerequisitesStatus } from '../../shared/contracts';
-import { useDashboardLayoutPrefs } from '../app/useDashboardLayoutPrefs';
+import { useDashboardLayoutPrefs } from '../hooks/app/useDashboardLayoutPrefs';
 import { cachedAgentCatalog, fetchAgentCatalog, resumeTerminal, saveAgentPreferences } from '../api/client';
 
 test('agent catalog shares reads, isolates cancellation and invalidates after preferences change', async () => {
@@ -260,20 +260,20 @@ test('mobile starts with closed drawers while preserving saved desktop sidebar p
   }
 });
 
-test('provider icons distinguish Gemini and Antigravity and cover Orca’s bundled catalog', () => {
+test('provider icons distinguish Gemini and Antigravity and cover supported Vade providers', () => {
   assert.equal(normalizeProvider('gemini').id, 'gemini');
   assert.equal(normalizeProvider('agy').id, 'antigravity');
   assert.equal(normalizeProvider('opencode-go').id, 'opencode-go');
   assert.equal(normalizeProvider('claude-agent-teams').id, 'claude');
   assert.equal(normalizeProvider('dsb').id, 'dsh');
-  for (const provider of [...Object.keys(ORCA_PROVIDER_IMAGES), 'codex', 'claude', 'minimax', 'opencode-go', 'opencode', 'kilo', 'pi', 'omp', 'aider', 'copilot', 'droid']) {
+  for (const provider of [...Object.keys(PROVIDER_IMAGES), 'codex', 'claude', 'opencode-go', 'opencode', 'kilo', 'gemini']) {
     assert.notEqual(normalizeProvider(provider).id, 'unknown', provider);
     const html = renderToStaticMarkup(createElement(ProviderIcon, { provider }));
     assert.ok(!html.includes('>?</text>'), provider);
   }
   assert.equal(normalizeProvider('unrecognized-agent').id, 'unknown');
   const ag = renderToStaticMarkup(createElement(ProviderIcon, { provider: 'antigravity' }));
-  assert.ok(ag.includes('providers/orca/antigravity.png'));
+  assert.ok(ag.includes('providers/antigravity.png'));
 });
 
 test('shared disclosures keep collapsed controls inert and defer lazy history loading', () => {

@@ -8,7 +8,7 @@ import { TableKit } from '@tiptap/extension-table';
 import Image from '@tiptap/extension-image';
 import { Bold, Italic, Strikethrough, List, ListOrdered, ListTodo, Quote, Link, ImageIcon, Code, CodeXml, Minus, Table2, Pilcrow, Heading1, Heading2, Heading3, MoreHorizontal, X, ArrowUp, ArrowDown } from 'lucide-react';
 import { Popover } from '../../components/ui/Popover';
-import { usePopoverState } from '../../hooks/usePopoverState';
+import { usePopoverState } from '../../hooks/ui/usePopoverState';
 
 // Keep images inert until the user explicitly opens a URL; Markdown cannot trigger network reads.
 const SafeImage = Image.extend({ addNodeView() { return ({ node }) => { const dom = document.createElement('span'); dom.className = 'workspace-rich-image'; dom.textContent = `▧ ${node.attrs.alt || 'Image'} (${node.attrs.src || ''})`; return { dom }; }; } });

@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import type { WorkflowModel } from '../../../shared/contracts';
 import { Icon } from '../../components/ui/Icon';
 import { Popover } from '../../components/ui/Popover';
-import { usePopoverState } from '../../hooks/usePopoverState';
+import { usePopoverState } from '../../hooks/ui/usePopoverState';
 
 export function WorkflowModelPicker({ models, value, disabled, onChange }: { models: WorkflowModel[]; value: string; disabled: boolean; onChange: (value: string) => void }) {
   const overlay = usePopoverState(), trigger = useRef<HTMLButtonElement>(null);

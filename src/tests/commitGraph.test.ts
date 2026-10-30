@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { layoutCommitGraph } from '../features/github/commitGraphLayout';
 import type { CommitGraphEntry } from '../../shared/contracts';
-import { commitGraphNotificationKey, mergeCommitGraphSnapshot } from '../features/github/useCommitGraph';
+import { commitGraphNotificationKey, mergeCommitGraphSnapshot } from '../hooks/github/useCommitGraph';
 import { acknowledgeGitHubItem, observeGitHubItems, readLegacyCommitReads, readUnreadHistory } from '../features/github/githubUnread';
 import { CommitHistoryGraph } from '../features/github/CommitHistoryGraph';
 import { createElement } from 'react';

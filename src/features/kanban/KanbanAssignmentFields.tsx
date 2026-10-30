@@ -4,7 +4,7 @@ import { fetchSnapshot } from '../../api/client';
 import { AgentPicker } from '../../components/ui/AgentPicker';
 import { Select } from '../../components/ui/Select';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
-import { useAgentCatalog } from '../../hooks/useAgentCatalog';
+import { useAgentCatalog } from '../../hooks/agents/useAgentCatalog';
 import type { KanbanTarget } from './kanban';
 
 export function KanbanAssignmentFields({ projectId, mode, onModeChange, onChange, disabled }: {

@@ -14,7 +14,7 @@ import {
 } from '../../shared/contracts.js';
 import { runGit, CommandRunner, defaultCommandRunner, CliError } from './cli.js';
 import { createGitHubAccountReader } from './githubAccounts.js';
-import { toIsoOrNull } from '../providers/transcriptUtils.js';
+import { toIsoOrNull } from '../providers/common/transcriptUtils.js';
 
 
 export interface ParsedRepo {

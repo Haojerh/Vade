@@ -10,7 +10,7 @@ import { TopBar } from './TopBar';
 import { StatusBar } from './StatusBar';
 import { ComputerAwakeSetting } from './SystemControls';
 import { AgentNotificationSettings } from '../features/inbox/agentNotifications';
-const VoiceDictationSettings = lazy(() => import('../features/workflow/VoiceDictationSettings').then(module => ({ default: module.VoiceDictationSettings })));
+const VoiceDictationSettings = lazy(() => import('../features/workflow/voice/VoiceDictationSettings').then(module => ({ default: module.VoiceDictationSettings })));
 import { Select } from '../components/ui/Select';
 import type { TerminalShell } from '../../shared/contracts';
 import { TERMINAL_SHELL_OPTIONS, readTerminalShell, writeTerminalShell } from './terminalShellPreference';

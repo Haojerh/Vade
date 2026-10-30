@@ -3,12 +3,12 @@ import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { DialogActions, DialogError } from '../../components/ui/DialogActions';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
-import { MessageAttachments } from '../workflow/MessageAttachments';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
+import { MessageAttachments } from '../workflow/chat/MessageAttachments';
 import { KANBAN_DRAG_TYPE, queuePosition, type CardStatus, type KanbanCard, type KanbanTarget } from './kanban';
 import { KanbanAssignmentFields } from './KanbanAssignmentFields';
 import { ListOrdered } from 'lucide-react';
-import type { useKanban } from './useKanban';
+import type { useKanban } from '../../hooks/workspace/useKanban';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
 import { KanbanTaskDetails } from './KanbanTaskDetails';
 
@@ -22,7 +22,7 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
   const remove = useConfirmationState<KanbanCard>();
   const taskDetails = useConfirmationState<string>();
   const [deleting, setDeleting] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState(null as string | null);
   const [title, setTitle] = useState('');
   const [prompt, setPrompt] = useState('');
   const [files, setFiles] = useState<File[]>([]);
@@ -104,7 +104,46 @@ export function KanbanBoard({ board, projectId, onClose, onDragStateChange, onOp
       <header className="modal-dialog-header"><h2 id="kanban-create-title">New task</h2><OverlayCloseButton onClick={create.close} disabled={busy} aria-label="Close new task" /></header>
       <div className="modal-dialog-body">
         <label className="worktree-field">Title<input value={title} onChange={event => setTitle(event.target.value)} placeholder="e.g. Fix mobile navigation layout" maxLength={240} autoFocus disabled={busy} /></label>
-        <MessageAttachments files={files} onChange={setFiles} disabled={busy}><label className="worktree-field">Prompt<textarea value={prompt} onChange={event => setPrompt(event.target.value)} maxLength={20000} rows={5} disabled={busy} placeholder="Describe what the agent should implement…" /></label></MessageAttachments>
+        <div className="worktree-field kanban-prompt-field">
+          <label htmlFor="kanban-task-prompt">Prompt</label>
+          <MessageAttachments
+            files={files}
+            onChange={setFiles}
+            disabled={busy}
+            renderControls={(attachButton) => (
+              <div className="kanban-prompt-footer">
+                <div className="kanban-prompt-footer-left">
+                  {attachButton}
+                  <span className="kanban-attach-hint">
+                    {files.length > 0
+                      ? `${files.length} of 8 files attached`
+                      : 'Paste, drop, or attach files (up to 5 MiB each)'}
+                  </span>
+                </div>
+                {files.length > 0 && (
+                  <button
+                    type="button"
+                    className="kanban-attach-clear"
+                    disabled={busy}
+                    onClick={() => setFiles([])}
+                  >
+                    Clear all
+                  </button>
+                )}
+              </div>
+            )}
+          >
+            <textarea
+              id="kanban-task-prompt"
+              value={prompt}
+              onChange={event => setPrompt(event.target.value)}
+              maxLength={20000}
+              rows={5}
+              disabled={busy}
+              placeholder="Describe what the agent should implement…"
+            />
+          </MessageAttachments>
+        </div>
         {board.automatic && create.present && projectId && <KanbanAssignmentFields key={projectId} projectId={projectId} mode={mode} onModeChange={setMode} onChange={setTarget} disabled={busy}/>}
         <DialogError error={error} />
       </div>

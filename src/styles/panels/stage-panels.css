@@ -1,0 +1,162 @@
+/* 8. Stage Bottom Panels (Progress & Activity) */
+.stage-bottom-panels {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border-main);
+  background: var(--surface-1);
+}
+
+/* Progress Panel */
+.dashboard-panel {
+  display: flex;
+  flex-direction: column;
+  border-radius: 6px;
+  background: var(--surface-1);
+}
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  gap: 8px;
+}
+.panel-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+.panel-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+.panel-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 500;
+}
+.badge-neutral {
+  background: var(--surface-2);
+  border: 1px solid var(--border-main);
+  color: var(--text-secondary);
+}
+.badge-coverage-complete {
+  background: var(--state-completed-bg);
+  color: var(--state-completed-text);
+  border: 1px solid var(--state-completed-border);
+}
+.badge-coverage-partial, .badge-coverage-unavailable {
+  background: var(--state-waiting-bg);
+  color: var(--state-waiting-text);
+  border: 1px solid var(--state-waiting-border);
+}
+
+.progress-bar-container {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.progress-bar-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+}
+.progress-track {
+  height: 6px;
+  background: var(--surface-2);
+  border-radius: 3px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+.progress-fill {
+  height: 100%;
+  background: #10b981;
+  transition: width 240ms var(--ease-out);
+}
+
+.progress-breakdown-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(70px, 1fr));
+  gap: 8px;
+}
+.breakdown-cell {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  border: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+}
+.cell-label {
+  font-size: 10px;
+  color: var(--text-muted);
+}
+.cell-val {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+/* Activity Panel */
+.activity-scroll-area {
+  max-height: 180px;
+  overflow-y: auto;
+}
+.activity-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  list-style: none;
+}
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  font-size: 11px;
+}
+.activity-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.badge-activity-task-status { background: rgba(59, 130, 246, 0.15); color: #60a5fa; }
+.badge-activity-agent-status { background: rgba(16, 185, 129, 0.15); color: #34d399; }
+.badge-activity-output-observed { background: var(--surface-hover); color: var(--text-secondary); }
+.timestamp-kind-badge {
+  font-size: 9px;
+  color: var(--text-dim);
+}
+.activity-text {
+  flex: 1 1 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--text-main);
+}
+.activity-node-link {
+  font-size: 11px;
+  color: var(--focus-ring);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 1px 4px;
+}
+.activity-node-link:hover {
+  text-decoration: underline;
+}

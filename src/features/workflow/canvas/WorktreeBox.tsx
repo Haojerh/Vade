@@ -1,0 +1,397 @@
+import { KANBAN_DRAG_TYPE } from '../../kanban/kanban';
+import React, { useState } from 'react';
+import { SESSION_DRAG_TYPE, type HistoryDrag, type HistoryPlacement } from '../../agents/historyDrag';
+import type { Node } from '../../../../shared/contracts';
+import { Icon } from '../../../components/ui/Icon';
+import { WorkflowNodeCardBody, WorktreeDropPreviewSlot } from './WorkflowNodeCard';
+
+export interface WorktreeBoxProps {
+  worktree: Node;
+  members: Node[];
+  selectedNodeId: string | null;
+  draggingNodeId: string | null;
+  effectiveOffset: { x: number; y: number } | undefined;
+  isDraggingGitHubItem: boolean;
+  dropHoverNodeId: string | null;
+  chatOpenNodeId: string | null;
+  draggingMember: { worktreeId: string; agentId: string } | null;
+  dropTargetMember: { worktreeId: string; agentId: string; position: 'before' | 'after' } | null;
+  nodeMap: Map<string, Node>;
+  justDraggedNodeRef: React.MutableRefObject<boolean>;
+  registerRef: (id: string, el: HTMLElement | null) => void;
+  previewEvents: (node: Node) => Record<string, any>;
+  renderChatExtension: (node: Node) => React.ReactNode;
+  onOpenSubagent?: (subagent: import('../../../../shared/contracts').Subagent, nodeId: string) => void;
+  onSubagentPreview?: (subagent: import('../../../../shared/contracts').Subagent, anchor: HTMLElement, nodeId: string) => void;
+  onSubagentPreviewLeave?: () => void;
+  isValidReorder: (
+    membersList: Node[],
+    draggedId: string,
+    targetId: string,
+    position: 'before' | 'after'
+  ) => boolean;
+  onSelectNode: (id: string) => void;
+  onResumeHistory?: (id: string, worktreeId: string, placement?: HistoryPlacement) => Promise<void>;
+  historyDrag?: HistoryDrag | null;
+  onNodeDragStart: (id: string, e: React.PointerEvent) => void;
+  onOpenAddAgent: (worktree: Node) => void;
+  onOpenWorktreeContextMenu: (x: number, y: number, worktree: Node) => void;
+  onOpenNodeContextMenu: (x: number, y: number, node: Node) => void;
+  onSetDraggingMember: (val: { worktreeId: string; agentId: string } | null) => void;
+  onSetDropTargetMember: (
+    val: { worktreeId: string; agentId: string; position: 'before' | 'after' } | null
+  ) => void;
+  onReorderMember: (
+    worktreeId: string,
+    draggedAgentId: string,
+    targetAgentId: string,
+    position: 'before' | 'after'
+  ) => void;
+  onGitHubDragOver: (e: React.DragEvent, nodeId: string) => void;
+  onGitHubDragLeave: (e: React.DragEvent, nodeId: string) => void;
+  onGitHubDrop: (e: React.DragEvent, nodeId: string) => void;
+}
+
+export const WorktreeBox: React.FC<WorktreeBoxProps> = ({
+  worktree: wt,
+  members,
+  selectedNodeId,
+  draggingNodeId,
+  effectiveOffset,
+  isDraggingGitHubItem,
+  dropHoverNodeId,
+  chatOpenNodeId,
+  draggingMember,
+  dropTargetMember,
+  nodeMap,
+  justDraggedNodeRef,
+  registerRef,
+  previewEvents,
+  renderChatExtension,
+  onOpenSubagent,
+  onSubagentPreview,
+  onSubagentPreviewLeave,
+  isValidReorder,
+  onSelectNode,
+  onResumeHistory,
+  historyDrag,
+  onNodeDragStart,
+  onOpenAddAgent,
+  onOpenWorktreeContextMenu,
+  onOpenNodeContextMenu,
+  onSetDraggingMember,
+  onSetDropTargetMember,
+  onReorderMember,
+  onGitHubDragOver,
+  onGitHubDragLeave,
+  onGitHubDrop,
+}) => {
+  const isSelected = wt.id === selectedNodeId;
+  const [sessionHover, setSessionHover] = useState(false);
+  const [sessionBusy, setSessionBusy] = useState(false);
+  const [sessionError, setSessionError] = useState('');
+  const [sessionPlacement, setSessionPlacement] = useState<HistoryPlacement | null>(null);
+  const [sessionPreview, setSessionPreview] = useState<HistoryDrag | null>(null);
+  const sessionNode = { label: sessionPreview?.title ?? 'Saved session', agentType: sessionPreview?.provider ?? null };
+
+  return (
+    <div
+      ref={(el) => registerRef(wt.id, el)}
+      className={`worktree-box-container ${isSelected ? 'worktree-selected' : ''} ${
+        draggingNodeId === wt.id ? 'is-dragging-node' : ''
+      }`}
+      style={
+        effectiveOffset
+          ? { transform: `translate(${effectiveOffset.x}px, ${effectiveOffset.y}px)` }
+          : undefined
+      }
+      aria-label={`Worktree container: ${wt.label}`}
+      onDragOverCapture={e => {
+        if (!onResumeHistory || !e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) return;
+        e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = historyDrag?.id.startsWith('shortcut:') ? 'copy' : 'move'; setSessionHover(true);
+        if (historyDrag && sessionPreview?.id !== historyDrag.id) setSessionPreview(historyDrag);
+        const preview = e.currentTarget.querySelector('.worktree-drop-preview-slot')?.getBoundingClientRect();
+        if (sessionPlacement && preview && e.clientY >= preview.top && e.clientY <= preview.bottom) return;
+        const cards = Array.from(e.currentTarget.querySelectorAll<HTMLElement>('[data-agent-member]'));
+        const before = cards.find(card => { const rect = card.getBoundingClientRect(); return e.clientY < rect.top + rect.height / 2; });
+        const target = before ?? cards[cards.length - 1];
+        const next = target ? { targetId: target.dataset.agentMember!, position: before ? 'before' as const : 'after' as const } : null;
+        if (next?.targetId !== sessionPlacement?.targetId || next?.position !== sessionPlacement?.position) setSessionPlacement(next);
+      }}
+      onDragLeaveCapture={e => { if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node)) setSessionHover(false); }}
+      onDropCapture={e => {
+        if (!onResumeHistory || !e.dataTransfer.types.includes(SESSION_DRAG_TYPE)) return;
+        e.preventDefault(); e.stopPropagation(); setSessionHover(false);
+        const id = e.dataTransfer.getData(SESSION_DRAG_TYPE);
+        if (sessionBusy || (!/^[a-f0-9]{40}$/.test(id) && !/^shortcut:[a-zA-Z0-9_-]{1,80}$/.test(id))) return;
+        setSessionBusy(true); setSessionError('');
+        void onResumeHistory(id, wt.id, sessionPlacement ?? undefined).catch(error => setSessionError(error.message)).finally(() => { setSessionBusy(false); setSessionPlacement(null); });
+      }}
+      onContextMenu={(e) => {
+        if ((e.target as HTMLElement).closest('.agent-card, .node-card-chat-extension, button, input, textarea')) {
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenWorktreeContextMenu(e.clientX, e.clientY, wt);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as globalThis.Node)) {
+          if (dropTargetMember?.worktreeId === wt.id) {
+            onSetDropTargetMember(null);
+          }
+        }
+      }}
+    >
+      {/* Worktree Container Header (Drag Handle) */}
+      <div
+        className="worktree-box-header worktree-drag-handle"
+        onPointerDown={(e) => onNodeDragStart(wt.id, e)}
+        title="Click and drag to move worktree"
+      >
+        <div className="worktree-title-group">
+          <span className="drag-grip-icon" title="Drag to move worktree" aria-hidden="true">⋮⋮</span>
+          <span className="worktree-title-label font-bold text-sm" title={`Worktree: ${wt.label}`}>
+            Worktree: {wt.label}
+          </span>
+          {wt.branch && (
+            <span className="worktree-branch-badge font-mono text-xs" title={wt.branch}>
+              ⎇ {wt.branch}
+            </span>
+          )}
+        </div>
+
+        <div className="worktree-header-actions" style={{ display: 'flex', gap: '6px' }}>
+          <button
+            type="button"
+            className="btn btn-secondary btn-xs"
+            onClick={() => onOpenAddAgent(wt)}
+            aria-label={`Add new agent in ${wt.label}`}
+            title="Add new agent"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+          >
+            <Icon name="plus" size={12} />
+            <span>Add Agent</span>
+          </button>
+          <button
+            type="button"
+            className="btn btn-secondary btn-xs"
+            onClick={() => onSelectNode(wt.id)}
+            aria-label={`Inspect worktree facts for ${wt.label}`}
+          >
+            Inspect Worktree
+          </button>
+        </div>
+      </div>
+
+      {sessionError && <p className="worktree-session-error" role="alert">{sessionError}</p>}
+      {/* Member Agents Vertically Stacked Inside */}
+      <div
+        className="worktree-agents-stack"
+        onDragOver={(e) => {
+          if (isDraggingGitHubItem) return;
+          if (draggingMember && draggingMember.worktreeId === wt.id) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'move';
+            const rect = e.currentTarget.getBoundingClientRect();
+            const firstMember = members[0];
+            const lastMember = members[members.length - 1];
+            if (members.length > 0) {
+              if (e.clientY < rect.top + 20 && firstMember && firstMember.id !== draggingMember.agentId) {
+                onSetDropTargetMember({
+                  worktreeId: wt.id,
+                  agentId: firstMember.id,
+                  position: 'before',
+                });
+              } else if (e.clientY > rect.bottom - 20 && lastMember && lastMember.id !== draggingMember.agentId) {
+                onSetDropTargetMember({
+                  worktreeId: wt.id,
+                  agentId: lastMember.id,
+                  position: 'after',
+                });
+              }
+            }
+          }
+        }}
+        onDrop={(e) => {
+          if (isDraggingGitHubItem) return;
+          if (draggingMember && draggingMember.worktreeId === wt.id && dropTargetMember) {
+            e.preventDefault();
+            e.stopPropagation();
+            onReorderMember(wt.id, draggingMember.agentId, dropTargetMember.agentId, dropTargetMember.position);
+            onSetDraggingMember(null);
+            onSetDropTargetMember(null);
+          }
+        }}
+      >
+        {members.length === 0 && (sessionHover || sessionBusy) ? <WorktreeDropPreviewSlot draggedNode={sessionNode} position="after" pending={sessionBusy} /> : members.length === 0 ? (
+          <div className="worktree-empty-agents text-xs text-muted">
+            No member agents in this worktree
+          </div>
+        ) : (
+          members.map((ag) => {
+            const draggedNode = draggingMember ? nodeMap.get(draggingMember.agentId) : null;
+            const isAgSelected = ag.id === selectedNodeId;
+            const isDraggingThis = draggingMember?.agentId === ag.id;
+            const isDropTargetBefore =
+              dropTargetMember?.worktreeId === wt.id &&
+              dropTargetMember?.agentId === ag.id &&
+              dropTargetMember?.position === 'before';
+            const isDropTargetAfter =
+              dropTargetMember?.worktreeId === wt.id &&
+              dropTargetMember?.agentId === ag.id &&
+              dropTargetMember?.position === 'after';
+
+            const showPreviewBefore = Boolean(
+              isDropTargetBefore &&
+                draggingMember &&
+                draggedNode &&
+                isValidReorder(members, draggingMember.agentId, ag.id, 'before')
+            );
+            const showPreviewAfter = Boolean(
+              isDropTargetAfter &&
+                draggingMember &&
+                draggedNode &&
+                isValidReorder(members, draggingMember.agentId, ag.id, 'after')
+            );
+
+            return (
+              <React.Fragment key={ag.id}>
+                {(sessionHover || sessionBusy) && sessionPlacement?.targetId === ag.id && sessionPlacement.position === 'before' && <WorktreeDropPreviewSlot draggedNode={sessionNode} targetNode={ag} position="before" pending={sessionBusy} />}
+                {showPreviewBefore && (
+                  <WorktreeDropPreviewSlot
+                    key={`drop-preview-before-${ag.id}`}
+                    draggedNode={draggedNode}
+                    targetNode={ag}
+                    position="before"
+                  />
+                )}
+
+                <div
+                  role="button"
+                  data-agent-member={ag.id}
+                  tabIndex={0}
+                  {...previewEvents(ag)}
+                  ref={(el) => registerRef(ag.id, el)}
+                  draggable={!chatOpenNodeId}
+                  onDragStart={(e) => {
+                    if (isDraggingGitHubItem || chatOpenNodeId) return;
+                    e.stopPropagation();
+                    e.dataTransfer.setData('text/plain', ag.id);
+                    e.dataTransfer.setData('application/orca-agent-id', ag.id);
+                    e.dataTransfer.setData('application/orca-worktree-id', wt.id);
+                    e.dataTransfer.effectAllowed = 'move';
+                    requestAnimationFrame(() => {
+                      onSetDraggingMember({ worktreeId: wt.id, agentId: ag.id });
+                    });
+                  }}
+                  onDragOver={(e) => {
+                    if (isDraggingGitHubItem || e.dataTransfer.types.includes(KANBAN_DRAG_TYPE)) {
+                      onGitHubDragOver(e, ag.id);
+                      return;
+                    }
+                    if (draggingMember && draggingMember.worktreeId === wt.id && draggingMember.agentId !== ag.id) {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      e.dataTransfer.dropEffect = 'move';
+                      const rect = e.currentTarget.getBoundingClientRect();
+                      const midY = rect.top + rect.height / 2;
+                      const position = e.clientY < midY ? 'before' : 'after';
+                      onSetDropTargetMember({
+                        worktreeId: wt.id,
+                        agentId: ag.id,
+                        position,
+                      });
+                    }
+                  }}
+                  onDragLeave={(e) => {
+                    if (isDraggingGitHubItem || e.dataTransfer.types.includes(KANBAN_DRAG_TYPE)) {
+                      onGitHubDragLeave(e, ag.id);
+                      return;
+                    }
+                    if (!e.currentTarget.parentElement?.contains(e.relatedTarget as globalThis.Node)) {
+                      onSetDropTargetMember(null);
+                    }
+                  }}
+                  onDrop={(e) => {
+                    if (isDraggingGitHubItem || e.dataTransfer.types.includes(KANBAN_DRAG_TYPE)) {
+                      onGitHubDrop(e, ag.id);
+                      return;
+                    }
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (
+                      draggingMember &&
+                      draggingMember.worktreeId === wt.id &&
+                      draggingMember.agentId !== ag.id &&
+                      dropTargetMember
+                    ) {
+                      onReorderMember(wt.id, draggingMember.agentId, ag.id, dropTargetMember.position);
+                    }
+                    onSetDraggingMember(null);
+                    onSetDropTargetMember(null);
+                  }}
+                  onDragEnd={() => {
+                    onSetDraggingMember(null);
+                    onSetDropTargetMember(null);
+                  }}
+                  className={`graph-node-card agent-card node-draggable state-${ag.state} ${
+                    isAgSelected ? 'node-selected' : ''
+                  } ${ag.stale ? 'node-stale' : ''} ${
+                    isDraggingGitHubItem ? 'node-drag-target-glow' : ''
+                  } ${dropHoverNodeId === ag.id ? 'node-drop-hover' : ''} ${
+                    chatOpenNodeId === ag.id ? 'node-chat-extended' : ''
+                  } ${isDraggingThis ? 'is-member-dragging' : ''} ${
+                    isDropTargetBefore ? 'drop-before' : ''
+                  } ${isDropTargetAfter ? 'drop-after' : ''}`}
+                  onClick={(e) => {
+                    if (justDraggedNodeRef.current) return;
+                    if ((e.target as HTMLElement).closest('.node-card-chat-extension')) return;
+                    onSelectNode(ag.id);
+                  }}
+                  onKeyDown={(e) => {
+                    if ((e.target as HTMLElement).closest('.node-card-chat-extension')) return;
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      onSelectNode(ag.id);
+                    }
+                  }}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onOpenNodeContextMenu(e.clientX, e.clientY, ag);
+                  }}
+                  aria-pressed={isAgSelected}
+                  aria-label={ag.kind === 'terminal' ? `Terminal: ${ag.label}, liveness: ${ag.liveness}` : `Agent: ${ag.label}, state: ${ag.state}, liveness: ${ag.liveness}`}
+                >
+                  <WorkflowNodeCardBody
+                    node={ag}
+                    gripTitle="Drag up or down to reorder agent in worktree"
+                    iconSize={15}
+                    showPreviewText={true}
+                    showStaleTag={true}
+                    chatExtension={renderChatExtension(ag)}
+                    onOpenSubagent={subagent => onOpenSubagent?.(subagent, ag.id)}
+                    onSubagentPreview={(subagent, anchor) => onSubagentPreview?.(subagent, anchor, ag.id)}
+                    onSubagentPreviewLeave={onSubagentPreviewLeave}
+                  />
+                </div>
+
+                {showPreviewAfter && (
+                  <WorktreeDropPreviewSlot
+                    key={`drop-preview-after-${ag.id}`}
+                    draggedNode={draggedNode}
+                    targetNode={ag}
+                    position="after"
+                  />
+                )}
+                {(sessionHover || sessionBusy) && sessionPlacement?.targetId === ag.id && sessionPlacement.position === 'after' && <WorktreeDropPreviewSlot draggedNode={sessionNode} targetNode={ag} position="after" pending={sessionBusy} />}
+              </React.Fragment>
+            );
+          })
+        )}
+      </div>
+    </div>
+  );
+};

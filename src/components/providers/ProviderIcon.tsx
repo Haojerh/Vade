@@ -1,9 +1,9 @@
 import React from 'react';
 import { Icon } from '../ui/Icon';
-import { AgentLetterIcon, AiderIcon, ClaudeIcon, CopilotIcon, DroidIcon, GeminiIcon, KiloIcon, MiniMaxIcon, OmpIcon, OpenAIIcon, OpenCodeGoIcon, OpenCodeIcon, PiIcon } from './OrcaProviderGlyphs';
-import { ORCA_PROVIDER_IMAGES } from './OrcaProviderAssets';
+import { AgentLetterIcon, ClaudeIcon, GeminiIcon, KiloIcon, OpenAIIcon, OpenCodeGoIcon, OpenCodeIcon } from './ProviderGlyphs';
+import { PROVIDER_IMAGES } from './ProviderAssets';
 
-export type KnownProvider = keyof typeof ORCA_PROVIDER_IMAGES | keyof typeof glyphs | 'unknown';
+export type KnownProvider = keyof typeof PROVIDER_IMAGES | keyof typeof glyphs | 'unknown';
 
 interface ProviderIconProps {
   provider: string | null | undefined;
@@ -26,19 +26,19 @@ export function normalizeProvider(provider: string | null | undefined): { id: Kn
   else if (lower === 'opencode-go' || lower === 'opencodego') id = 'opencode-go';
   else if (lower === 'opencode' || lower === 'open-code' || lower === 'opencode2') id = 'opencode';
   else if (lower === 'kilo' || lower === 'kilocode' || lower === 'kilo-code') id = 'kilo';
-  else if (lower === 'mimo' || lower === 'mimo-code') id = 'mimo-code';
-  else if (lower === 'charm' || lower === 'crush') id = 'crush';
-  else if (lower === 'github copilot' || lower === 'copilot') id = 'copilot';
-  else if (lower === 'dsb') id = 'dsh';
+  else if (lower === 'dsb' || lower === 'dsh') id = 'dsh';
   else if (lower in imageAssets || lower in glyphs) id = lower as KnownProvider;
   return { id, displayName: raw };
 }
 
-const imageAssets = ORCA_PROVIDER_IMAGES;
+const imageAssets = PROVIDER_IMAGES;
 const glyphs = {
-  codex: OpenAIIcon, claude: ClaudeIcon, gemini: GeminiIcon, minimax: MiniMaxIcon,
-  opencode: OpenCodeIcon, 'opencode-go': OpenCodeGoIcon, kilo: KiloIcon,
-  droid: DroidIcon, pi: PiIcon, omp: OmpIcon, aider: AiderIcon, copilot: CopilotIcon,
+  codex: OpenAIIcon,
+  claude: ClaudeIcon,
+  gemini: GeminiIcon,
+  opencode: OpenCodeIcon,
+  'opencode-go': OpenCodeGoIcon,
+  kilo: KiloIcon,
 } satisfies Record<string, React.ComponentType<{ size?: number }>>;
 
 export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className = '', size = 16, showLabel = false, liveness }) => {

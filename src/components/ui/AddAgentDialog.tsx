@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useAgentCatalog } from '../../hooks/useAgentCatalog';
+import { useAgentCatalog } from '../../hooks/agents/useAgentCatalog';
 import { AgentPicker } from './AgentPicker';
 import { DialogActions, DialogError } from './DialogActions';
 import { Modal } from './Modal';

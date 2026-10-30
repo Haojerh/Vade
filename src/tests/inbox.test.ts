@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { InboxItem } from '../../shared/contracts';
 import { readHandled, failedInboxProjects } from '../features/inbox/inboxState';
 import { InboxPanel } from '../features/inbox/InboxPanel';
-import { useDashboard } from '../app/useDashboard';
+import { useDashboard } from '../hooks/app/useDashboard';
 
 const now = Date.parse('2026-10-19T06:00:00Z');
 const failure: InboxItem = { id: 'failure', nodeId: 'node_pane', runId: null, entityId: 'agent:pane', projectId: 'project', projectName: 'Demo', title: '<script>Failed test</script>', outcome: 'failed', at: '2026-10-19T04:00:00Z', source: 'agent' };

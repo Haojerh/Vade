@@ -1,6 +1,6 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useDismissLayer } from '../../hooks/useDismissLayer';
+import { useDismissLayer } from '../../hooks/ui/useDismissLayer';
 
 export function popoverPortalHost(trigger: HTMLElement | null, fallback: HTMLElement): Element {
   // A body-level portal is inert while its trigger's native modal is open.

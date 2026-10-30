@@ -4,10 +4,10 @@ import { DialogError } from '../../components/ui/DialogActions';
 import { Icon } from '../../components/ui/Icon';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { ConfirmationDialog } from '../../components/ui/ConfirmationDialog';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 import './phoneConnection.css';
 
-const AgentTerminal = lazy(() => import('../workflow/AgentTerminal').then(module => ({ default: module.AgentTerminal })));
+const AgentTerminal = lazy(() => import('../workflow/terminal/AgentTerminal').then(module => ({ default: module.AgentTerminal })));
 
 export function PhoneConnectionSettings() {
   const desktop = window.adeDesktop;

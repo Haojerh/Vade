@@ -7,7 +7,7 @@ import { Icon } from '../../components/ui/Icon';
 import { Modal } from '../../components/ui/Modal';
 import { DialogActions, DialogError } from '../../components/ui/DialogActions';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 
 export function ConnectionSettings({ kind }: { kind: 'integrations' | 'accounts' }) {
   const [section, setSection] = useState<Section<LocalConnectionsData> | null>(null);

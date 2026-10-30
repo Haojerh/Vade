@@ -3,10 +3,10 @@ import type { WorkflowSetupStatus } from '../../../shared/contracts';
 import { fetchWorkflowSetup, workflowRequest } from '../../api/client';
 import { Icon } from '../../components/ui/Icon';
 import { ProviderIcon } from '../../components/providers/ProviderIcon';
-import { useAgentCatalog } from '../../hooks/useAgentCatalog';
+import { useAgentCatalog } from '../../hooks/agents/useAgentCatalog';
 import { DesktopUpdateSettings } from '../updates/DesktopUpdates';
 
-const AgentTerminal = lazy(() => import('../workflow/AgentTerminal').then(module => ({ default: module.AgentTerminal })));
+const AgentTerminal = lazy(() => import('../workflow/terminal/AgentTerminal').then(module => ({ default: module.AgentTerminal })));
 type SetupTerminal = { projectId: string; nodeId: string; command: string };
 export function WorkflowSetup() {
   const [status, setStatus] = useState<WorkflowSetupStatus | null>(null), [checking, setChecking] = useState(false), [opening, setOpening] = useState(false), [error, setError] = useState<string | null>(null);

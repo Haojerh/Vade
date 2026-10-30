@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { createLocalDictationSession } from '../features/workflow/localDictation';
+import { createLocalDictationSession } from '../features/workflow/voice/localDictation';
 
 test('local chat dictation can record twice and releases each microphone/context exactly once', async () => {
   const original = { navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator'), AudioContext: globalThis.AudioContext, AudioWorkletNode: globalThis.AudioWorkletNode, fetch: globalThis.fetch };

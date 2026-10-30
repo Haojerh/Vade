@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import type { LocalRuntime } from '../runtime/localRuntime.js';
 import type { TerminalServerMessage } from '../../shared/contracts.js';
 import { TerminalViewports } from './terminalViewports.js';
-import type { AdeSessions } from '../runtime/sessions.js';
+import type { AdeSessions } from '../runtime/sessions/sessions.js';
 
 export function attachTerminalSockets(server: http.Server, runtime: LocalRuntime, allowedOrigins?: string[], phoneOrigin?: () => string | null): void {
   const origins = new Set(allowedOrigins ?? ['http://127.0.0.1:4317', 'http://localhost:4317', 'http://127.0.0.1:5173', 'http://localhost:5173', 'https://127.0.0.1:5173', 'https://localhost:5173']);

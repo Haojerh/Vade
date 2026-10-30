@@ -6,7 +6,7 @@ import { Modal } from '../../components/ui/Modal';
 import { Select } from '../../components/ui/Select';
 import { Icon } from '../../components/ui/Icon';
 import { OverlayCloseButton } from '../../components/ui/OverlayCloseButton';
-import { useConfirmationState } from '../../hooks/useConfirmationState';
+import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 import { ProjectFolderBrowser } from './ProjectFolderBrowser';
 
 type Mode = 'choose' | 'browse' | 'clone' | 'create';

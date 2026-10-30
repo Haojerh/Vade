@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { applySkillReference, composerEntries, composerPrefix, composerPrefixes, composerTrigger, leadingReference, skillPrefix } from '../features/workflow/composerCommands';
-import { ComposerReferenceMenu } from '../features/workflow/ComposerReferenceMenu';
+import { applySkillReference, composerEntries, composerPrefix, composerPrefixes, composerTrigger, leadingReference, skillPrefix } from '../features/workflow/chat/composerCommands';
+import { ComposerReferenceMenu } from '../features/workflow/chat/ComposerReferenceMenu';
 import type { AgentSkillSummary } from '../../shared/contracts';
 
 const skills: AgentSkillSummary[] = [

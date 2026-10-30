@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Terminal } from '@xterm/xterm';
-import { attachTerminalTouch } from '../features/workflow/terminalTouch';
+import { attachTerminalTouch } from '../features/workflow/terminal/terminalTouch';
 
 function fixture(provider?: string, alternate = false) {
   const host = new EventTarget(), lines: number[] = [], wheels: Event[] = [];

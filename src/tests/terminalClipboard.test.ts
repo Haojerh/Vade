@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';
-import {readTerminalClipboard} from '../features/workflow/terminalClipboard';
+import {readTerminalClipboard} from '../features/workflow/terminal/terminalClipboard';
 
 test('clipboard images take precedence over incidental text and use one native format per item',async()=>{
   const requested:string[]=[];

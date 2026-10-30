@@ -2,9 +2,9 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { observeGitHubItems, readUnreadHistory } from './githubUnread';
 import { RefreshIcon } from '../../components/ui/RefreshIcon';
 import { Icon } from '../../components/ui/Icon';
-import { useGitHubPagination } from './useGitHubPagination';
-import { useCommitGraph } from './useCommitGraph';
-import { changeNotifications, retryNotifications, useSharedNotifications } from '../notifications/useSharedNotifications';
+import { useGitHubPagination } from '../../hooks/github/useGitHubPagination';
+import { useCommitGraph } from '../../hooks/github/useCommitGraph';
+import { changeNotifications, retryNotifications, useSharedNotifications } from '../../hooks/workspace/useSharedNotifications';
 import {
   CommitsTabPane,
   PullRequestsTabPane,
