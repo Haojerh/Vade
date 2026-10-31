@@ -678,3 +678,103 @@ test('manual Antigravity model changes override older transcript settings after 
   assert.equal(result.current.model, 'family-high');
   assert.equal(result.current.effort, 'high');
 });
+
+test('Freebuff recognizes its empty native composer, rejects drafts and open pickers', async () => {
+  const terminal = new TerminalScreen(() => {}, () => {});
+  try {
+    const frame = (composer: string) => `\x1b[2J\x1b[H\u256d\u2500\u2500\u2500\u2500\u256e\r\n\u2502      \u2502\r\n\u2502  ${composer}\r\n\u2502      \u2502\r\n\u2570\u2500\u2500\u2500\u2500\u256f\r\n DeepSeek V4.1 Flash 10/17 \u2022 high \u00b7 ~\\work \u00b7 /model to change \u00b7 Chat: New chat\r\n \u2190 for history \u00b7 ? for help`;
+    terminal.write(frame('\u258d\u001b[2mEnter a coding task or / for commands\u001b[22m'));
+    await terminal.settled();
+    assert.equal(terminal.freebuffPromptReady(), true, 'the dim placeholder is an empty composer');
+    terminal.write(frame('hello world\u258d'));
+    await terminal.settled();
+    assert.equal(terminal.freebuffPromptReady(), false, 'typed text before the cursor is a draft');
+    terminal.write(frame('\u258d\u001b[2mEnter a coding task or / for commands\u001b[22m') + '\r\n \u2191\u2193 choose model \u00b7 Tab reasoning \u00b7 Enter select \u00b7 Esc cancel');
+    await terminal.settled();
+    assert.equal(terminal.freebuffPromptReady(), false, 'an open native picker is not an empty composer');
+  } finally { terminal.dispose(); }
+});
+
+test('Freebuff reads its native status line and offers its own model catalog', async () => {
+  const directory = fsNative.mkdtempSync(pathNative.join(osNative.tmpdir(), 'vade-freebuff-read-'));
+  const previous = process.env.FREEBUFF_CONFIG_DIR;
+  process.env.FREEBUFF_CONFIG_DIR = directory;
+  try {
+    const footer = ' DeepSeek V4.1 Flash 10/17 \u2022 high \u00b7 ~\\work \u00b7 /model to change \u00b7 Chat: New chat\n \u2190 for history \u00b7 ? for help';
+    const options = await new ProviderChatControls().read('freebuff', { model: 'stale/recorded', effort: 'low' }, footer, directory);
+    assert.equal(options.current.model, 'deepseek/deepseek-v4-flash');
+    assert.equal(options.current.effort, 'high');
+    assert.equal(options.controls.effort, true);
+    assert.ok(options.models.some(model => model.id === 'z-ai/glm-5.3-flash'));
+    assert.ok(options.models.some(model => model.id === 'openai/gpt-6.1-sol'));
+    // A model without adjustable reasoning hides the reasoning control.
+    const noEffort = await new ProviderChatControls().read('freebuff', {}, ' MiMo v2.6 Flash Fast \u00b7 ~\\work \u00b7 /model to change \u00b7 Chat: New chat', directory);
+    assert.equal(noEffort.current.model, 'mimo/mimo-v2.5');
+    assert.equal(noEffort.current.effort, undefined);
+    assert.equal(noEffort.controls.effort, false);
+    // No native footer and no stored preference is unknown, never a fabricated default.
+    const unknown = await new ProviderChatControls().read('freebuff', {}, '', directory);
+    assert.equal(unknown.current.model, undefined);
+  } finally {
+    if (previous === undefined) delete process.env.FREEBUFF_CONFIG_DIR; else process.env.FREEBUFF_CONFIG_DIR = previous;
+    fsNative.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('Freebuff selects a model and reasoning level in its own pickers and confirms from the footer', async () => {
+  const directory = fsNative.mkdtempSync(pathNative.join(osNative.tmpdir(), 'vade-freebuff-picker-'));
+  const previous = process.env.FREEBUFF_CONFIG_DIR;
+  process.env.FREEBUFF_CONFIG_DIR = directory;
+  try {
+    const rows = [
+      { label: 'DeepSeek V4.1 Flash 10/17', effort: 'high', id: 'deepseek/deepseek-v4-flash' },
+      { label: 'GLM 5.3 Flash', effort: 'high', id: 'z-ai/glm-5.3-flash' },
+      { label: 'GPT-6 Luna', effort: 'high', id: 'openai/gpt-6-luna' },
+    ];
+    const efforts = ['low', 'high', 'max'];
+    let mode: 'composer' | 'model' | 'reasoning' = 'composer';
+    let selected = 0, modelIndex = 0, effort = 'high', typed = '', command = '';
+    const composer = () => ` \u256d\u2500\u2500\u256e\n \u2502  \u258dEnter a coding task or / for commands\n \u2570\u2500\u2500\u256f\n ${rows[modelIndex].label} \u2022 ${effort} \u00b7 ~\\work \u00b7 /model to change \u00b7 Chat: New chat\n`;
+    const picker = () => [' \u2191\u2193 choose model \u00b7 Tab reasoning \u00b7 Enter select \u00b7 Esc cancel', ' OPTIMIZED \u00b7 Strongest price-to-performance models',
+      ...rows.map((row, index) => ` \u2502 ${index === selected ? '\u203a' : ' '} ${row.label} \u2022 ${row.effort} \u00b7 Tagline \u00b7 Images`)].join('\n');
+    const reasoning = () => [' \u2191\u2193 choose model \u00b7 Tab reasoning \u00b7 Enter select \u00b7 Esc cancel', `  ${rows[modelIndex].label} \u2022 Reasoning`, '  \u2191\u2193 choose \u00b7 Enter save \u00b7 Esc back',
+      ...efforts.map((value, index) => `  ${index === selected ? '\u203a' : ' '} ${value}${value === rows[modelIndex].effort ? ' (default)' : ''}`)].join('\n');
+    const screen = () => mode === 'model' ? picker() : mode === 'reasoning' ? reasoning() : composer();
+    const io: ChatControlIO = {
+      screen,
+      output: () => '',
+      write: async data => {
+        if (data === '\r') {
+          const submitted = command.trim();
+          command = '';
+          if (mode === 'composer') {
+            if (submitted === '/reasoning') { mode = 'reasoning'; selected = Math.max(0, efforts.indexOf(effort)); }
+            else { mode = 'model'; selected = modelIndex; }
+          }
+          else if (mode === 'model') { modelIndex = selected; effort = rows[selected].effort; mode = 'composer'; }
+          else { effort = efforts[selected]; mode = 'composer'; }
+          return;
+        }
+        if (data === '\x1b[B') selected = Math.min(rows.length - 1, selected + 1);
+        else if (data === '\x1b[A') selected = Math.max(0, selected - 1);
+        else if (data !== '\x1b') { typed += data; command += data; }
+      },
+      waitFor: async predicate => {
+        for (let attempt = 0; attempt < 100; attempt++) { const value = screen(); if (predicate(value)) return value; await new Promise(resolve => setTimeout(resolve, 5)); }
+        throw Error('Freebuff picker did not reach the requested state');
+      },
+    };
+    const options = await new ProviderChatControls().read('freebuff', {}, composer(), directory);
+    const changed = await new ProviderChatControls().apply(options, { key: 'model', value: 'openai/gpt-6-luna' }, io);
+    assert.equal(changed.current.model, 'openai/gpt-6-luna');
+    assert.equal(changed.current.effort, 'high');
+    assert.match(typed, /\/model/);
+    const effortChanged = await new ProviderChatControls().apply({ ...changed, current: { ...changed.current, model: 'openai/gpt-6-luna' } }, { key: 'effort', value: 'low' }, io);
+    assert.equal(effortChanged.current.effort, 'low');
+    assert.match(typed, /\/reasoning/);
+  } finally {
+    if (previous === undefined) delete process.env.FREEBUFF_CONFIG_DIR; else process.env.FREEBUFF_CONFIG_DIR = previous;
+    fsNative.rmSync(directory, { recursive: true, force: true });
+  }
+});
+

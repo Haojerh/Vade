@@ -69,7 +69,9 @@ export interface AnswerAgentRequest { promptId: string; optionId: string; text?:
 export interface ToolEditPreview {
   path: string;
   location?: string;
-  lines: { kind: 'add' | 'remove' | 'context'; text: string }[];
+  /** `line` is the native file line the provider's patch named for this row, when its
+   *  recorded arguments state one. A patch without hunk/line metadata omits it. */
+  lines: { kind: 'add' | 'remove' | 'context'; text: string; line?: number }[];
   truncated: boolean;
 }
 export interface ToolActivity {

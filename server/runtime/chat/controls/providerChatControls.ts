@@ -5,8 +5,8 @@ import { codexRequest } from '../../../providers/codex/codexThread.js';
 import { resolveAgent } from '../../sessions/sessions.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import {claudeEffortAcknowledgement} from '../../../providers/common/shared.js';
-import { FREEBUFF_MODELS } from '../../../providers/freebuff/freebuffCatalog.js';
-import { writeFreebuffModel } from '../../../providers/freebuff/freebuff.js';
+import { FREEBUFF_MODELS, freebuffModelByLabel } from '../../../providers/freebuff/freebuffCatalog.js';
+import { freebuffFooterModel, readFreebuffModel } from '../../../providers/freebuff/freebuff.js';
 
 const SAFE = /^[a-zA-Z0-9][a-zA-Z0-9_.\/:+@()\[\]-]{0,199}$/;
 const text = (value: unknown, limit = 160): string => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, limit) : '';
@@ -57,18 +57,26 @@ export class ProviderChatControls {
   }
   async read(provider: Provider, observed: { model?: string | null; effort?: string | null; fastMode?: boolean; serviceTier?: string }, screenSource: string | (() => string), cwd: string): Promise<AgentChatOptions> {
     if (provider === 'freebuff') {
-      const currentModel = observed.model || 'deepseek/deepseek-v4-flash';
-      const modelObj = FREEBUFF_MODELS.find(m => m.id === currentModel) || FREEBUFF_MODELS[0];
-      const currentEffort = observed.effort || (modelObj?.efforts?.[0]?.value ?? undefined);
+      // The running session's own status line wins over any stored preference: it is
+      // what the next message will actually use. Settings remain a fallback for a
+      // session whose screen is not readable yet, and neither source invents a default.
+      const screen = typeof screenSource === 'function' ? screenSource() : screenSource;
+      const footer = freebuffFooterModel(screen);
+      const stored = readFreebuffModel('', '');
+      const footerModel = footer.label ? freebuffModelByLabel(footer.label) : undefined;
+      const storedModel = stored.model ? freebuffModelByLabel(stored.model) : undefined;
+      const currentModel = footerModel?.id ?? storedModel?.id ?? footer.label ?? stored.model;
+      const modelObj = currentModel ? FREEBUFF_MODELS.find(m => m.id === currentModel) ?? footerModel ?? storedModel : undefined;
+      const currentEffort = footer.effort ?? stored.effort;
       return {
         provider: 'freebuff',
         transport: 'terminal',
         models: FREEBUFF_MODELS,
         current: {
-          model: modelObj.id,
+          ...(currentModel ? { model: modelObj?.id ?? currentModel } : {}),
           ...(currentEffort ? { effort: currentEffort } : {}),
         },
-        controls: { ...controls, model: true, effort: Boolean(modelObj?.efforts?.length) },
+        controls: { ...controls, model: true, effort: Boolean(modelObj?.efforts.length) },
       };
     }
     const models = await this.catalog(provider, cwd);
@@ -91,21 +99,9 @@ export class ProviderChatControls {
     if ((request.key === 'model' || request.key === 'effort') && options.current[request.key] === request.value) return options;
     const fast = request.key === 'fastToggle' || request.key === 'fastMode';
     if (options.provider === 'freebuff') {
-      const selectedModel = request.key === 'model' ? request.value : options.current.model;
-      const modelObj = options.models.find(m => m.id === selectedModel);
-      const selectedEffort = request.key === 'effort' ? request.value : (modelObj?.efforts?.[0]?.value ?? undefined);
-      writeFreebuffModel(process.cwd(), undefined, {
-        ...(request.key === 'model' ? { model: request.value } : {}),
-        ...(request.key === 'effort' ? { effort: request.value } : {}),
-      });
-      return updateControls({
-        ...options,
-        current: {
-          ...options.current,
-          [request.key]: request.value,
-          ...(request.key === 'model' ? { effort: selectedEffort } : {}),
-        },
-      });
+      return request.key === 'model'
+        ? applyFreebuffModel(options, request, io)
+        : applyFreebuffReasoning(options, request, io);
     }
     if (options.provider === 'codex' && !fast) return applyCodexPicker(options, request, io);
     const command = fast ? '/fast' : request.key === 'model' ? `/model ${request.value}` : `/effort ${request.value}`;
@@ -182,6 +178,123 @@ async function typeCommand(command: string, io: ProviderControlIO) {
   for (const char of command) { await io.write(char); await new Promise(resolve => setTimeout(resolve, 20)); }
   await io.write('\r');
 }
+
+const FREEBUFF_MODEL_PICKER = /choose model · Tab reasoning · Enter select · Esc cancel/;
+const FREEBUFF_REASONING_PICKER = /choose · Enter save · Esc back/;
+
+/** One rendered Freebuff model row. Only rows that resolve to the provider's own
+ *  catalog are accepted, so section headers and taglines are never navigation targets. */
+function freebuffPickerRows(screen: string): { selected: boolean; model: AgentChatModel }[] {
+  const rows: { selected: boolean; model: AgentChatModel }[] = [];
+  for (const line of screen.split('\n')) {
+    if (!/^\s*│/.test(line)) continue;
+    const content = line.replace(/^\s*│\s*/, '').replace(/\s*│\s*$/, '');
+    const selected = content.startsWith('›');
+    const body = content.replace(/^›\s*/, '').trim();
+    if (!body) continue;
+    const head = body.split(' · ')[0];
+    const model = freebuffModelByLabel(head.split(' • ')[0].trim());
+    if (model) rows.push({ selected, model });
+  }
+  return rows;
+}
+
+function freebuffReasoningRows(screen: string): { selected: boolean; value: string }[] {
+  const marker = screen.lastIndexOf('↑↓ choose · Enter save · Esc back');
+  const tail = marker >= 0 ? screen.slice(marker) : screen;
+  return tail.split('\n').flatMap(line => {
+    const match = /^\s*(›)?\s*(low|medium|high|xhigh|max)(?: \(default\))?\s*$/.exec(line);
+    return match ? [{ selected: Boolean(match[1]), value: match[2] }] : [];
+  });
+}
+
+async function pressKeys(io: ProviderControlIO, delta: number): Promise<void> {
+  const key = delta > 0 ? '\x1b[B' : '\x1b[A';
+  for (let step = 0; step < Math.abs(delta); step++) {
+    await io.write(key);
+    await new Promise(resolve => setTimeout(resolve, 30));
+  }
+}
+
+/** The native picker scrolls its rows. Walk it in both directions until the target is
+ *  rendered, then let the caller navigate the visible window by index. */
+async function revealFreebuffModel(io: ProviderControlIO, target: string): Promise<boolean> {
+  const selectedId = () => freebuffPickerRows(io.screen()).find(row => row.selected)?.model.id;
+  for (const key of ['\x1b[B', '\x1b[A'] as const) {
+    let previous = selectedId();
+    for (let step = 0; step < 48; step++) {
+      await io.write(key);
+      await new Promise(resolve => setTimeout(resolve, 60));
+      const rows = freebuffPickerRows(io.screen());
+      if (rows.some(row => row.model.id === target)) return true;
+      const current = rows.find(row => row.selected)?.model.id;
+      if (current === previous) break;
+      previous = current;
+    }
+  }
+  return false;
+}
+
+/** Model and reasoning are chosen in Freebuff's own pickers. The running CLI owns
+ *  the write, so its status line is the confirmation instead of a guessed success. */
+async function applyFreebuffModel(options: AgentChatOptions, request: SetAgentChatOptionRequest, io: ProviderControlIO): Promise<AgentChatOptions> {
+  const target = options.models.find(row => row.id === request.value);
+  if (!target) invalid('Choose a model advertised by Freebuff');
+  try {
+    await typeCommand('/model', io);
+    let screen = await io.waitFor(value => FREEBUFF_MODEL_PICKER.test(value));
+    if (!freebuffPickerRows(screen).some(row => row.model.id === target!.id)) {
+      if (!(await revealFreebuffModel(io, target!.id))) {
+        await io.write('\x1b');
+        invalid('Freebuff does not list this model on the current connection. Choose another model or open Terminal.');
+      }
+      screen = io.screen();
+    }
+    const rows = freebuffPickerRows(screen);
+    const selectedIndex = rows.findIndex(row => row.selected);
+    const targetIndex = rows.findIndex(row => row.model.id === target!.id);
+    if (selectedIndex < 0 || targetIndex < 0) invalid('The Freebuff model picker changed. Open Terminal to select this model.');
+    await pressKeys(io, targetIndex - selectedIndex);
+    await io.waitFor(value => freebuffPickerRows(value).find(row => row.selected)?.model.id === target!.id);
+    await io.write('\r');
+    const confirmed = await io.waitFor(value => {
+      const footer = freebuffFooterModel(value);
+      return Boolean(footer.label) && freebuffModelByLabel(footer.label!)?.id === target!.id;
+    });
+    const footer = freebuffFooterModel(confirmed);
+    return {
+      ...options,
+      current: { model: target!.id, ...(footer.effort ? { effort: footer.effort } : {}) },
+      controls: { ...options.controls, effort: target!.efforts.length > 0 },
+    };
+  } catch (error) {
+    await io.write('\x1b').catch(() => {});
+    throw error;
+  }
+}
+
+async function applyFreebuffReasoning(options: AgentChatOptions, request: SetAgentChatOptionRequest, io: ProviderControlIO): Promise<AgentChatOptions> {
+  const target = options.models.find(row => row.id === options.current.model);
+  if (!target?.efforts.some(row => row.value === request.value)) invalid('Choose a reasoning level advertised for this model');
+  try {
+    await typeCommand('/reasoning', io);
+    const screen = await io.waitFor(value => FREEBUFF_REASONING_PICKER.test(value) || /does not offer adjustable reasoning/.test(value));
+    if (!FREEBUFF_REASONING_PICKER.test(screen)) invalid(`${target!.label} does not offer adjustable reasoning.`);
+    const rows = freebuffReasoningRows(screen);
+    const selectedIndex = rows.findIndex(row => row.selected);
+    const targetIndex = rows.findIndex(row => row.value === request.value);
+    if (selectedIndex < 0 || targetIndex < 0) invalid('The Freebuff reasoning picker changed. Open Terminal to select this level.');
+    await pressKeys(io, targetIndex - selectedIndex);
+    await io.waitFor(value => freebuffReasoningRows(value).find(row => row.selected)?.value === request.value);
+    await io.write('\r');
+    const confirmed = await io.waitFor(value => freebuffFooterModel(value).effort === request.value);
+    return { ...options, current: { ...options.current, effort: freebuffFooterModel(confirmed).effort ?? request.value } };
+  } catch (error) {
+    await io.write('\x1b').catch(() => {});
+    throw error;
+  }
+}
+
 function updateControls(options: AgentChatOptions): AgentChatOptions {
   const model = options.models.find(row => row.id === options.current.model);
   return { ...options, controls: { ...options.controls, effort: Boolean(model?.efforts.length), fastMode: model?.supportsFastMode === true && typeof options.current.fastMode === 'boolean', fastToggle: model?.supportsFastMode === true && typeof options.current.fastMode !== 'boolean' } };

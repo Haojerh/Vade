@@ -131,6 +131,8 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
   const selected = options?.models.find(item => item.id === current?.model);
   const observedModel = current?.model ?? (model !== 'unknown' ? model : null);
   const observedEffort = current?.effort ?? (effort !== 'unknown' ? effort : null);
+  // Freebuff calls this control "Reasoning"; every other provider labels it "Effort".
+  const effortLabel = options?.provider === 'freebuff' ? 'Reasoning' : 'Effort';
   const locked = (loading && !options) || saving || disabled || overlay.closing;
   const models = options?.models.filter(item => `${item.label} ${item.id} ${item.description ?? ''}`.toLowerCase().includes(query.toLowerCase())) ?? [];
   const hasFast = options?.controls.fastMode || options?.controls.fastToggle;
@@ -159,7 +161,7 @@ function BoundAgentChatControls({ projectId, nodeId, runId, model, effort, disab
           {!models.length && <p className="agent-settings-message">{options?.models.length ? 'No matching models.' : options?.provider === 'dsh' ? 'Waiting for the native DSH model catalog. Finish setup in Terminal; reopen this picker to retry.' : ['codebuddy','opencode','opencode2','kilo'].includes(options?.provider ?? '') ? 'Change model and effort in Terminal. Current settings appear after a recorded turn.' : 'No model catalog available.'}</p>}
         </div>
         {options?.controls.providerPicker && options.provider !== 'codebuddy' && <button type="button" className="agent-settings-native" disabled={locked} onClick={() => void change('providerPicker', 'open')}>Open model picker in Terminal</button>}
-        {options?.controls.effort && !!selected?.efforts.length && <div className={`agent-chat-option-row${highlight === 'effort' ? ' is-highlighted' : ''}`} data-composer-section="effort"><span>Effort</span><SegmentedControl key={selected.id} label="Effort" choices={selected.efforts.map(item => ({ ...item, label: item.value === 'medium' ? 'Med' : item.label }))} value={current?.effort} disabled={locked} onChange={value => void change('effort', value)} /></div>}
+        {options?.controls.effort && !!selected?.efforts.length && <div className={`agent-chat-option-row${highlight === 'effort' ? ' is-highlighted' : ''}`} data-composer-section="effort"><span>{effortLabel}</span><SegmentedControl key={selected.id} label={effortLabel} choices={selected.efforts.map(item => ({ ...item, label: item.value === 'medium' ? 'Med' : item.label }))} value={current?.effort} disabled={locked} onChange={value => void change('effort', value)} /></div>}
         {options?.controls.serviceTier && !!selected?.serviceTiers?.length && <div className="agent-chat-option-row"><span>Speed</span><SegmentedControl label="Speed" choices={selected.serviceTiers} value={current?.serviceTier} disabled={locked} onChange={value => void change('serviceTier', value)} /></div>}
         {hasFast && <div className="agent-chat-option-row"><span>Speed</span>
           {options?.controls.fastMode ? <SegmentedControl label="Fast mode" choices={[{ value: 'false', label: 'Standard' }, { value: 'true', label: 'Fast' }]} value={typeof current?.fastMode === 'boolean' ? String(current.fastMode) : undefined} disabled={locked} onChange={value => void change('fastMode', value)} />

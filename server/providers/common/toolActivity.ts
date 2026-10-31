@@ -68,14 +68,17 @@ export function toolEditPreview(raw: unknown): ToolEditPreview[] {
   const patch = wrapped ?? input.patch ?? input.patchText ?? input.diff;
   const previews: ToolEditPreview[] = [];
   const clean = (text: string) => text.replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '');
-  const addLine = (preview: ToolEditPreview, kind: 'add' | 'remove' | 'context', text: string) => {
+  const addLine = (preview: ToolEditPreview, kind: 'add' | 'remove' | 'context', text: string, line?: number) => {
     if (preview.lines.length >= 16) { preview.truncated = true; return; }
     const safe = clean(text);
     if (safe.length > 200) preview.truncated = true;
-    preview.lines.push({ kind, text: safe.slice(0, 200) });
+    preview.lines.push({ kind, text: safe.slice(0, 200), ...(line && line > 0 ? { line } : {}) });
   };
   if (typeof patch === 'string' && /(?:\*\*\* (?:Update|Add|Delete) File:|^diff --git )/m.test(patch)) {
     let current: ToolEditPreview | undefined;
+    // Native hunk headers give the row numbers the provider itself named. Counters
+    // advance only for rows actually retained, so a bounded preview stays truthful.
+    let oldLine: number | null = null, newLine: number | null = null;
     const bounded = patch.slice(0, 64000);
     for (const line of bounded.split(/\r?\n/)) {
       const path = line.match(/^\*\*\* (?:Update|Add|Delete) File: (.+)$/)?.[1] ?? line.match(/^diff --git a\/.+ b\/(.+)$/)?.[1];
@@ -83,11 +86,19 @@ export function toolEditPreview(raw: unknown): ToolEditPreview[] {
         if (previews.length >= 2) { previews[1].truncated = true; break; }
         current = { path: clean(path).slice(0, 500), lines: [], truncated: patch.length > bounded.length };
         previews.push(current);
+        oldLine = newLine = null;
       } else if (current && line.startsWith('@@')) {
+        const hunk = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+        oldLine = hunk ? Number(hunk[1]) : null;
+        newLine = hunk ? Number(hunk[2]) : null;
         if (!current.location) current.location = clean(line).slice(0, 200);
         else addLine(current, 'context', line);
       } else if (current && !line.startsWith('---') && !line.startsWith('+++') && /^[+\- ]/.test(line)) {
-        addLine(current, line[0] === '+' ? 'add' : line[0] === '-' ? 'remove' : 'context', line.slice(1));
+        const kind = line[0] === '+' ? 'add' : line[0] === '-' ? 'remove' : 'context';
+        const number = kind === 'add' ? newLine : oldLine;
+        addLine(current, kind, line.slice(1), number ?? undefined);
+        if (kind !== 'remove' && newLine !== null) newLine++;
+        if (kind !== 'add' && oldLine !== null) oldLine++;
       }
     }
     return previews.filter((preview) => preview.lines.some((line) => line.kind !== 'context'));
@@ -113,7 +124,9 @@ export function toolEditPreview(raw: unknown): ToolEditPreview[] {
       if (typeof text !== 'string') continue;
       const lines = text.slice(0, 32000).split(/\r?\n/);
       if (text.length > 32000 || lines.length > 8) preview.truncated = true;
-      for (const line of lines.slice(0, 8)) addLine(preview, kind, line);
+      for (const [index, line] of lines.slice(0, 8).entries()) {
+        addLine(preview, kind, line, Number.isInteger(start) && start > 0 ? start + index : undefined);
+      }
     }
     previews.push(preview);
   }

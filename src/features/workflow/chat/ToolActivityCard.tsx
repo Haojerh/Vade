@@ -6,15 +6,17 @@ import { Popover } from '../../../components/ui/Popover';
 import { usePopoverState } from '../../../hooks/ui/usePopoverState';
 import type { ToolEditPreview } from '../../../../shared/contracts';
 
-export function ToolEditDiff({ edits, hideCaption }: {
+export function ToolEditDiff({ edits, hideCaption, footer }: {
   edits: (ToolEditPreview & { totalAdded?: number; totalRemoved?: number })[];
   hideCaption?: boolean;
+  footer?: React.ReactNode;
 }) {
   return <div className="tool-edit-diffs">
     {edits.map((edit, index) => {
       const added = edit.totalAdded ?? edit.lines.filter(l => l.kind === 'add').length;
       const removed = edit.totalRemoved ?? edit.lines.filter(l => l.kind === 'remove').length;
       const displayPath = edit.path.replace(/\\/g, '/');
+      const numbered = edit.lines.some(line => typeof line.line === 'number');
       return <div className="tool-edit-file" key={`${edit.path}:${index}`}>
         <div className="tool-edit-header">
           <span className="tool-edit-path" title={edit.path}>{displayPath}</span>
@@ -24,12 +26,14 @@ export function ToolEditDiff({ edits, hideCaption }: {
           </span>}
         </div>
         {edit.location && <div className="tool-edit-location">{edit.location}</div>}
-        <pre className="tool-edit-code" aria-label={`Edit preview for ${edit.path}`}>
+        <pre className={`tool-edit-code${numbered ? ' has-line-numbers' : ''}`} aria-label={`Edit preview for ${edit.path}`}>
           {edit.lines.map((line, row) => <span key={row} className={`tool-edit-line tool-edit-${line.kind}`}>
+            {numbered && <span className="tool-edit-gutter" aria-hidden="true">{line.line ?? ''}</span>}
             <code>{line.text || ' '}</code>
           </span>)}
         </pre>
         {!hideCaption && edit.truncated && <div className="tool-edit-caption">Show more</div>}
+        {footer && index === edits.length - 1 ? footer : null}
       </div>;
     })}
   </div>;

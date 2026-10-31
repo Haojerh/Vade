@@ -100,6 +100,31 @@ export class TerminalScreen {
       && this.dshComposerText() === '';
   }
 
+  /** Freebuff draws a boxed composer with a block cursor and its own status line.
+   *  Its native pickers replace the composer, so a visible picker is never a draft. */
+  freebuffPromptReady(): boolean {
+    const screen = this.viewportText();
+    if (!/\/model to change/.test(screen)) return false;
+    if (/choose model · Tab reasoning|choose · Enter save/.test(screen)) return false;
+    const buffer = this.terminal.buffer.active;
+    const cursor = buffer.baseY + buffer.cursorY;
+    for (let row = cursor; row >= Math.max(buffer.baseY, cursor - 4); row--) {
+      const line = buffer.getLine(row);
+      if (!line) continue;
+      const text = line.translateToString(true);
+      const marker = text.indexOf('\u258d');
+      if (marker < 0) continue;
+      // Typed text renders before the block cursor; only whitespace may precede it.
+      if (text.slice(0, marker).replace(/^[│|\s]+/, '').trim()) return false;
+      for (let column = marker + 1; column < line.length; column++) {
+        const cell = line.getCell(column);
+        if (cell?.getChars().trim() && !cell.isDim()) return false;
+      }
+      return true;
+    }
+    return false;
+  }
+
   private dshComposerText(): string | null {
     const buffer = this.terminal.buffer.active, cursor = buffer.baseY + buffer.cursorY;
     const rows: string[] = [];

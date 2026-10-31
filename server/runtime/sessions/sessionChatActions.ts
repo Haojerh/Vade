@@ -153,9 +153,11 @@ export async function setSessionChatOption(
     fullAccessConfirmation ||
     (record.provider === 'dsh'
       ? live.screen?.dshPromptReady()
-      : isOpenCode(record.provider)
-        ? live.screen?.openCodePromptReady()
-        : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy'));
+      : record.provider === 'freebuff'
+        ? live.screen?.freebuffPromptReady()
+        : isOpenCode(record.provider)
+          ? live.screen?.openCodePromptReady()
+          : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy'));
   if (live.draftInput && composerEmpty && !/(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)) {
     live.draftInput = false;
   }
@@ -169,6 +171,7 @@ export async function setSessionChatOption(
       record.provider !== 'codex' &&
       record.provider !== 'codebuddy' &&
       record.provider !== 'claude' &&
+      record.provider !== 'freebuff' &&
       !/(?:\? for shortcuts|context left|context remaining)/i.test(initial)) ||
     /(?:Select Model|Select Reasoning|Switch Model|Keyboard:.*(?:Select|Navigate))/.test(initial)
   ) {
@@ -194,7 +197,7 @@ export async function setSessionChatOption(
       await ctx.command(live, { type: 'input', data });
     },
     waitFor: async predicate => {
-      const deadline = Date.now() + (record.provider === 'codebuddy' ? 20000 : record.provider === 'claude' ? 15000 : 5000);
+      const deadline = Date.now() + (record.provider === 'codebuddy' ? 20000 : record.provider === 'claude' ? 15000 : record.provider === 'freebuff' ? 10000 : 5000);
       while (Date.now() < deadline) {
         verify();
         const screen = live.screen?.viewportText() ?? '';
@@ -294,7 +297,9 @@ async function restartSessionPermission(
     await session.screen?.settled();
     const ready = isOpenCode(current.provider)
       ? session.screen?.openCodePromptReady()
-      : session.screen?.composerEmpty(current.provider === 'antigravity', current.provider === 'codebuddy');
+      : current.provider === 'freebuff'
+        ? session.screen?.freebuffPromptReady()
+        : session.screen?.composerEmpty(current.provider === 'antigravity', current.provider === 'codebuddy');
     if (ready) return readSessionChatOptions(ctx, record.projectId, record.id, observed);
     await new Promise(resolve => setTimeout(resolve, 50));
   }

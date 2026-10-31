@@ -83,17 +83,41 @@ export function codeBuddyQuota(data: any): UsageWindow[] {
   });
 }
 
+/** Freebuff reports a credit balance, not a quota percentage. The cap is not part of
+ *  the response, so a positive balance is reported as unused capacity and a depleted
+ *  balance as exhausted; no total is fabricated. */
 export function freebuffQuota(data: any): UsageWindow[] {
   if (!data || typeof data !== 'object') return [];
-  const remainingCredits = typeof data.remainingBalance === 'number' ? data.remainingBalance : 0;
-  const usedCredits = typeof data.usage === 'number' ? data.usage : 0;
-  const totalCredits = (remainingCredits + usedCredits) > 0 ? (remainingCredits + usedCredits) : 250;
-  const remainingHours = Math.floor(Math.max(0, remainingCredits) / 5);
-  const usedHours = Math.floor(Math.max(0, usedCredits) / 5);
-  const totalHours = Math.floor(totalCredits / 5);
-  const usedPercent = Math.min(100, Math.max(0, totalCredits > 0 ? (usedCredits / totalCredits) * 100 : 0));
-  const window = quotaWindow(`Hours (${usedHours} / ${totalHours} hours)`, usedPercent, data.next_quota_reset ?? null);
+  const remaining = typeof data.remainingBalance === 'number' && Number.isFinite(data.remainingBalance) && data.remainingBalance >= 0
+    ? Math.round(data.remainingBalance)
+    : null;
+  if (remaining === null) return [];
+  const window = quotaWindow(`Credits remaining: ${remaining}`, remaining > 0 ? 0 : 100, data.next_quota_reset ?? null);
   return window ? [window] : [];
+}
+
+export interface FreebuffAccount { id: string; label: string }
+
+function freebuffDirectory(): string {
+  const custom = process.env.FREEBUFF_CONFIG_DIR;
+  return custom && path.isAbsolute(custom) ? custom : path.join(os.homedir(), '.config', 'manicode');
+}
+
+/** The account record the native CLI stores alongside its keychain token. It is
+ *  display metadata only; the token never leaves the credential read. */
+export async function freebuffAccount(): Promise<FreebuffAccount | null> {
+  try {
+    const record = await readCredentialJson(path.join(freebuffDirectory(), 'credentials.json'));
+    const entry = record?.default ?? record;
+    if (!entry || typeof entry !== 'object') return null;
+    const id = typeof entry.id === 'string' ? entry.id.slice(0, 128) : '';
+    const name = typeof entry.name === 'string' ? entry.name.trim().slice(0, 120) : '';
+    const email = typeof entry.email === 'string' ? entry.email.trim().slice(0, 160) : '';
+    const label = name && email ? `${name} (${email})` : email || name || '';
+    return label ? { id: id || 'system', label } : null;
+  } catch {
+    return null;
+  }
 }
 
 let cachedFreebuffToken: { token: string | null; readAt: number } | null = null;
@@ -101,7 +125,7 @@ export async function freebuffCredential(): Promise<string | null> {
   if (cachedFreebuffToken && (Date.now() - cachedFreebuffToken.readAt < 60000)) {
     return cachedFreebuffToken.token;
   }
-  const credPath = path.join(os.homedir(), '.config', 'manicode', 'credentials.json');
+  const credPath = path.join(freebuffDirectory(), 'credentials.json');
   try {
     const json = await readCredentialJson(credPath);
     if (!json) return null;
@@ -111,8 +135,11 @@ export async function freebuffCredential(): Promise<string | null> {
       return entry.authToken;
     }
     if (entry?.tokenStore === 'keychain' && process.platform === 'win32') {
+      // Bun.secrets stores this token as a generic Windows credential whose target is
+      // `freebuff-cli/<credentials path>`. The marshalled struct's field names must be
+      // distinct from the struct name or Add-Type rejects the whole source.
       const target = `freebuff-cli/${credPath}`;
-      const ps = `Add-Type @'\nusing System; using System.Runtime.InteropServices; public class CM { [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern bool CredRead(string t, int ty, int r, out IntPtr p); [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct C { public int F; public int T; public string TN; public string C; public long L; public int CBS; public IntPtr CB; public int P; public int AC; public IntPtr A; public string TA; public string UN; } public static string R(string t) { IntPtr p; if (CredRead(t, 1, 0, out p)) { var c = (C)Marshal.PtrToStructure(p, typeof(C)); byte[] b = new byte[c.CBS]; Marshal.Copy(c.CB, b, 0, c.CBS); return System.Text.Encoding.UTF8.GetString(b); } return null; } }\n'@; [CM]::R('${target.replace(/'/g, "''")}')`;
+      const ps = `Add-Type @'\nusing System; using System.Runtime.InteropServices; public class FreebuffCredential { [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern bool CredRead(string t, int ty, int r, out IntPtr p); [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct Record { public int Flags; public int Type; public string TargetName; public string Comment; public long LastWritten; public int BlobSize; public IntPtr Blob; public int Persist; public int AttributeCount; public IntPtr Attributes; public string TargetAlias; public string UserName; } public static string Read(string t) { IntPtr p; if (CredRead(t, 1, 0, out p)) { var c = (Record)Marshal.PtrToStructure(p, typeof(Record)); byte[] b = new byte[c.BlobSize]; Marshal.Copy(c.Blob, b, 0, c.BlobSize); return System.Text.Encoding.UTF8.GetString(b); } return null; } }\n'@; [FreebuffCredential]::Read('${target.replace(/'/g, "''")}')`;
       const result = await new Promise<string>((resolve) => {
         execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
           if (err || !stdout) resolve('');
@@ -128,8 +155,13 @@ export async function freebuffCredential(): Promise<string | null> {
 }
 
 class UsageRequestError extends Error { constructor(readonly status: number) { super('Usage unavailable'); } }
-async function requestUsage(url: string, headers: Record<string, string>): Promise<any> {
-  const response = await fetch(url, { headers, ...(url === 'https://www.codebuddy.ai/billing/meter/get-user-resource-summary' ? { method: 'POST', body: '{}' } : {}), signal: AbortSignal.timeout(10000), redirect: 'error' });
+async function requestUsage(url: string, headers: Record<string, string>, body?: unknown): Promise<any> {
+  const response = await fetch(url, {
+    headers,
+    ...(body !== undefined ? { method: 'POST', body: JSON.stringify(body) }
+      : url === 'https://www.codebuddy.ai/billing/meter/get-user-resource-summary' ? { method: 'POST', body: '{}' } : {}),
+    signal: AbortSignal.timeout(10000), redirect: 'error',
+  });
   if (!response.ok) { await response.body?.cancel(); throw new UsageRequestError(response.status); }
   const reader = response.body?.getReader();
   if (!reader) throw new Error('Empty usage response');
@@ -236,8 +268,11 @@ export class LocalConnections {
         : ['opencode2','kilo','dsh'].includes(def.id) ? null
         : def.id === 'opencode' ? hasCredential('opencode', await (this.options.accounts?.openCodeCredentials() ?? readCredentialJson(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json'))))
         : this.cached?.data?.providers.find(p => p.provider === 'antigravity')?.meta.availability === 'ready' ? true : null;
-      const accounts = (def.id === 'codex' || def.id === 'claude' || def.id === 'opencode') ? await this.options.accounts?.list(def.id) : undefined;
-      return { ...def, installed, connected, accounts, message: def.id === 'codebuddy' ? connected ? 'Native international personal account detected. Credits are checked separately.' : 'Credit usage requires a native international personal sign-in. View other accounts at https://www.codebuddy.ai/profile/plans-usage.' : def.id === 'freebuff' ? connected ? 'Authenticated Freebuff account detected.' : 'Sign in with freebuff in Terminal.' : def.id === 'opencode2' ? 'Uses the native CLI account. OpenCode Go usage profiles are managed under OpenCode Go.' : def.id === 'kilo' ? 'Uses the native CLI account. Saved account profiles and subscription usage are not exposed here.' : !installed ? 'CLI not detected on this host.' : connected ? def.id === 'github' ? 'Authenticated through GitHub CLI.' : 'Selected sign-in detected. Usage is checked separately.'
+      const freebuff = def.id === 'freebuff' && installed ? await freebuffAccount() : null;
+      const accounts = (def.id === 'codex' || def.id === 'claude' || def.id === 'opencode') ? await this.options.accounts?.list(def.id)
+        : def.id === 'freebuff' ? (freebuff ? [{ id: freebuff.id, label: freebuff.label, active: true, detected: connected, loginCommand: def.loginCommand }] : undefined)
+        : undefined;
+      return { ...def, installed, connected, accounts, message: def.id === 'codebuddy' ? connected ? 'Native international personal account detected. Credits are checked separately.' : 'Credit usage requires a native international personal sign-in. View other accounts at https://www.codebuddy.ai/profile/plans-usage.' : def.id === 'freebuff' ? connected ? `Signed in as ${freebuff?.label ?? 'the native Freebuff account'}. Credits are read from the native account.` : 'Sign in with freebuff in Terminal.' : def.id === 'opencode2' ? 'Uses the native CLI account. OpenCode Go usage profiles are managed under OpenCode Go.' : def.id === 'kilo' ? 'Uses the native CLI account. Saved account profiles and subscription usage are not exposed here.' : !installed ? 'CLI not detected on this host.' : connected ? def.id === 'github' ? 'Authenticated through GitHub CLI.' : 'Selected sign-in detected. Usage is checked separately.'
         : def.id === 'antigravity' ? 'Open agy and complete its native sign-in, then re-check usage.' : 'Sign in with the native CLI on this host, then re-check.' };
     }));
     const result: Section<LocalConnectionsData> = { data: { host: process.platform === 'win32' ? 'Windows' : process.platform === 'darwin' ? 'macOS' : 'Linux', connections }, meta: this.meta('ready') };
@@ -316,9 +351,11 @@ export class LocalConnections {
           if (!this.resolve('freebuff')) throw new Error();
           const token = await (this.options.freebuffCredential ?? freebuffCredential)();
           if (!token) throw new Error();
+          // The native CLI authenticates this endpoint with the token in the JSON
+          // body; a bearer header is not accepted and returns 405.
           windows = freebuffQuota(await (this.options.request ?? requestUsage)('https://www.codebuff.com/api/v1/usage', {
-            Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
-          }));
+            'Content-Type': 'application/json',
+          }, { fingerprintId: 'cli-usage', authToken: token }));
         } else {
           const agent = this.resolve('antigravity'); if (!agent) throw new Error();
           const options = { timeoutMs: 5000, maxStdout: 524288, maxStderr: 1024, env: { AGY_CLI_DISABLE_AUTO_UPDATE: 'true' } };

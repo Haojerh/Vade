@@ -133,21 +133,36 @@ dialog.node-modal-dialog.confirmation-dialog, dialog.node-modal-dialog.provider-
 .conversation-tool-call .disclosure-trigger > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-tool-call-plain, .conversation-tool-summary { font: 11.5px/1.5 Consolas, 'Cascadia Mono', monospace; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .conversation-tool-input { margin: 4px 0 6px; padding: 0; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 11px/1.6 Consolas, 'Cascadia Mono', monospace; color: var(--text-secondary); background: none; border: 0; border-radius: 0; }
-.tool-edit-diffs { display: flex; flex-direction: column; gap: 8px; margin: 4px 0; }
-.tool-edit-file { border: 1px solid var(--border-subtle); border-radius: 8px; background: rgba(255, 255, 255, 0.03); overflow: hidden; }
-.tool-edit-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 30px; padding: 0 12px; box-sizing: border-box; border-bottom: 1px solid var(--border-subtle); font: 11.5px/1.4 Consolas, 'Cascadia Mono', monospace; background: rgba(255, 255, 255, 0.02); }
+.tool-edit-diffs { display: flex; flex-direction: column; gap: 10px; margin: 4px 0; }
+/* One rounded card per edited file: a quiet header with the provider's own path and
+   added/removed counts, then a gutter-numbered diff body. */
+.tool-edit-file { border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--canvas-bg); overflow: hidden; }
+.tool-edit-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 34px; padding: 0 14px; box-sizing: border-box; border-bottom: 1px solid var(--border-subtle); font: 12px/1.4 Consolas, 'Cascadia Mono', monospace; background: var(--surface-2); }
 .tool-edit-path { flex: 1 1 auto; min-width: 0; margin: 0; padding: 0; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: inherit; line-height: inherit; }
-.tool-edit-stats { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; margin: 0; padding: 0; font: inherit; font-weight: 500; font-variant-numeric: tabular-nums; line-height: inherit; }
+.tool-edit-stats { display: inline-flex; align-items: center; gap: 10px; flex-shrink: 0; margin: 0; padding: 0; font: inherit; font-weight: 600; font-variant-numeric: tabular-nums; line-height: inherit; }
 .tool-edit-stat-add { color: #4ade80; }
 .tool-edit-stat-remove { color: #f87171; }
-.conversation-tool-call .tool-edit-code, .tool-edit-code { margin: 0; padding: 0; overflow-x: auto; white-space: pre; font: 11.5px/1.65 Consolas, 'Cascadia Mono', monospace; background: transparent; border: 0; border-radius: 0; }
-.tool-edit-line { display: block; width: 100%; box-sizing: border-box; padding: 3px 12px; min-width: max-content; }
-.tool-edit-line code { font: inherit; white-space: pre; }
-.tool-edit-line.tool-edit-remove { background: rgba(239, 68, 68, 0.15); color: #fca5a5; text-decoration: line-through; text-decoration-color: rgba(239, 68, 68, 0.6); }
-.tool-edit-line.tool-edit-add { background: rgba(34, 197, 94, 0.15); color: #86efac; }
+.conversation-tool-call .tool-edit-code, .tool-edit-code { margin: 0; padding: 4px 0; overflow-x: auto; white-space: pre; font: 12px/1.6 Consolas, 'Cascadia Mono', monospace; background: transparent; border: 0; border-radius: 0; }
+.tool-edit-line { display: grid; grid-template-columns: minmax(0, 1fr); width: 100%; box-sizing: border-box; min-width: max-content; }
+.tool-edit-code.has-line-numbers .tool-edit-line { grid-template-columns: 46px minmax(0, 1fr); }
+.tool-edit-gutter { display: block; padding: 0 10px 0 4px; text-align: right; color: var(--text-muted); opacity: .55; user-select: none; font-variant-numeric: tabular-nums; }
+.tool-edit-line code { display: block; padding: 0 14px; font: inherit; white-space: pre; }
+.tool-edit-line.tool-edit-remove { background: rgba(248, 81, 73, .16); color: #f3a4a0; box-shadow: inset 2px 0 0 rgba(248, 81, 73, .7); }
+.tool-edit-line.tool-edit-add { background: rgba(46, 160, 67, .17); color: #8fe3a4; box-shadow: inset 2px 0 0 rgba(46, 160, 67, .75); }
 .tool-edit-line.tool-edit-context { background: transparent; color: var(--text-secondary); }
-.tool-edit-caption { padding: 4px 12px; font-size: 10.5px; color: var(--text-muted); }
-.conversation-tool-call .tool-edit-location { background: none; padding: 0; color: var(--text-muted); }
+.tool-edit-line.tool-edit-remove .tool-edit-gutter { color: #f3a4a0; opacity: .7; }
+.tool-edit-line.tool-edit-add .tool-edit-gutter { color: #8fe3a4; opacity: .7; }
+:root[data-theme="light"] .tool-edit-line.tool-edit-remove { background: #ffebe9; color: #7a1d1d; box-shadow: inset 2px 0 0 #cf222e; }
+:root[data-theme="light"] .tool-edit-line.tool-edit-add { background: #e6ffec; color: #14532d; box-shadow: inset 2px 0 0 #1a7f37; }
+:root[data-theme="light"] .tool-edit-line.tool-edit-remove .tool-edit-gutter { color: #7a1d1d; }
+:root[data-theme="light"] .tool-edit-line.tool-edit-add .tool-edit-gutter { color: #14532d; }
+.tool-edit-caption { padding: 4px 14px; font-size: 10.5px; color: var(--text-muted); }
+.conversation-tool-call .tool-edit-location { margin: 0; padding: 6px 14px; background: none; border-bottom: 1px solid var(--border-subtle); color: var(--text-muted); font: 11px/1.4 Consolas, 'Cascadia Mono', monospace; }
+/* The expand control is the card's own footer, not a floating chat action. */
+.conversation-tool-details > .btn-read-more.tool-edit-more { display: block; width: 100%; margin: 0; padding: 8px 14px; border: 0; border-top: 1px solid var(--border-subtle); border-radius: 0; background: transparent; color: var(--text-secondary); text-align: left; font: 500 11.5px/1.4 var(--font-sans, sans-serif); cursor: pointer; }
+@media (hover: hover) and (pointer: fine) {
+  .conversation-tool-details > .btn-read-more.tool-edit-more:hover { background: var(--surface-hover); color: var(--text-main); }
+}
 .settings-page-row .custom-select-control { width: 190px; flex-shrink: 0; }
 .settings-page-row .custom-select-native { font-size: 13px; padding: 9px 34px 9px 12px; }
 .settings-page-row .custom-select-native option { white-space: nowrap; }

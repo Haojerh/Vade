@@ -6,15 +6,16 @@
  *  CodeBuddy prints "Compacting context", Antigravity prints "Compacting conversation",
  *  the OpenCode family (including Kilo) emits `compacting` / `compacted` session events,
  *  and the DeepSeek Harness TUI documents `/compact` as a manual session compaction that
- *  it rejects mid-turn. Providers without that evidence stay unsupported rather than
- *  receiving a guessed command; a provider that rejects the token is reported as such. */
+ *  it rejects mid-turn. Freebuff has no compaction command: `/model`, `/reasoning` and
+ *  `/dashboard` are its native controls. Providers without that evidence stay unsupported
+ *  rather than receiving a guessed command; a provider that rejects the token is reported
+ *  as such. */
 const COMPACT_COMMANDS: Readonly<Record<string, string>> = {
   antigravity: '/compact',
   claude: '/compact',
   codebuddy: '/compact',
   codex: '/compact',
   dsh: '/compact',
-  freebuff: '/compact',
   kilo: '/compact',
   kilocode: '/compact',
   opencode: '/compact',

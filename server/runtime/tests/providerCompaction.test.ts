@@ -6,7 +6,7 @@ test('only providers with a verified native compaction command are supported', (
   for (const provider of ['claude', 'codex', 'codebuddy', 'antigravity', 'opencode', 'opencode2', 'kilo', 'kilocode', 'dsh']) {
     assert.equal(compactCommand(provider), '/compact', provider);
   }
-  for (const provider of ['terminal', 'pi', 'omp', 'unknown', '']) {
+  for (const provider of ['terminal', 'pi', 'omp', 'freebuff', 'unknown', '']) {
     assert.equal(compactCommand(provider), null, provider);
   }
   // Object prototype keys never resolve to a command.

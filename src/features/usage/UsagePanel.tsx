@@ -13,7 +13,7 @@ import { detailedWindow, primaryWindow, remainingTime, resetDescription, shortWi
 function inlineWindowLabel(provider: ProviderUsage, window: UsageWindow): string {
   const label = shortWindow(window.label);
   return provider.provider === 'codebuddy' ? label.replace(/^Plan Base Credits$/i, 'Plan').replace(/^Platform Reward Credits$/i, 'Rewards').replace(/ Credits$/i, '')
-    : provider.provider === 'freebuff' ? label.replace(/^Hours$/i, 'Hours').replace(/ Hours$/i, '')
+    : provider.provider === 'freebuff' ? 'credits'
     : label;
 }
 

@@ -57,7 +57,10 @@ test('edit previews normalize provider argument formats and stay bounded', () =>
     ['replace_file_content', { TargetFile: 'a.ts', StartLine: 12, TargetContent: 'before', ReplacementContent: 'after' }],
   ] as const) {
     const item = toolActivityFromCall('session', 'edit', name, input, null)!;
-    assert.deepEqual(item.edits?.[0].lines, [{ kind: 'remove', text: 'before' }, { kind: 'add', text: 'after' }]);
+    const numbered = name === 'replace_file_content';
+    assert.deepEqual(item.edits?.[0].lines, numbered
+      ? [{ kind: 'remove', text: 'before', line: 12 }, { kind: 'add', text: 'after', line: 12 }]
+      : [{ kind: 'remove', text: 'before' }, { kind: 'add', text: 'after' }]);
   }
   const patch = '*** Begin Patch\n*** Update File: a.ts\n@@ function main\n-before\n+after\n*** End Patch';
   for (const input of [patch, { patchText: patch }, { code: `await tools.apply_patch(${JSON.stringify(patch)});` }]) {
@@ -72,7 +75,7 @@ test('edit previews normalize provider argument formats and stay bounded', () =>
   assert.deepEqual(toolEditPreview({ file_path: 'a.ts' }), []);
   const kilo = toolActivityFromCall('kilo', 'edit', 'apply_diff', { path: 'a.ts', diff: '<<<<<<< SEARCH\n:start_line:8\n-------\nbefore\n=======\nafter\n>>>>>>> REPLACE' }, null)!;
   assert.equal(kilo.edits?.[0].location, 'Line 8');
-  assert.deepEqual(kilo.edits?.[0].lines, [{ kind: 'remove', text: 'before' }, { kind: 'add', text: 'after' }]);
+  assert.deepEqual(kilo.edits?.[0].lines, [{ kind: 'remove', text: 'before', line: 8 }, { kind: 'add', text: 'after', line: 8 }]);
   assert.equal(toolActivityFromCall('session', 'read', 'Read', { file_path: 'a.ts', content: 'read contents' }, null)?.edits, undefined);
 });
 

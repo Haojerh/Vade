@@ -84,14 +84,22 @@ test('terminal protocol responses are excluded from keyboard input while command
 });
 
 test('chat tool records preserve chronological scope and edit disclosures open by default', () => {
-  const edit = { id: 'edit', at: '2026-10-21T02:00:00Z', label: 'Edit: example.ts', edits: [{ path: 'example.ts', lines: [{ kind: 'remove' as const, text: 'before' }, { kind: 'add' as const, text: 'after' }], truncated: false }] };
+  const edit = { id: 'edit', at: '2026-10-21T02:00:00Z', label: 'Edit: example.ts', edits: [{ path: 'example.ts', lines: [{ kind: 'remove' as const, text: 'before', line: 4 }, { kind: 'add' as const, text: 'after', line: 4 }], truncated: false }] };
   const run = { id: 'run', at: '2026-10-21T03:00:00Z', label: 'Run: npm test', detail: 'Run: npm test' };
   const markup = renderToStaticMarkup(createElement(ConversationToolCall, { tool: edit }));
   assert.match(markup, /aria-expanded="true"/); assert.match(markup, /tool-edit-remove/); assert.match(markup, /tool-edit-add/);
+  // The provider's own line numbers render in the gutter and the counts stay in the header.
+  assert.match(markup, /tool-edit-gutter/); assert.match(markup, />4</); assert.match(markup, /\+1/); assert.match(markup, /-1/);
   const plain = renderToStaticMarkup(createElement(ConversationToolCall, { tool: run }));
   assert.match(plain, /conversation-tool-call-plain/); assert.doesNotMatch(plain, /aria-expanded/);
   assert.match(renderToStaticMarkup(createElement(ConversationToolCall, { tool: { ...run, detail: `Run: npm test -- ${'x'.repeat(200)}` } })), /aria-expanded="false"/);
-  const excerpt = compactEditLines([...Array.from({ length: 6 }, () => ({ kind: 'remove' as const, text: 'before' })), ...Array.from({ length: 6 }, () => ({ kind: 'add' as const, text: 'after' }))]);
+  const excerpt = compactEditLines([
+    ...Array.from({ length: 2 }, (_, index) => ({ kind: 'context' as const, text: `context ${index}` })),
+    ...Array.from({ length: 6 }, () => ({ kind: 'remove' as const, text: 'before' })),
+    ...Array.from({ length: 6 }, () => ({ kind: 'add' as const, text: 'after' })),
+  ]);
+  assert.equal(excerpt.length, 7);
+  assert.equal(excerpt[0].kind, 'context', 'the excerpt keeps one line of native hunk context');
   assert.equal(excerpt.filter(line => line.kind === 'remove').length, 3);
   assert.equal(excerpt.filter(line => line.kind === 'add').length, 3);
   const message = { id: 'user', at: '2026-10-21T01:00:00Z', role: 'user' as const, text: 'Please edit' };

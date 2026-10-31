@@ -11,12 +11,16 @@
   from { opacity: 0; translate: 0 -3px; }
   to { opacity: 1; translate: 0 0; }
 }
-.conversation-round { margin-bottom:-8px; }
+.conversation-round { margin-bottom:0; }
 .conversation-round > .disclosure { padding:0; margin:0; border:0; background:none; }
 .conversation-round > .disclosure > .section-header-row { margin-bottom:0; padding-bottom:3px; border-bottom:1px solid var(--border-subtle); }
-.conversation-round-label { display:flex; align-items:center; gap:7px; width:100%; padding:8px 0; margin:8px 0 4px; border-bottom:1px solid var(--border-subtle); color:var(--text-muted); font-size:12px; line-height:1.5; font-weight:400; }
-.conversation-thread > .conversation-round-label + .row-agent { margin-top:-4px; }
+.conversation-round-label { display:flex; align-items:center; gap:7px; width:100%; padding:4px 0; margin:0; border-bottom:1px solid var(--border-subtle); color:var(--text-muted); font-size:12px; line-height:1.5; font-weight:400; }
+.conversation-thread > .conversation-round-label + .row-agent { margin-top:0; }
+/* Every settled round keeps the same rhythm as a plain message. An interruption with no
+   final message needs more air before the next prompt, so that transition is wider. */
 .conversation-thread > :is(.conversation-round-label, .conversation-round, .conversation-round-activity) + .row-user { margin-top:24px; }
+.conversation-thread > :is(.conversation-round-label, .conversation-round)[data-outcome="interrupted"] + .row-user { margin-top:38px; }
+.conversation-thread > :is(.conversation-round-label, .conversation-round)[data-outcome="failed"] + .row-user { margin-top:32px; }
 .conversation-round > .disclosure > .section-header-row > .disclosure-trigger { display:inline-flex; align-items:center; gap:7px; width:auto; padding:7px 0; color:var(--text-muted); font-size:12px; line-height:1.5; font-weight:400; }
 .conversation-round > .disclosure > .section-header-row > .disclosure-trigger:hover { background:transparent; color:var(--text-main); }
 .conversation-round-activities { display:flex; flex-direction:column; gap:14px; min-width:0; padding:8px 0 14px; }

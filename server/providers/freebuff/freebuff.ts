@@ -13,7 +13,7 @@ import type {
 import type { SessionRecord } from '../../runtime/store.js';
 import { isPathInsideRoots, toIsoOrNull } from '../common/transcriptUtils.js';
 import { toolActivityFromCall } from '../common/toolActivity.js';
-import { FREEBUFF_MODELS } from './freebuffCatalog.js';
+import { freebuffContextWindow } from './freebuffCatalog.js';
 
 export const validFreebuffId = (id: unknown): id is string =>
   typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:\-T+Z]{0,119}$/.test(id);
@@ -97,69 +97,67 @@ export function readFreebuffMessages(file: string): any[] {
   }
 }
 
-export function readFreebuffModel(file: string, threadId: string): { model?: string; effort?: string } {
+/** Settings the native CLI writes for its own next message. Only observed values are
+ *  returned: an unconfigured CLI has no model, and a default is never invented. */
+export function readFreebuffModel(_file: string, _threadId: string): { model?: string; effort?: string } {
   try {
-    const chatFolder = path.dirname(file);
-    const runStateFile = path.join(chatFolder, 'run-state.json');
-    if (fs.existsSync(runStateFile)) {
-      const state = JSON.parse(fs.readFileSync(runStateFile, 'utf8'));
-      if (typeof state.selectedModel === 'string') {
-        const effort = state.reasoningEffortByModel?.[state.selectedModel] ?? undefined;
-        return { model: state.selectedModel, effort };
-      }
-    }
     const settingsFile = path.join(freebuffConfigDir(), 'settings.json');
-    if (fs.existsSync(settingsFile)) {
-      const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
-      const model = settings.freebuffModelKey ?? settings.freebuffModel ?? settings.freebuffModelDefaultMigration ?? undefined;
-      const effort = (model && settings.freebuffCatalogReasoningEfforts?.[model]) ?? undefined;
-      if (model) return { model, effort };
-    }
-  } catch {}
-  return { model: 'deepseek/deepseek-v4-flash', effort: 'medium' };
+    if (!fs.existsSync(settingsFile)) return {};
+    const settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8'));
+    const model = typeof settings.freebuffModelKey === 'string' ? settings.freebuffModelKey
+      : typeof settings.freebuffModel === 'string' ? settings.freebuffModel
+      : undefined;
+    if (!model) return {};
+    const effort = settings.freebuffReasoningEfforts?.[model] ?? settings.freebuffCatalogReasoningEfforts?.[model];
+    return { model, ...(typeof effort === 'string' ? { effort } : {}) };
+  } catch {
+    return {};
+  }
 }
 
-export function writeFreebuffModel(cwd: string, threadId: string | undefined, option: { model?: string; effort?: string }): void {
-  try {
-    const configDir = freebuffConfigDir();
-    if (!fs.existsSync(configDir)) fs.mkdirSync(configDir, { recursive: true });
-    const settingsFile = path.join(configDir, 'settings.json');
-    let settings: any = {};
-    if (fs.existsSync(settingsFile)) {
-      try { settings = JSON.parse(fs.readFileSync(settingsFile, 'utf8')); } catch {}
-    }
-    const currentModel = option.model ?? settings.freebuffModelKey ?? settings.freebuffModel ?? 'deepseek/deepseek-v4-flash';
-    if (option.model) {
-      settings.freebuffModel = option.model;
-      settings.freebuffModelKey = option.model;
-    }
-    if (option.effort) {
-      settings.freebuffCatalogReasoningEfforts = {
-        ...(settings.freebuffCatalogReasoningEfforts || {}),
-        [currentModel]: option.effort,
-      };
-    }
-    fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2));
+const FOOTER_EFFORT = /^(low|medium|high|xhigh|max)$/;
 
-    if (threadId) {
-      const chatFolder = freebuffChatDir(cwd, threadId);
-      if (fs.existsSync(chatFolder)) {
-        const runStateFile = path.join(chatFolder, 'run-state.json');
-        let state: any = {};
-        if (fs.existsSync(runStateFile)) {
-          try { state = JSON.parse(fs.readFileSync(runStateFile, 'utf8')); } catch {}
-        }
-        if (option.model) state.selectedModel = option.model;
-        if (option.effort) {
-          state.reasoningEffortByModel = {
-            ...(state.reasoningEffortByModel || {}),
-            [currentModel]: option.effort,
-          };
-        }
-        fs.writeFileSync(runStateFile, JSON.stringify(state, null, 2));
-      }
-    }
-  } catch {}
+/** Freebuff has no model/effort launch flags. A new process reads these settings at
+ *  startup, so a workflow launch writes them before spawning. This runs only outside
+ *  a live TUI, never while the native store owns the file. */
+export function writeFreebuffLaunchSettings(option: { model?: string; effort?: string }): void {
+  const directory = freebuffConfigDir();
+  fs.mkdirSync(directory, { recursive: true });
+  const file = path.join(directory, 'settings.json');
+  let settings: Record<string, any> = {};
+  try { settings = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* A new settings file. */ }
+  if (typeof option.model === 'string' && option.model) settings.freebuffModel = option.model;
+  const model = typeof option.model === 'string' && option.model ? option.model : settings.freebuffModel;
+  if (typeof option.effort === 'string' && option.effort && typeof model === 'string' && model) {
+    settings.freebuffReasoningEfforts = { ...(settings.freebuffReasoningEfforts ?? {}), [model]: option.effort };
+  }
+  const temporary = `${file}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(settings, null, 2));
+  fs.renameSync(temporary, file);
+}
+
+/** The native status line is the running session's own effective model:
+ *  ` DeepSeek V4.1 Flash 10/17 • high · ~\path · /model to change · Chat: …`.
+ *  It is read from the rendered screen, so a setting changed in Terminal or in the
+ *  native picker is reflected without re-reading a settings file. */
+export function freebuffFooterModel(screen: string): { model?: string; effort?: string; label?: string } {
+  for (const raw of screen.split('\n').reverse()) {
+    const line = raw.replace(/\s+$/, '');
+    if (!/\/model to change/.test(line)) continue;
+    const marker = line.indexOf('·');
+    if (marker < 0) continue;
+    const head = line.slice(0, marker).trim();
+    const separator = head.lastIndexOf('•');
+    if (separator < 0) return { label: head };
+    const label = head.slice(0, separator).trim();
+    const effort = head.slice(separator + 1).trim();
+    if (!label) return {};
+    return {
+      label,
+      ...(FOOTER_EFFORT.test(effort) ? { effort } : {}),
+    };
+  }
+  return {};
 }
 
 export function freebuffTools(file: string, threadId: string): ToolActivity[] {
@@ -300,11 +298,12 @@ export function freebuffContextUsage(record: SessionRecord): AgentContextUsage {
     record.providerThreadId ?? '',
   );
   return {
-    model: model ?? 'deepseek/deepseek-v4-flash',
+    ...(model ? { model } : {}),
     usedTokens: null,
-    windowTokens: 1_000_000,
+    windowTokens: model ? freebuffContextWindow(model) ?? null : null,
     observedAt: new Date().toISOString(),
     source: 'freebuff',
     measurement: 'last-request',
+    ...(model ? {} : { reason: 'The native CLI has not recorded a model for this session yet.' }),
   };
 }

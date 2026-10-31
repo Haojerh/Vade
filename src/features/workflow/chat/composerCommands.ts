@@ -69,12 +69,21 @@ function matches(name: string, description: string, query: string): boolean {
   return description.toLowerCase().split(/[^a-z0-9]+/).some(word => word.startsWith(needle));
 }
 
+/** Freebuff's native reasoning control is `/reasoning`, not `/effort`. The command
+ *  still opens the same Chat picker; only the token the provider understands differs. */
+export function composerCommands(provider?: string | null): readonly ComposerCommand[] {
+  if (provider !== 'freebuff') return COMPOSER_COMMANDS;
+  return COMPOSER_COMMANDS.map(command => command.id === 'effort'
+    ? { ...command, token: '/reasoning', label: '/reasoning', description: 'Choose reasoning effort' }
+    : command);
+}
+
 /** Commands first, then installed skills, filtered by the typed query. Skills always
  *  use the provider's own reference prefix, even when `/` armed the menu on Codex. */
 export function composerEntries(trigger: ComposerTrigger, skills: readonly AgentSkillSummary[], provider?: string | null, capabilities?: ComposerCapabilities): ComposerEntry[] {
   const entries: ComposerEntry[] = [];
   if (trigger.prefix === '/') {
-    for (const command of COMPOSER_COMMANDS) {
+    for (const command of composerCommands(provider)) {
       if (command.id === 'compact' && capabilities?.compact !== true) continue;
       if (!matches(command.token, command.description, trigger.query)) continue;
       entries.push({ kind: 'command', key: `command:${command.id}`, token: command.token, label: command.label, description: command.description, command: command.id });

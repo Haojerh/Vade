@@ -95,6 +95,6 @@ export function ConversationRoundGroup({scope,round,children,hasActivities,activ
   const key=`${scope}:${round.id}`,[open,setOpen]=useState(false);
   useEffect(()=>{setOpen(readRoundExpansion(key));},[key]);
   const title=round.measurement==='native-duration'?'Elapsed duration recorded by the provider.':round.partial?'Observed working time; earlier activity may be missing.':'Observed working time; waiting is excluded.';
-  if(!hasActivities)return <div className="conversation-round-label" title={title}>{roundLabel(round)}</div>;
-  return <div className="conversation-round" title={title}><Disclosure title={roundLabel(round)} compact chevronEnd lazy externalControls={activityIds?.map(id=>state?.activityId(id)).filter(Boolean).join(' ')||undefined} open={state?state.open(round.id):open} onOpenChange={value=>{if(state)state.toggle(round.id,value);else{setOpen(value);persistRoundExpansion(key,value);}}}>{activityIds?null:<div className="conversation-round-activities">{children}</div>}</Disclosure></div>;
+  if(!hasActivities)return <div className="conversation-round-label" data-outcome={round.outcome} title={title}>{roundLabel(round)}</div>;
+  return <div className="conversation-round" data-outcome={round.outcome} title={title}><Disclosure title={roundLabel(round)} compact chevronEnd lazy externalControls={activityIds?.map(id=>state?.activityId(id)).filter(Boolean).join(' ')||undefined} open={state?state.open(round.id):open} onOpenChange={value=>{if(state)state.toggle(round.id,value);else{setOpen(value);persistRoundExpansion(key,value);}}}>{activityIds?null:<div className="conversation-round-activities">{children}</div>}</Disclosure></div>;
 }

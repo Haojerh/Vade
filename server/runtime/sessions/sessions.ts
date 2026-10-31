@@ -25,7 +25,7 @@ import { CodeBuddyChatControls } from '../../providers/codebuddy/codeBuddyChatCo
 import { codexPaginatedBinding, codexThread } from '../../providers/codex/codexThread.js';
 import { ConversationRounds } from '../chat/conversationRounds.js';
 import { dshBinding, dshReady, dshResumable, prepareDsh } from '../../providers/dsh/dsh.js';
-import { freebuffBinding, freebuffResumable } from '../../providers/freebuff/freebuff.js';
+import { freebuffBinding, freebuffResumable, writeFreebuffLaunchSettings } from '../../providers/freebuff/freebuff.js';
 import { answerCodeBuddyQuestion, codeBuddyApprovalVisible, terminalInteraction } from './interaction.js';
 import { OpenCodeChatControls } from '../../providers/opencode/openCodeChatControls.js';
 import { createOpenCodeSession, installOpenCodePlugin, isOpenCode, openCodeMajor, validProviderSessionId, verifyOpenCode } from '../../providers/opencode/openCodeSessions.js';
@@ -547,9 +547,14 @@ export class AdeSessions {
         record = access.record;
         resolved = { ...resolved, args: [...resolved.args, ...access.args] };
         const options = record.workflowLaunch;
-        if (options?.model && record.provider !== 'dsh') resolved.args.push('--model', options.model);
+        if (options?.model && record.provider !== 'dsh') {
+          // Freebuff has no --model/--effort flags; it reads its settings on startup.
+          if (record.provider === 'freebuff') writeFreebuffLaunchSettings({ model: options.model ?? undefined });
+          else resolved.args.push('--model', options.model);
+        }
         if (options?.effort && record.provider !== 'dsh' && !isOpenCode(record.provider)) {
-          resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
+          if (record.provider === 'freebuff') writeFreebuffLaunchSettings({ model: options.model ?? undefined, effort: options.effort });
+          else resolved.args.push(...(record.provider === 'codex' ? ['-c', `model_reasoning_effort=${JSON.stringify(options.effort)}`] : ['--effort', options.effort]));
         }
       }
       if (this.shutdown.signal.aborted) throw new CliError('RUNTIME_UNAVAILABLE', 'ADE is shutting down');
@@ -817,6 +822,7 @@ export class AdeSessions {
     const record = this.require(projectId, id);
     if (record.provider === 'dsh') return dshReady(this.store.directory, record) && this.live.get(id)?.screen?.dshPromptReady() === true;
     if (record.provider === 'codex') return this.live.get(id)?.screen?.composerEmpty() === true;
+    if (record.provider === 'freebuff') return this.live.get(id)?.screen?.freebuffPromptReady() === true;
     return !isOpenCode(record.provider) || this.live.get(id)?.screen?.openCodePromptReady() === true;
   }
 
@@ -830,14 +836,18 @@ export class AdeSessions {
     const empty =
       record.provider === 'dsh'
         ? live.screen?.dshPromptReady()
-        : isOpenCode(record.provider)
-          ? live.screen?.openCodePromptReady()
-          : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
+        : record.provider === 'freebuff'
+          ? live.screen?.freebuffPromptReady()
+          : isOpenCode(record.provider)
+            ? live.screen?.openCodePromptReady()
+            : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
     const native = isOpenCode(record.provider)
       ? empty
-      : record.provider === 'codebuddy'
-        ? live.screen?.codeBuddyPromptReady()
-        : record.provider === 'antigravity' && antigravityPromptReady(live.screen?.text() ?? '');
+      : record.provider === 'freebuff'
+        ? empty
+        : record.provider === 'codebuddy'
+          ? live.screen?.codeBuddyPromptReady()
+          : record.provider === 'antigravity' && antigravityPromptReady(live.screen?.text() ?? '');
     return Boolean(empty && (['idle', 'completed', 'failed', 'interrupted'].includes(state ?? '') || native));
   }
 

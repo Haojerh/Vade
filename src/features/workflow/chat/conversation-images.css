@@ -3,6 +3,9 @@
 .conversation-images { --conversation-image-size:112px; --conversation-image-border:rgb(255 255 255 / .12); display:flex; flex-wrap:wrap; gap:8px; max-width:100%; margin:0 0 8px; padding:0; list-style:none; }
 :root[data-theme="light"] .conversation-images { --conversation-image-border:rgb(0 0 0 / .14); }
 .conversation-images:last-child { margin-bottom:0; }
+/* A user's own turn is right-aligned, so its recorded images anchor to the same edge
+   instead of hanging off the left side of a wide bubble. */
+.row-user .conversation-images { justify-content:flex-end; }
 .conversation-images>li { display:block; min-width:0; max-width:100%; }
 .conversation-image-button { display:block; padding:0; border:0; border-radius:12px; background:transparent; cursor:zoom-in; line-height:0; }
 .conversation-image-button:focus-visible { outline:2px solid var(--focus-ring); outline-offset:2px; }

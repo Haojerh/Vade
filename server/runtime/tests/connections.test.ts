@@ -62,8 +62,13 @@ test('quota parsers preserve zero, distinguish unknown from zero, and use struct
   ] }] } } };
   assert.deepEqual(agyQuota(data), [{ label: 'Gemini 5h', usedPercent: 0, resetsAt: null }]);
   assert.deepEqual(freebuffQuota({ remainingBalance: 200, usage: 50, next_quota_reset: '2026-11-30T00:00:00.000Z' }), [
-    { label: 'Hours (10 / 50 hours)', usedPercent: 20, resetsAt: '2026-11-30T00:00:00.000Z' },
+    { label: 'Credits remaining: 200', usedPercent: 0, resetsAt: '2026-11-30T00:00:00.000Z' },
   ]);
+  // A depleted balance is exhausted; the response carries no cap, so no total is invented.
+  assert.deepEqual(freebuffQuota({ remainingBalance: 0, next_quota_reset: '2026-11-30T00:00:00.000Z' }), [
+    { label: 'Credits remaining: 0', usedPercent: 100, resetsAt: '2026-11-30T00:00:00.000Z' },
+  ]);
+  assert.deepEqual(freebuffQuota({}), []);
 });
 
 test('native quota reads deduplicate, preserve last good observations on errors, and never serialize credentials', async () => {
