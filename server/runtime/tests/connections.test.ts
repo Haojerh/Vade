@@ -61,12 +61,14 @@ test('quota parsers preserve zero, distinguish unknown from zero, and use struct
     { remaining_fraction: 1, window: '5h' }, { remaining_fraction: 0, disabled: true }, { remaining_fraction: 2 },
   ] }] } } };
   assert.deepEqual(agyQuota(data), [{ label: 'Gemini 5h', usedPercent: 0, resetsAt: null }]);
-  assert.deepEqual(freebuffQuota({ remainingBalance: 200, usage: 50, next_quota_reset: '2026-11-30T00:00:00.000Z' }), [
-    { label: 'Credits remaining: 200', usedPercent: 0, resetsAt: '2026-11-30T00:00:00.000Z' },
+  assert.deepEqual(freebuffQuota({ remainingBalance: 0, usage: 0, next_quota_reset: '2026-11-30T00:00:00.000Z' }), [
+    { label: 'Daily hours (5 / 5 hrs left)', usedPercent: 0, resetsAt: '2026-11-30T00:00:00.000Z' },
   ]);
-  // A depleted balance is exhausted; the response carries no cap, so no total is invented.
-  assert.deepEqual(freebuffQuota({ remainingBalance: 0, next_quota_reset: '2026-11-30T00:00:00.000Z' }), [
-    { label: 'Credits remaining: 0', usedPercent: 100, resetsAt: '2026-11-30T00:00:00.000Z' },
+  assert.deepEqual(freebuffQuota({ remainingBalance: 200, usage: 50, next_quota_reset: '2026-11-30T00:00:00.000Z' }), [
+    { label: 'Daily hours (35 / 45 hrs left)', usedPercent: 22, resetsAt: '2026-11-30T00:00:00.000Z' },
+  ]);
+  assert.deepEqual(freebuffQuota({ remainingBalance: 0, usage: 25, next_quota_reset: '2026-11-30T00:00:00.000Z' }), [
+    { label: 'Daily hours (0 / 5 hrs left)', usedPercent: 100, resetsAt: '2026-11-30T00:00:00.000Z' },
   ]);
   assert.deepEqual(freebuffQuota({}), []);
 });

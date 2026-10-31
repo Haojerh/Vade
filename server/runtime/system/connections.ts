@@ -83,16 +83,26 @@ export function codeBuddyQuota(data: any): UsageWindow[] {
   });
 }
 
-/** Freebuff reports a credit balance, not a quota percentage. The cap is not part of
- *  the response, so a positive balance is reported as unused capacity and a depleted
- *  balance as exhausted; no total is fabricated. */
+/** Freebuff provides 5 daily hours (25 credits) refilled each day.
+ *  Additional purchased balance reads as 1 hour = 5 credits.
+ *  Usage counts toward the daily allocation; a zero usage observation
+ *  means the full 5 daily hours remain available. */
 export function freebuffQuota(data: any): UsageWindow[] {
   if (!data || typeof data !== 'object') return [];
-  const remaining = typeof data.remainingBalance === 'number' && Number.isFinite(data.remainingBalance) && data.remainingBalance >= 0
-    ? Math.round(data.remainingBalance)
-    : null;
-  if (remaining === null) return [];
-  const window = quotaWindow(`Credits remaining: ${remaining}`, remaining > 0 ? 0 : 100, data.next_quota_reset ?? null);
+  if (typeof data.remainingBalance !== 'number' && typeof data.usage !== 'number') return [];
+  const baseDailyHours = 5;
+  const purchasedCredits = typeof data.remainingBalance === 'number' && Number.isFinite(data.remainingBalance)
+    ? Math.max(0, data.remainingBalance)
+    : 0;
+  const usedCredits = typeof data.usage === 'number' && Number.isFinite(data.usage)
+    ? Math.max(0, data.usage)
+    : 0;
+  const extraHours = Math.floor(purchasedCredits / 5);
+  const totalHours = baseDailyHours + extraHours;
+  const usedHours = Math.floor(usedCredits / 5);
+  const remainingHours = Math.max(0, totalHours - usedHours);
+  const usedPercent = Math.min(100, Math.max(0, Math.round((usedCredits / (totalHours * 5)) * 100)));
+  const window = quotaWindow(`Daily hours (${remainingHours} / ${totalHours} hrs left)`, usedPercent, data.next_quota_reset ?? null);
   return window ? [window] : [];
 }
 

@@ -100,27 +100,26 @@ export class TerminalScreen {
       && this.dshComposerText() === '';
   }
 
-  /** Freebuff draws a boxed composer with a block cursor and its own status line.
+  /** Freebuff draws a boxed composer with a block cursor and placeholder.
    *  Its native pickers replace the composer, so a visible picker is never a draft. */
   freebuffPromptReady(): boolean {
     const screen = this.viewportText();
-    if (!/\/model to change/.test(screen)) return false;
-    if (/choose model · Tab reasoning|choose · Enter save/.test(screen)) return false;
+    if (/choose model|Tab reasoning|Enter select|Some questions for you|Ctrl-C to cancel/i.test(screen)) return false;
     const buffer = this.terminal.buffer.active;
-    const cursor = buffer.baseY + buffer.cursorY;
-    for (let row = cursor; row >= Math.max(buffer.baseY, cursor - 4); row--) {
+    const startRow = Math.min(buffer.baseY + this.terminal.rows - 1, buffer.baseY + buffer.cursorY + 2);
+    const endRow = Math.max(buffer.baseY, buffer.baseY + buffer.cursorY - 6);
+    for (let row = startRow; row >= endRow; row--) {
       const line = buffer.getLine(row);
       if (!line) continue;
       const text = line.translateToString(true);
-      const marker = text.indexOf('\u258d');
-      if (marker < 0) continue;
-      // Typed text renders before the block cursor; only whitespace may precede it.
-      if (text.slice(0, marker).replace(/^[│|\s]+/, '').trim()) return false;
-      for (let column = marker + 1; column < line.length; column++) {
-        const cell = line.getCell(column);
-        if (cell?.getChars().trim() && !cell.isDim()) return false;
+      if (/Enter a coding task/i.test(text)) {
+        const marker = text.indexOf('\u258d');
+        if (marker >= 0) {
+          const before = text.slice(0, marker).replace(/^[│|\u2502\s›>]+/, '').trim();
+          if (before) return false;
+        }
+        return true;
       }
-      return true;
     }
     return false;
   }

@@ -97,6 +97,7 @@ export async function sendSessionMessage(
   const initialCodeBuddyReady = record.provider === 'codebuddy' && session?.screen?.codeBuddyPromptReady() === true;
   const initialCodexReady = record.provider === 'codex' && session?.screen?.composerEmpty() === true;
   const initialDshReady = record.provider === 'dsh' && dshReady(ctx.store.directory, record) && session?.screen?.dshPromptReady() === true;
+  const initialFreebuffReady = record.provider !== 'freebuff' || session?.screen?.freebuffPromptReady() === true;
   const openCodeReady = !isOpenCode(record.provider) || session?.screen?.openCodePromptReady() === true;
   if (typeof request.message !== 'string' || request.message.length > (internalWorkflow ? 48000 : 10000) || /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(request.message)) {
     throw new CliError('INVALID_ARGUMENT', 'Message exceeds the allowed length or contains terminal control codes');
@@ -120,6 +121,9 @@ export async function sendSessionMessage(
     }
     if (record.provider === 'codex' && !initialCodexReady) {
       throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty Codex prompt and finish native trust/sign-in setup in Terminal before sending.');
+    }
+    if (record.provider === 'freebuff' && !initialFreebuffReady) {
+      throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty Freebuff prompt before sending.');
     }
     const status = ctx.status(projectId, id);
     if (request.requireIdle && status.data?.state === 'working') {

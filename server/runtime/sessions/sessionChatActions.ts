@@ -188,7 +188,14 @@ export async function setSessionChatOption(
     screen: () => live.screen?.viewportText() ?? '',
     output: () => live.buffer.slice(Math.max(0, start - live.start)).slice(-65536),
     outputCursor: () => live.start + live.buffer.length,
-    promptEmpty: () => live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy') === true,
+    promptEmpty: () =>
+      (record.provider === 'freebuff'
+        ? live.screen?.freebuffPromptReady()
+        : record.provider === 'dsh'
+          ? live.screen?.dshPromptReady()
+          : isOpenCode(record.provider)
+            ? live.screen?.openCodePromptReady()
+            : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy')) === true,
     settingConfirmed: () => confirmSetting?.() ?? false,
     write: async data => {
       verify();
@@ -383,9 +390,11 @@ export async function compactSessionConversation(
   const composerEmpty =
     record.provider === 'dsh'
       ? live.screen?.dshPromptReady()
-      : isOpenCode(record.provider)
-        ? live.screen?.openCodePromptReady()
-        : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
+      : record.provider === 'freebuff'
+        ? live.screen?.freebuffPromptReady()
+        : isOpenCode(record.provider)
+          ? live.screen?.openCodePromptReady()
+          : live.screen?.composerEmpty(record.provider === 'antigravity', record.provider === 'codebuddy');
   if (live.draftInput && composerEmpty) live.draftInput = false;
   if (live.draftInput) throw new CliError('RUNTIME_UNAVAILABLE', 'Clear the draft in Terminal before compacting.');
   if (!composerEmpty) throw new CliError('RUNTIME_UNAVAILABLE', 'Leave an empty agent prompt in Terminal before compacting.');
