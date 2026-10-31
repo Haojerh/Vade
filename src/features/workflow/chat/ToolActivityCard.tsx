@@ -6,20 +6,32 @@ import { Popover } from '../../../components/ui/Popover';
 import { usePopoverState } from '../../../hooks/ui/usePopoverState';
 import type { ToolEditPreview } from '../../../../shared/contracts';
 
-export function ToolEditDiff({ edits }: { edits: ToolEditPreview[] }) {
+export function ToolEditDiff({ edits, hideCaption }: {
+  edits: (ToolEditPreview & { totalAdded?: number; totalRemoved?: number })[];
+  hideCaption?: boolean;
+}) {
   return <div className="tool-edit-diffs">
-    <div className="tool-edit-caption">Recorded edit · preview</div>
-    {edits.map((edit, index) => <div className="tool-edit-file" key={`${edit.path}:${index}`}>
-      <div className="tool-edit-path">{edit.path}</div>
-      {edit.location && <div className="tool-edit-location">{edit.location}</div>}
-      <pre className="tool-edit-code" aria-label={`Edit preview for ${edit.path}`}>
-        {edit.lines.map((line, row) => <span key={row} className={`tool-edit-line tool-edit-${line.kind}`}>
-          <span className="tool-edit-sign">{line.kind === 'add' ? '+' : line.kind === 'remove' ? '−' : ' '}</span>
-          <code>{line.text || ' '}</code>
-        </span>)}
-      </pre>
-      {edit.truncated && <div className="tool-edit-caption">Preview shortened</div>}
-    </div>)}
+    {edits.map((edit, index) => {
+      const added = edit.totalAdded ?? edit.lines.filter(l => l.kind === 'add').length;
+      const removed = edit.totalRemoved ?? edit.lines.filter(l => l.kind === 'remove').length;
+      const displayPath = edit.path.replace(/\\/g, '/');
+      return <div className="tool-edit-file" key={`${edit.path}:${index}`}>
+        <div className="tool-edit-header">
+          <span className="tool-edit-path" title={edit.path}>{displayPath}</span>
+          {(added > 0 || removed > 0) && <span className="tool-edit-stats">
+            {added > 0 && <span className="tool-edit-stat-add">+{added}</span>}
+            {removed > 0 && <span className="tool-edit-stat-remove">-{removed}</span>}
+          </span>}
+        </div>
+        {edit.location && <div className="tool-edit-location">{edit.location}</div>}
+        <pre className="tool-edit-code" aria-label={`Edit preview for ${edit.path}`}>
+          {edit.lines.map((line, row) => <span key={row} className={`tool-edit-line tool-edit-${line.kind}`}>
+            <code>{line.text || ' '}</code>
+          </span>)}
+        </pre>
+        {!hideCaption && edit.truncated && <div className="tool-edit-caption">Show more</div>}
+      </div>;
+    })}
   </div>;
 }
 

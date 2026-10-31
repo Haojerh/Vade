@@ -25,14 +25,19 @@ export function ConversationToolCall({ tool }: { tool: ToolActivity }) {
     <span className="conversation-tool-action">{action}</span>
     {detail && <span className="conversation-tool-target">{detail}</span>}
   </span>;
-  const expandable = edits.some(edit => edit.lines.length > 6) || (tool.detail?.length ?? 0) > 500;
+  const expandable = edits.some(edit => edit.lines.length > 6 || edit.truncated) || (tool.detail?.length ?? 0) > 500;
   const body = edits.length || tool.children?.length || (tool.detail && tool.detail !== tool.label);
   if (!body) return <div className="conversation-tool-call conversation-tool-call-plain" data-history-row data-tool-id={tool.id}>{summary}</div>;
   return <div className="conversation-tool-call" data-history-row data-tool-id={tool.id}>
     <Disclosure title={tool.label} triggerContent={summary} compact chevronEnd lazy defaultOpen={edit || edits.length > 0}>
       <div className="conversation-tool-details">
       {tool.children?.length ? <div className="conversation-tool-children">{tool.children.map(child => <ConversationToolCall key={child.id} tool={child} />)}</div> : null}
-      {edits.length ? <ToolEditDiff edits={edits.map(edit => ({ ...edit, lines: more ? edit.lines : compactEditLines(edit.lines) }))} />
+      {edits.length ? <ToolEditDiff hideCaption={expandable} edits={edits.map(edit => ({
+        ...edit,
+        lines: more ? edit.lines : compactEditLines(edit.lines),
+        totalAdded: edit.lines.filter(l => l.kind === 'add').length,
+        totalRemoved: edit.lines.filter(l => l.kind === 'remove').length,
+      }))} />
         : tool.detail && tool.detail !== tool.label ? <pre className="conversation-tool-input">{tool.detail.slice(0, more ? 2000 : 500)}</pre> : null}
       {expandable && <button type="button" className="btn-read-more" aria-expanded={more} onClick={() => setMore(value => !value)}>{more ? 'Show less' : 'Show more'}</button>}
       </div>

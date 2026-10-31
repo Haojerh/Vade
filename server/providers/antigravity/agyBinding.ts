@@ -37,6 +37,15 @@ process.stdin.on('data', chunk => {
     const cwd = process.env.ADE_BINDING_CWD;
     const matchesWorkspace = cwd && Array.isArray(payload.workspacePaths) && payload.workspacePaths.slice(0,32).some(p => typeof p === 'string' && p.length <= 4096 && path.resolve(p) === path.resolve(cwd));
     if (matchesWorkspace && typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) {
+      try {
+        if (fs.existsSync(file)) {
+          const existing = JSON.parse(fs.readFileSync(file, 'utf8'));
+          if (existing && existing.token === token && existing.id && existing.id !== id) {
+            clearTimeout(timer);
+            process.exit(0);
+          }
+        }
+      } catch {}
       fs.writeFileSync(file + '.tmp', JSON.stringify({ token, id }), { mode: 0o600 });
       fs.renameSync(file + '.tmp', file);
     }
@@ -86,7 +95,12 @@ export function readAgyBinding(directory: string, record: SessionRecord): string
     const file = agyBindingFile(directory, record);
     if (fs.statSync(file).size > 4096) return record.providerThreadId;
     const binding = JSON.parse(fs.readFileSync(file, 'utf8'));
-    if (binding.token === record.bindingToken && validCodexThreadId(binding.id)) return binding.id;
+    if (binding.token === record.bindingToken && validCodexThreadId(binding.id)) {
+      if (record.providerThreadId && record.providerThreadId !== binding.id) {
+        return record.providerThreadId;
+      }
+      return binding.id;
+    }
   } catch { /* No provider event yet. Keep the last exact binding, if any. */ }
   return record.providerThreadId;
 }

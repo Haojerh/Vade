@@ -161,7 +161,7 @@ test('tool edit hover renders safe before/after code, location and truncation', 
   assert.match(html, /@@ main/);
   assert.match(html, /tool-edit-remove/);
   assert.match(html, /tool-edit-add/);
-  assert.match(html, /Preview shortened/);
+  assert.match(html, /Show more/);
   assert.ok(!html.includes('<script>'));
 });
 

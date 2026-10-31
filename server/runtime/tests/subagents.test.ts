@@ -149,8 +149,70 @@ test('DSH child sessions are linked by parentSession and stay explicitly unavail
   } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });
 
-test('Antigravity stays explicitly unsupported instead of inventing child agents', async () => {
-  const section = await discoverSubagents(record('antigravity', '120fa904-4f1a-4a96-9753-feaa4c34d048'));
-  assert.equal(section.meta.availability, 'unsupported');
-  assert.deepEqual(section.data, []);
+test('Antigravity child agents are discovered from parent transcript and read as their own transcript', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-subagent-agy-'));
+  try {
+    const parent = '69667087-525f-4e58-b7e1-0f3d4b4f2f51';
+    const child = '1a311559-66a7-4199-a744-ba44301316f6';
+    const parentFile = path.join(root, 'brain', parent, '.system_generated', 'logs', 'transcript.jsonl');
+    write(parentFile, [
+      { step_index: 0, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-10-15T14:35:13Z',
+        tool_calls: [{ name: 'invoke_subagent', args: { Role: 'Browser Tester', TypeName: 'browser', Prompt: 'Verify UI' } }] },
+      { step_index: 1, source: 'MODEL', type: 'GENERIC', status: 'DONE', created_at: '2026-10-15T14:35:23Z',
+        content: `Created the following subagents:\n{\n  "conversationId": "${child}",\n  "workspaceUris": ["file:///C:/demo"]\n}` },
+    ]);
+    const childMsg = path.join(root, 'brain', child, '.system_generated', 'messages', 'msg-1.json');
+    fs.mkdirSync(path.dirname(childMsg), { recursive: true });
+    fs.writeFileSync(childMsg, JSON.stringify({
+      id: 'msg-1', recipient: child, sender: parent,
+      renderDetails: { messageTitle: 'Message from Parent Agent' },
+      content: 'Verify UI',
+      sourceMetadata: { tool: { conversationId: parent, toolCall: { name: 'invoke_subagent', argumentsJson: JSON.stringify({ Subagents: [{ Role: 'Browser Tester', TypeName: 'browser', Prompt: 'Verify UI' }] }) } } }
+    }));
+    const childFile = path.join(root, 'brain', child, '.system_generated', 'logs', 'transcript.jsonl');
+    write(childFile, [
+      { step_index: 0, source: 'SYSTEM', type: 'SYSTEM_MESSAGE', status: 'DONE', created_at: '2026-10-15T14:35:29Z',
+        content: '<SYSTEM_MESSAGE>\n[Message] timestamp=2026-10-15T14:35:24Z sender=' + parent + ' content=Verify UI\n</SYSTEM_MESSAGE>' },
+      { step_index: 1, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-10-15T14:35:30Z',
+        tool_calls: [{ name: 'view_file', args: { AbsolutePath: 'C:\\demo\\PLAN.md' } }] },
+      { step_index: 2, source: 'MODEL', type: 'PLANNER_RESPONSE', status: 'DONE', created_at: '2026-10-15T14:35:40Z',
+        content: 'Child finished verification successfully.' },
+    ]);
+    await withEnv({ GEMINI_APPDATA_DIR: root }, async () => {
+      const section = await discoverSubagents(record('antigravity', parent));
+      assert.equal(section.meta.availability, 'ready');
+      assert.equal(section.data?.length, 1);
+      assert.equal(section.data![0].label, 'Browser Tester');
+      assert.equal(section.data![0].role, 'browser');
+      assert.equal(section.data![0].state, 'completed');
+      assert.equal(section.data![0].transcript, 'available');
+      assert.match(String(section.data![0].preview), /finished verification/);
+
+      const page = await readSubagentTranscript(record('antigravity', parent), section.data![0].id, { direction: 'older', limit: 20 });
+      assert.equal(page.conversation.meta.availability, 'ready');
+      assert.equal(page.conversation.data?.messages.length, 2);
+      assert.equal(page.conversation.data!.messages[0].role, 'user');
+      assert.match(page.conversation.data!.messages[0].text, /Verify UI/);
+      assert.equal(page.conversation.data!.messages[1].role, 'agent');
+      assert.match(page.conversation.data!.messages[1].text, /Child finished verification/);
+      assert.equal(page.tools.length, 1);
+      assert.match(page.tools[0].label, /Read: C:\\demo\\PLAN.md/);
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test('Antigravity returns empty when no child agents are recorded', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ade-subagent-agy-empty-'));
+  try {
+    const parent = '69667087-525f-4e58-b7e1-0f3d4b4f2f51';
+    const parentFile = path.join(root, 'brain', parent, '.system_generated', 'logs', 'transcript.jsonl');
+    write(parentFile, [
+      { step_index: 0, source: 'USER_EXPLICIT', type: 'USER_INPUT', status: 'DONE', created_at: '2026-10-15T14:35:13Z', content: 'hello' }
+    ]);
+    await withEnv({ GEMINI_APPDATA_DIR: root }, async () => {
+      const section = await discoverSubagents(record('antigravity', parent));
+      assert.equal(section.meta.availability, 'empty');
+      assert.deepEqual(section.data, []);
+    });
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
 });

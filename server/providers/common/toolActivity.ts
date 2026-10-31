@@ -149,6 +149,30 @@ export function transcriptToolActivity(provider: string, session: string, line: 
       const item = toolActivityFromCall(session, p.call_id, p.name, p.arguments ?? p.input, record.timestamp);
       return item ? [item] : [];
     }
+    if (provider === 'antigravity') {
+      if (record.type !== 'PLANNER_RESPONSE' || !Array.isArray(record.tool_calls)) return [];
+      const timestamp = record.created_at;
+      return record.tool_calls.flatMap((call: any, idx: number) => {
+        if (!call?.name) return [];
+        const id = call.id ?? `step:${record.step_index ?? 'call'}:${idx}`;
+        let args = call.args;
+        if (typeof args === 'string') {
+          try { args = JSON.parse(args); } catch {}
+        }
+        if (args && typeof args === 'object' && !Array.isArray(args)) {
+          const clean: Record<string, any> = {};
+          for (const [k, v] of Object.entries(args)) {
+            if (typeof v === 'string' && v.startsWith('"') && v.endsWith('"')) {
+              try { clean[k] = JSON.parse(v); continue; } catch {}
+            }
+            clean[k] = v;
+          }
+          args = clean;
+        }
+        const item = toolActivityFromCall(session, id, call.name, args, timestamp);
+        return item ? [item] : [];
+      });
+    }
     if (!['claude', 'pi', 'omp'].includes(provider) || record.message?.role !== 'assistant') return [];
     const content = record.message.content;
     if (!Array.isArray(content)) return [];

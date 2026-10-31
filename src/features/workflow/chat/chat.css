@@ -62,11 +62,10 @@
 @media(hover:none) { .user-message-meta,.response-actions { opacity:1; pointer-events:auto; } }
 
 .conversation-tool-group { display:flex; flex-direction:column; gap:2px; min-width:0; }
-.conversation-thread { gap:16px; }
-/* Keep intermediate narration close to its calls; hover controls use the existing gap. */
-.conversation-thread>.row-agent:has(+.conversation-tool-group) { position:relative; }
-.conversation-thread>.row-agent:has(+.conversation-tool-group)>.response-actions { position:absolute; top:100%; left:0; z-index:1; margin-top:0; background:var(--surface-1); border-radius:4px; }
-.conversation-thread>.row-agent+.conversation-tool-group { margin-top:6px; }
+.conversation-thread { gap:20px; padding-bottom:20px; }
+.conversation-thread>.row-agent+.conversation-tool-group { margin-top:0; }
+.row-agent { position:relative; }
+.response-actions { display:flex; align-items:center; flex-wrap:wrap; gap:6px; height:0; margin:0; padding:2px 0 0; overflow:visible; color:var(--text-muted); opacity:0; pointer-events:none; transition:opacity 120ms ease; }
 .conversation-tool-group .conversation-tool-call { min-width:0; margin:0; padding:0; border:0; background:none; }
 .conversation-tool-group .disclosure-trigger { gap:6px; padding:5px 0; border-radius:6px; font:inherit; color:var(--text-muted); }
 .conversation-tool-group .disclosure-trigger:hover { background:transparent; color:var(--text-main); }
@@ -79,6 +78,6 @@
 .conversation-tool-details { overflow:visible; margin:2px 4px 6px 22px; padding:2px 0 2px 12px; border-left:1px solid var(--border-subtle); }
 .conversation-tool-group .conversation-tool-input { margin:3px 0; }
 .conversation-tool-group .tool-edit-caption { font-size:10px; opacity:.7; }
-.conversation-tool-group .tool-edit-path { font:11px/1.5 Consolas,'Cascadia Mono',monospace; overflow-wrap:anywhere; }
+.conversation-tool-group .tool-edit-path { font:inherit; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .conversation-tool-group .conversation-tool-children { margin:0; padding:0; border:0; }
 .conversation-tool-details>.btn-read-more { margin-top:4px; font-size:11px; }

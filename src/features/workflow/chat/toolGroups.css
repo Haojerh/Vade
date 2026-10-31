@@ -14,9 +14,10 @@
 .conversation-round { margin-bottom:-8px; }
 .conversation-round > .disclosure { padding:0; margin:0; border:0; background:none; }
 .conversation-round > .disclosure > .section-header-row { margin-bottom:0; padding-bottom:3px; border-bottom:1px solid var(--border-subtle); }
-.conversation-round-label { border-bottom:1px solid var(--border-subtle); }
-.conversation-thread > .conversation-round-label + .row-agent { margin-top:-8px; }
-.conversation-round > .disclosure > .section-header-row > .disclosure-trigger,.conversation-round-label { display:inline-flex; align-items:center; gap:7px; width:auto; padding:7px 0; color:var(--text-muted); font-size:12px; line-height:1.5; font-weight:400; }
+.conversation-round-label { display:flex; align-items:center; gap:7px; width:100%; padding:8px 0; margin:8px 0 4px; border-bottom:1px solid var(--border-subtle); color:var(--text-muted); font-size:12px; line-height:1.5; font-weight:400; }
+.conversation-thread > .conversation-round-label + .row-agent { margin-top:-4px; }
+.conversation-thread > :is(.conversation-round-label, .conversation-round, .conversation-round-activity) + .row-user { margin-top:24px; }
+.conversation-round > .disclosure > .section-header-row > .disclosure-trigger { display:inline-flex; align-items:center; gap:7px; width:auto; padding:7px 0; color:var(--text-muted); font-size:12px; line-height:1.5; font-weight:400; }
 .conversation-round > .disclosure > .section-header-row > .disclosure-trigger:hover { background:transparent; color:var(--text-main); }
 .conversation-round-activities { display:flex; flex-direction:column; gap:14px; min-width:0; padding:8px 0 14px; }
 .conversation-tool-group > .conversation-tool-group-disclosure > .section-header-row > .disclosure-trigger { display:inline-flex; align-items:center; gap:6px; max-width:100%; min-width:0; padding:4px 6px 4px 0; border-radius:6px; color:var(--text-muted); font-size:12px; line-height:1.5; }

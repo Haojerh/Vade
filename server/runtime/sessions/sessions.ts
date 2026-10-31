@@ -795,7 +795,7 @@ export class AdeSessions {
     const record = this.store.sessions(projectId).find(session => session.id === id && !session.closed);
     if (!record) throw new CliError('NODE_NOT_FOUND', 'Agent session does not belong to this project');
     const observedId = record.provider === 'dsh' ? dshBinding(this.store.directory, record) : readAgyBinding(this.store.directory, record);
-    if (observedId !== record.providerThreadId) {
+    if (!record.providerThreadId && observedId) {
       const updated = { ...record, providerThreadId: observedId };
       this.store.saveSession(updated);
       return updated;

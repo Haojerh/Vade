@@ -12,6 +12,7 @@ import { readOpenCodePage } from '../../providers/opencode/opencode.js';
 import { readOpenCodeV2Page } from '../../providers/opencode/openCodeV2.js';
 import { issueStoredCursor, validateStoredCursor } from '../../providers/common/conversationCursors.js';
 import { databaseToolActivity, mergeToolActivity, transcriptToolActivity } from '../../providers/common/toolActivity.js';
+import { parseAntigravityTranscriptLine } from '../../providers/antigravity/antigravity.js';
 
 /** Bounded, read-only discovery of native child agents recorded for one exact session.
  *  A provider that records no child linkage returns an empty section, never a guess. */
@@ -117,6 +118,7 @@ function previewText(line: string | undefined): string | null {
   try {
     const record = JSON.parse(line);
     const content = record?.message?.content ?? record?.payload?.content ?? record?.content;
+    if (typeof content === 'string' && content.trim()) return content.replace(/\s+/g, ' ').slice(0, 180);
     const parts = Array.isArray(content) ? content : [];
     const text = parts.filter((part: any) => ['text', 'input_text', 'output_text'].includes(part?.type) && typeof part.text === 'string').map((part: any) => part.text).join(' ').trim();
     if (!text) return null;
@@ -127,7 +129,7 @@ function previewText(line: string | undefined): string | null {
 function lastAssistantPreview(text: string): string | null {
   const lines = text.split('\n').reverse();
   for (const line of lines.slice(0, 400)) {
-    if (!line.includes('"assistant"')) continue;
+    if (!line.includes('"assistant"') && !line.includes('"PLANNER_RESPONSE"')) continue;
     const preview = previewText(line);
     if (preview) return preview;
   }
@@ -347,6 +349,211 @@ function codeBuddySection(record: SessionRecord): Section<Subagent[]> {
   return sec(children, children.length ? 'ready' : 'empty');
 }
 
+/** Antigravity records subagent invocations in the parent session transcript and child
+ *  sessions in `brain/<childId>/` with their own transcript and message receipts. */
+function antigravitySection(record: SessionRecord): Section<Subagent[]> {
+  const parent = record.providerThreadId;
+  if (!parent || !/^[a-zA-Z0-9_-]+$/.test(parent)) return sec([], 'empty');
+  const base = process.env.GEMINI_APPDATA_DIR || process.env.ANTIGRAVITY_APPDATA_DIR ||
+    path.join(process.env.USERPROFILE || process.env.HOME || os.homedir(), '.gemini', 'antigravity-cli');
+  const brainDir = path.join(base, 'brain');
+  const parentTranscript = path.join(brainDir, parent, '.system_generated', 'logs', 'transcript.jsonl');
+  if (!fs.existsSync(parentTranscript)) return sec([], 'empty');
+
+  const discovered = new Map<string, { label: string; role: string | null; prompt: string | null; startedAt: ISO | null }>();
+  let parentLines: string[] = [];
+  try {
+    parentLines = fs.readFileSync(parentTranscript, 'utf8').split('\n').filter(Boolean);
+  } catch {
+    return sec([], 'empty');
+  }
+
+  let latestInvoke: Array<{ Role?: string; TypeName?: string; Prompt?: string }> = [];
+  for (const line of parentLines) {
+    try {
+      const row = JSON.parse(line);
+      if (Array.isArray(row.tool_calls)) {
+        for (const tc of row.tool_calls) {
+          if (tc.name === 'invoke_subagent') {
+            let args = tc.args;
+            if (typeof args === 'string') {
+              try { args = JSON.parse(args); } catch {}
+            }
+            const subs = args?.Subagents ? (typeof args.Subagents === 'string' ? JSON.parse(args.Subagents) : args.Subagents) : [args];
+            latestInvoke = (Array.isArray(subs) ? subs : [subs]).filter(Boolean);
+          }
+        }
+      }
+      if (typeof row.content === 'string' && /Created the following subagents?:/i.test(row.content)) {
+        const match = row.content.match(/Created the following subagents?:\s*([\s\S]*?)(?:\nThe subagents?|\n*$)/i);
+        if (match) {
+          try {
+            const data = JSON.parse(match[1]);
+            const list = Array.isArray(data) ? data : [data];
+            list.forEach((item: any, idx: number) => {
+              if (item?.conversationId && typeof item.conversationId === 'string') {
+                const inv = latestInvoke[idx] || latestInvoke[0] || {};
+                const label = inv.Role || inv.TypeName || 'subagent';
+                const role = inv.TypeName || inv.Role || null;
+                discovered.set(item.conversationId, {
+                  label,
+                  role,
+                  prompt: inv.Prompt || null,
+                  startedAt: toIsoOrNull(row.created_at),
+                });
+              }
+            });
+          } catch {}
+        }
+      }
+      if (typeof row.content === 'string') {
+        const convMatches = row.content.matchAll(/conversation:\/\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi);
+        for (const cm of convMatches) {
+          if (cm[1] && !discovered.has(cm[1])) {
+            discovered.set(cm[1], {
+              label: 'subagent',
+              role: null,
+              prompt: null,
+              startedAt: toIsoOrNull(row.created_at),
+            });
+          }
+        }
+      }
+      if (typeof row.content === 'string' && row.content.includes('active subagent(s):')) {
+        const match = row.content.match(/active subagent\(s\):\s*([\s\S]*?)(?:\n*$)/);
+        if (match) {
+          try {
+            const list = JSON.parse(match[1]);
+            if (Array.isArray(list)) {
+              for (const item of list) {
+                if (item?.conversationId && typeof item.conversationId === 'string') {
+                  const existing = discovered.get(item.conversationId) ?? {
+                    label: item.role || item.type || 'subagent',
+                    role: item.type || item.role || null,
+                    prompt: null,
+                    startedAt: toIsoOrNull(row.created_at),
+                  };
+                  if (item.role) existing.label = item.role;
+                  if (item.type) existing.role = item.type;
+                  discovered.set(item.conversationId, existing);
+                }
+              }
+            }
+          } catch {}
+        }
+      }
+    } catch {}
+  }
+
+  // Scan brain directories for any child subagents assigned by this parent
+  try {
+    const entries = fs.readdirSync(brainDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory() || entry.name === parent) continue;
+      const cid = entry.name;
+      if (discovered.has(cid)) continue;
+      const mDir = path.join(brainDir, cid, '.system_generated', 'messages');
+      if (!fs.existsSync(mDir)) continue;
+      try {
+        const mFiles = fs.readdirSync(mDir).filter(f => f.endsWith('.json'));
+        for (const mf of mFiles) {
+          try {
+            const msgData = JSON.parse(fs.readFileSync(path.join(mDir, mf), 'utf8'));
+            if (msgData.sender === parent) {
+              discovered.set(cid, {
+                label: 'subagent',
+                role: null,
+                prompt: typeof msgData.content === 'string' ? msgData.content : null,
+                startedAt: toIsoOrNull(msgData.timestamp),
+              });
+              break;
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+  } catch {}
+
+  // Correlate with verified child message receipts for non-truncated role & type names
+  for (const [childConversationId, meta] of discovered) {
+    const messagesDir = path.join(brainDir, childConversationId, '.system_generated', 'messages');
+    if (fs.existsSync(messagesDir)) {
+      try {
+        const mFiles = fs.readdirSync(messagesDir).filter(f => f.endsWith('.json'));
+        for (const mf of mFiles) {
+          try {
+            const msgData = JSON.parse(fs.readFileSync(path.join(messagesDir, mf), 'utf8'));
+            if (msgData.sender === parent && msgData.sourceMetadata?.tool?.toolCall) {
+              const call = msgData.sourceMetadata.tool.toolCall;
+              let args = call.argumentsJson;
+              if (typeof args === 'string') {
+                try { args = JSON.parse(args); } catch {}
+              }
+              const subList = Array.isArray(args?.Subagents) ? args.Subagents : [args];
+              const sub = subList[0] || {};
+              if (sub.Role) meta.label = sub.Role;
+              if (sub.TypeName) meta.role = sub.TypeName;
+              if (sub.Prompt) meta.prompt = sub.Prompt;
+              break;
+            }
+          } catch {}
+        }
+      } catch {}
+    }
+  }
+
+  const children: Subagent[] = [];
+  for (const [cid, meta] of discovered) {
+    if (children.length >= MAX_CHILDREN) break;
+    const childFile = path.join(brainDir, cid, '.system_generated', 'logs', 'transcript.jsonl');
+    if (!fs.existsSync(childFile)) {
+      const id = remember(childId(record, 'antigravity', cid), { kind: 'unavailable', reason: 'Child transcript not found on disk.' });
+      children.push({
+        id,
+        label: meta.label,
+        role: meta.role,
+        state: 'unknown',
+        model: null,
+        startedAt: meta.startedAt,
+        lastActivityAt: null,
+        preview: null,
+        transcript: 'unavailable',
+        reason: 'Child transcript not found on disk.',
+      });
+      continue;
+    }
+    const stat = fs.statSync(childFile);
+    const tail = tailText(childFile);
+    const tailLines = tail.trim().split('\n').reverse();
+    let state: Subagent['state'] = 'unknown';
+    for (const l of tailLines.slice(0, 20)) {
+      try {
+        const j = JSON.parse(l);
+        if (j.type !== 'EPHEMERAL_MESSAGE') {
+          state = j.status === 'RUNNING' ? 'working' : j.status === 'ERROR' ? 'failed' : j.status === 'DONE' ? 'completed' : 'unknown';
+          break;
+        }
+      } catch {}
+    }
+    if (state === 'unknown' && tail.length > 0) state = 'completed';
+    const preview = lastAssistantPreview(tail);
+    const id = remember(childId(record, 'antigravity', cid), { kind: 'file', file: childFile, provider: 'antigravity' });
+    children.push({
+      id,
+      label: meta.label,
+      role: meta.role,
+      state,
+      model: null,
+      startedAt: meta.startedAt ?? isoFromMs(stat.birthtimeMs),
+      lastActivityAt: isoFromMs(stat.mtimeMs),
+      preview,
+      transcript: 'available',
+    });
+  }
+  children.sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')));
+  return sec(children, children.length ? 'ready' : 'empty');
+}
+
 function compute(record: SessionRecord): Promise<Section<Subagent[]>> {
   switch (record.provider) {
     case 'codex': return Promise.resolve(codexSection(record));
@@ -354,7 +561,7 @@ function compute(record: SessionRecord): Promise<Section<Subagent[]>> {
     case 'opencode': case 'opencode2': case 'kilo': return Promise.resolve(openCodeSection(record));
     case 'dsh': return dshSection(record);
     case 'codebuddy': return Promise.resolve(codeBuddySection(record));
-    case 'antigravity': return Promise.resolve(sec<Subagent[]>([], 'unsupported', 'Antigravity does not expose recorded child agents to Vade yet.'));
+    case 'antigravity': return Promise.resolve(antigravitySection(record));
     default: return Promise.resolve(sec<Subagent[]>([], 'unsupported', 'This provider does not record child agents.'));
   }
 }
@@ -365,6 +572,7 @@ function cacheKey(record: SessionRecord): string {
     : provider === 'claude' ? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects')
     : provider === 'dsh' ? path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'sessions', '--' + record.cwd.replace(/[:\\/]+/g, '-') + '--')
     : provider === 'codebuddy' ? path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'projects')
+    : provider === 'antigravity' ? (record.providerThreadId ? path.join(process.env.GEMINI_APPDATA_DIR || process.env.ANTIGRAVITY_APPDATA_DIR || path.join(os.homedir(), '.gemini', 'antigravity-cli'), 'brain', record.providerThreadId, '.system_generated', 'logs', 'transcript.jsonl') : '')
     : '';
   return `${record.provider}:${record.providerThreadId ?? record.id}:${root}:${root ? stampOf(root) : ''}`;
 }
@@ -443,9 +651,9 @@ export async function readSubagentTranscript(record: SessionRecord, subagentId: 
     const from = cursor ? Number(cursor.upstreamCursor) : older ? stat.size : stat.size;
     const provider = handle.kind === 'inline' ? 'claude' : handle.provider;
     const include = (line: string): boolean => {
-      if (handle.kind === 'inline') return line.includes(`"agentId":"${handle.agentId}"`) && Boolean(project(line, 'claude', sourceIdentity, true));
+      if (handle.kind === 'inline') return line.includes(`"agentId":"${handle.agentId}"`) && (Boolean(project(line, 'claude', sourceIdentity, true)) || transcriptToolActivity('claude', handle.agentId, line).length > 0);
       // A child's own file contains only that child's rows, which Claude marks as sidechain.
-      return Boolean(project(line, handle.provider, sourceIdentity, handle.provider === 'claude'));
+      return Boolean(project(line, handle.provider, sourceIdentity, handle.provider === 'claude')) || transcriptToolActivity(handle.provider, subagentId, line).length > 0;
     };
     const result = await readOlderTranscriptLines(handle.file, from, limit, 1024 * 1024, false, include);
     const messages = result.lines.flatMap(line => {
@@ -462,7 +670,31 @@ export async function readSubagentTranscript(record: SessionRecord, subagentId: 
   }
 }
 
+function projectAntigravity(line: string, sourceIdentity: string): ConversationPage['messages'][number] | null {
+  try {
+    const obj = JSON.parse(line);
+    if (obj.type === 'SYSTEM_MESSAGE' && typeof obj.content === 'string') {
+      const match = obj.content.match(/\[Message\][\s\S]*?\bcontent=([\s\S]*?)(?:\n<\/SYSTEM_MESSAGE>|$)/);
+      if (match && match[1].trim()) {
+        const text = match[1].trim();
+        const msgId = hashId('msg', `${sourceIdentity}:${obj.step_index ?? hashId('record', line)}`);
+        return { id: msgId, role: 'user', text, at: toIsoOrNull(obj.created_at) };
+      }
+    }
+    const parsed = parseAntigravityTranscriptLine(line, sourceIdentity);
+    if (!parsed.omitted && parsed.message) {
+      return parsed.message;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function project(line: string, provider: string, sourceIdentity: string, includeSidechain = false): ConversationPage['messages'][number] | null {
+  if (provider === 'antigravity') {
+    return projectAntigravity(line, sourceIdentity);
+  }
   const record = publicTranscriptRecord(line, provider, includeSidechain);
   if (!record) return null;
   const payload = record.payload ?? {};

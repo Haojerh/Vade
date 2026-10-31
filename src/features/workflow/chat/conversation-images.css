@@ -1,6 +1,6 @@
-﻿/* Recorded user image attachments in native chat. Bytes are served by the bounded
+/* Recorded user image attachments in native chat. Bytes are served by the bounded
    conversation-image route; nothing here loads a host path or a remote URL. */
-.conversation-images { --conversation-image-size:112px; --conversation-image-border:rgb(255 255 255 / .26); display:flex; flex-wrap:wrap; gap:8px; max-width:100%; margin:0 0 8px; padding:0; list-style:none; }
+.conversation-images { --conversation-image-size:112px; --conversation-image-border:rgb(255 255 255 / .12); display:flex; flex-wrap:wrap; gap:8px; max-width:100%; margin:0 0 8px; padding:0; list-style:none; }
 :root[data-theme="light"] .conversation-images { --conversation-image-border:rgb(0 0 0 / .14); }
 .conversation-images:last-child { margin-bottom:0; }
 .conversation-images>li { display:block; min-width:0; max-width:100%; }
@@ -21,3 +21,5 @@ dialog.node-modal-dialog.conversation-image-dialog::backdrop { background:rgb(0 
 @media(max-width:600px) { dialog.node-modal-dialog.conversation-image-dialog { padding:56px 12px 12px; } .conversation-images { --conversation-image-size:96px; } }
 @media(hover:hover) and (pointer:fine) { .conversation-image-close:hover { background:rgb(255 255 255 / .15); } }
 @media(hover:hover) and (pointer:fine) { .conversation-image-button:hover { opacity:.88; } }
+
+
