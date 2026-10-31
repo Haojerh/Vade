@@ -14,7 +14,11 @@ ADE reads the account record for display and the token only for the usage reques
 
 ## Model catalog and current settings
 
-`server/providers/freebuff/freebuffCatalog.ts` mirrors the catalog bundled in Freebuff 0.2.35: the CLI's own IDs, display names, per-model reasoning efforts, defaults and context windows. The native picker only lists models the current connection can use, so applying a model the picker does not show fails explicitly instead of writing a guessed ID.
+The catalog is **not** a fixed list. `GET https://www.codebuff.com/api/v1/freebuff/models` (bearer token plus `x-freebuff-catalog-protocol: 1`, `x-freebuff-client: cli`) returns the models this account may actually use, with their native keys, display names, efforts, default effort, context windows, picker section/order and an `access` flag. ADE maps that response (`freebuffModelsFromCatalog`), drops `access: "locked"` rows because the native picker refuses them, and keeps the rest in the provider's order (standard → premium → powerful).
+
+That response is cached in `ADE_DATA_DIR/freebuff-catalog.json` with the response's own `refreshAt` (clamped to 5–30 minutes) and refreshed in the background. A cached copy is served immediately; only a cold start waits briefly. When the request cannot be made (offline, signed out, rejected) the catalog the CLI itself bundles is used instead — `FREEBUFF_BUNDLED_MODELS`, a transcription of that bundled table. That fallback is a snapshot, so it may list a model the account cannot select; applying such a model fails explicitly at the native picker rather than writing a guess.
+
+Model IDs are the catalog row's `key` (`m-…`), which is what the picker stores. Older releases stored provider-style IDs (`deepseek/deepseek-v4-flash`); `freebuffResolveStored` maps those through the bundled table's display name to the current key.
 
 The running session's status line is authoritative for the current model and reasoning level:
 
@@ -22,7 +26,7 @@ The running session's status line is authoritative for the current model and rea
  DeepSeek V4.1 Flash 10/17 • high · ~\path · /model to change · Chat: …
 ```
 
-`freebuffFooterModel` parses that line, and the catalog resolves the display name to an ID. `settings.json` is only a fallback while the screen is not readable. With neither source, the current model stays unknown; no default is fabricated.
+`freebuffFooterModel` parses that line and resolves the display name against the live catalog. `settings.json` is only a fallback while the screen is not readable. With neither source, the current model stays unknown; no default is fabricated.
 
 ## Native controls
 
@@ -41,12 +45,13 @@ AI Providers shows the recorded Freebuff account (`name (email)`) when the nativ
 
 ## Evidence and limits
 
-Observed against the installed Freebuff 0.2.35 Windows bundle: bundled model/effort constants, the status-line component, the `/model` and `/reasoning` handlers and pickers, `settings.json` writes, the `chat-messages.json` store, and the usage client. The picker driver was validated against the real TUI in an owned PTY (model list, Tab reasoning, selection, settings persistence) and in the unit suite with a rendered picker fixture.
+Observed against the installed Freebuff 0.2.35 Windows bundle: the `/api/v1/freebuff/models` catalog client and its response schema, the bundled model/effort constants, the status-line component, the `/model` and `/reasoning` handlers and pickers, `settings.json` writes, the `chat-messages.json` store, and the usage client. The live catalog was read with this account's token (9 selectable rows out of 15; the rest are subscription-locked). The picker driver was validated against the real TUI in an owned PTY (model list, Tab reasoning, selection, settings persistence) and in the unit suite with a rendered picker fixture.
 
 Limits:
 
-- The keychain read is implemented for Windows Credential Manager. On macOS/Linux, a keychain-only token is not read, so account connection and usage stay explicitly unavailable rather than guessed.
-- Models absent from the current connection's picker cannot be selected; the error says so.
-- Reasoning is offered only for models whose native picker advertises efforts. Some catalog entries expose none.
+- The catalog request is slow on some networks (observed 1–13 s). A cached copy is served immediately and refreshed in the background; only a cold start waits, and it falls back to the bundled table rather than blocking the picker.
+- The bundled fallback can list a model this account cannot select. Selecting it fails at the native picker with an explicit message instead of writing a guess.
+- The keychain read is implemented for Windows Credential Manager. On macOS/Linux, a keychain-only token is not read, so the live catalog, account connection and usage stay explicitly unavailable rather than guessed.
+- Reasoning is offered only for models whose catalog row advertises efforts. Several rows expose none.
 - Freebuff has no child-agent transcript format; subagents are projected only from recorded `spawn_agents` blocks.
 - The status-line and picker parsers are version-bound to the observed TUI. A future UI change fails closed (explicit unknown or timeout) instead of writing an unverified setting.

@@ -1,7 +1,9 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import type {
+  AgentChatModel,
   AgentChatOptions,
   AgentContextUsage,
   ConversationMessage,
@@ -13,7 +15,7 @@ import type {
 import type { SessionRecord } from '../../runtime/store.js';
 import { isPathInsideRoots, toIsoOrNull } from '../common/transcriptUtils.js';
 import { toolActivityFromCall } from '../common/toolActivity.js';
-import { freebuffContextWindow } from './freebuffCatalog.js';
+import { FREEBUFF_BUNDLED_MODELS, freebuffContextWindow, freebuffModelsFromCatalog } from './freebuffCatalog.js';
 
 export const validFreebuffId = (id: unknown): id is string =>
   typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:\-T+Z]{0,119}$/.test(id);
@@ -32,6 +34,168 @@ export function freebuffProjectChatsDir(cwd: string): string {
   return path.join(freebuffProjectsDir(), path.basename(cwd), 'chats');
 }
 
+/** The account record the native CLI stores next to its token. Display metadata only. */
+export interface FreebuffAccount { id: string; label: string }
+
+function readJsonFile(file: string): any {
+  try {
+    const handle = fs.openSync(file, 'r');
+    try {
+      if (fs.fstatSync(handle).size > 65536) return null;
+      return JSON.parse(fs.readFileSync(handle, 'utf8'));
+    } finally {
+      fs.closeSync(handle);
+    }
+  } catch {
+    return null;
+  }
+}
+
+export function freebuffAccount(): FreebuffAccount | null {
+  const record = readJsonFile(path.join(freebuffConfigDir(), 'credentials.json'));
+  const entry = record?.default ?? record;
+  if (!entry || typeof entry !== 'object') return null;
+  const id = typeof entry.id === 'string' ? entry.id.slice(0, 128) : '';
+  const name = typeof entry.name === 'string' ? entry.name.trim().slice(0, 120) : '';
+  const email = typeof entry.email === 'string' ? entry.email.trim().slice(0, 160) : '';
+  const label = name && email ? `${name} (${email})` : email || name || '';
+  return label ? { id: id || 'system', label } : null;
+}
+
+let cachedFreebuffToken: { token: string | null; readAt: number } | null = null;
+/** The native token, read from the credentials file or (Windows) the Credential Manager
+ *  entry `Bun.secrets` wrote as `freebuff-cli/<credentials path>`. Never logged or sent. */
+export async function freebuffToken(): Promise<string | null> {
+  if (cachedFreebuffToken && Date.now() - cachedFreebuffToken.readAt < 60000) return cachedFreebuffToken.token;
+  const credPath = path.join(freebuffConfigDir(), 'credentials.json');
+  const entry = readJsonFile(credPath)?.default ?? readJsonFile(credPath);
+  if (typeof entry?.authToken === 'string' && entry.authToken.length > 0) {
+    cachedFreebuffToken = { token: entry.authToken, readAt: Date.now() };
+    return entry.authToken;
+  }
+  if (entry?.tokenStore === 'keychain' && process.platform === 'win32') {
+    // The marshalled struct's field names must differ from the struct name, or
+    // Add-Type rejects the whole source and every read returns nothing.
+    const target = `freebuff-cli/${credPath}`;
+    const ps = `Add-Type @'\nusing System; using System.Runtime.InteropServices; public class FreebuffCredential { [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern bool CredRead(string t, int ty, int r, out IntPtr p); [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct Record { public int Flags; public int Type; public string TargetName; public string Comment; public long LastWritten; public int BlobSize; public IntPtr Blob; public int Persist; public int AttributeCount; public IntPtr Attributes; public string TargetAlias; public string UserName; } public static string Read(string t) { IntPtr p; if (CredRead(t, 1, 0, out p)) { var c = (Record)Marshal.PtrToStructure(p, typeof(Record)); byte[] b = new byte[c.BlobSize]; Marshal.Copy(c.Blob, b, 0, c.BlobSize); return System.Text.Encoding.UTF8.GetString(b); } return null; } }\n'@; [FreebuffCredential]::Read('${target.replace(/'/g, "''")}')`;
+    const result = await new Promise<string>((resolve) => {
+      execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true, timeout: 5000 }, (error, stdout) => {
+        resolve(!error && stdout ? stdout.trim() : '');
+      });
+    });
+    const token = result || null;
+    cachedFreebuffToken = { token, readAt: Date.now() };
+    return token;
+  }
+  cachedFreebuffToken = { token: null, readAt: Date.now() };
+  return null;
+}
+
+const CATALOG_URL = 'https://www.codebuff.com/api/v1/freebuff/models';
+const CATALOG_MIN_TTL_MS = 5 * 60 * 1000;
+const CATALOG_MAX_TTL_MS = 30 * 60 * 1000;
+const CATALOG_RETRY_MS = 30 * 1000;
+let catalogCache: { at: number; models: AgentChatModel[]; live: boolean; ttl: number } | null = null;
+let catalogRefresh: Promise<void> | null = null;
+let catalogLoadedFromDisk = false;
+
+/** ADE's own storage, so the last live catalog survives a restart. The provider endpoint
+ *  is slow on some networks; a stale copy is still more accurate than the bundled table. */
+function catalogCacheFile(): string {
+  const directory = process.env.ADE_DATA_DIR ?? path.join(os.homedir(), '.ade');
+  return path.join(directory, 'freebuff-catalog.json');
+}
+
+function loadCachedCatalog(): void {
+  if (catalogLoadedFromDisk) return;
+  catalogLoadedFromDisk = true;
+  try {
+    const file = catalogCacheFile();
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size > 262_144) return;
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const models = freebuffModelsFromCatalog(saved?.payload);
+    if (!models.length) return;
+    const fetchedAt = typeof saved?.fetchedAt === 'number' ? saved.fetchedAt : 0;
+    const expiresAt = typeof saved?.expiresAt === 'number' ? saved.expiresAt : 0;
+    catalogCache = { at: fetchedAt, models, live: true, ttl: Math.max(0, expiresAt - fetchedAt) };
+  } catch { /* No usable cache: the bundled table and a live refresh remain. */ }
+}
+
+function saveCachedCatalog(payload: unknown, ttl: number): void {
+  try {
+    const file = catalogCacheFile();
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const temporary = `${file}.${process.pid}.tmp`;
+    fs.writeFileSync(temporary, JSON.stringify({ fetchedAt: Date.now(), expiresAt: Date.now() + ttl, payload }));
+    fs.renameSync(temporary, file);
+  } catch { /* A cache that cannot be written only costs a later fetch. */ }
+}
+
+/** Fetch the account's catalog once, sharing concurrent readers. */
+function refreshFreebuffCatalog(): Promise<void> {
+  if (catalogRefresh) return catalogRefresh;
+  const settle = (models: AgentChatModel[], live: boolean, ttl = CATALOG_RETRY_MS) => {
+    catalogCache = { at: Date.now(), models, live, ttl };
+  };
+  catalogRefresh = (async () => {
+    const token = await freebuffToken();
+    if (token) {
+      try {
+        const response = await fetch(CATALOG_URL, {
+          headers: { Authorization: `Bearer ${token}`, 'x-freebuff-catalog-protocol': '1', 'x-freebuff-client': 'cli' },
+          signal: AbortSignal.timeout(20000),
+          redirect: 'error',
+        });
+        if (response.ok) {
+          const payload = await response.json();
+          const models = freebuffModelsFromCatalog(payload);
+          if (models.length) {
+            // The response states its own refresh time; a host clock far off is clamped.
+            const refreshAt = Number(payload?.refreshAt);
+            const ttl = Number.isFinite(refreshAt)
+              ? Math.min(CATALOG_MAX_TTL_MS, Math.max(CATALOG_MIN_TTL_MS, refreshAt - Date.now()))
+              : CATALOG_MIN_TTL_MS;
+            settle(models, true, ttl);
+            saveCachedCatalog(payload, ttl);
+            return;
+          }
+        } else {
+          await response.body?.cancel();
+        }
+      } catch { /* Offline or rejected: keep what is cached and retry later. */ }
+    }
+    settle(FREEBUFF_BUNDLED_MODELS, false);
+  })().finally(() => { catalogRefresh = null; });
+  return catalogRefresh;
+}
+
+/** The models this account may actually use, from the provider's own catalog endpoint.
+ *  A cached copy is returned immediately while a refresh runs; only a cold start waits,
+ *  and even then the bundled CLI catalog keeps the picker usable. */
+export async function readFreebuffCatalog(options: { waitMs?: number } = {}): Promise<{ models: AgentChatModel[]; source: 'live' | 'bundled' }> {
+  loadCachedCatalog();
+  const cached = catalogCache;
+  if (cached && Date.now() - cached.at < cached.ttl) return { models: cached.models, source: cached.live ? 'live' : 'bundled' };
+  const pending = refreshFreebuffCatalog();
+  // A stale-but-real catalog is better than blocking the picker on a slow network.
+  if (cached?.live) return { models: cached.models, source: 'live' };
+  const waitMs = options.waitMs ?? 2000;
+  if (waitMs > 0) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([pending, new Promise<void>(resolve => { timer = setTimeout(resolve, waitMs); })]);
+    clearTimeout(timer);
+  }
+  const observed = catalogCache;
+  return observed
+    ? { models: observed.models, source: observed.live ? 'live' : 'bundled' }
+    : { models: FREEBUFF_BUNDLED_MODELS, source: 'bundled' };
+}
+
+/** The last catalog read, for synchronous callers such as context accounting. */
+export function freebuffCachedModels(): AgentChatModel[] {
+  return catalogCache?.models ?? FREEBUFF_BUNDLED_MODELS;
+}
 export function freebuffChatDir(cwd: string, threadId: string): string {
   return path.join(freebuffProjectChatsDir(cwd), threadId);
 }
@@ -300,7 +464,7 @@ export function freebuffContextUsage(record: SessionRecord): AgentContextUsage {
   return {
     ...(model ? { model } : {}),
     usedTokens: null,
-    windowTokens: model ? freebuffContextWindow(model) ?? null : null,
+    windowTokens: model ? freebuffContextWindow(model, freebuffCachedModels()) ?? null : null,
     observedAt: new Date().toISOString(),
     source: 'freebuff',
     measurement: 'last-request',

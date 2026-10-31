@@ -11,6 +11,7 @@ import { OpenCodeChatControls } from '../../providers/opencode/openCodeChatContr
 import { dshCatalog } from '../../providers/dsh/dshCatalog.js';
 import { dshOptions } from '../../providers/dsh/dsh.js';
 import { freebuffWorkflowModels } from '../../providers/freebuff/freebuffCatalog.js';
+import { readFreebuffCatalog } from '../../providers/freebuff/freebuff.js';
 import type { AdeStore } from '../store.js';
 
 const dshCacheKey = 'workflow-models:dsh';
@@ -143,7 +144,7 @@ export class WorkflowModels {
     catch { /* The fresh provider-owned observation remains usable if persistence fails. */ }
   }
   private async discover(provider: WorkflowProvider): Promise<WorkflowModel[]> {
-    if (provider === 'freebuff') return freebuffWorkflowModels();
+    if (provider === 'freebuff') return freebuffWorkflowModels((await readFreebuffCatalog({ waitMs: 8000 })).models);
     if (provider === 'dsh') return dshCatalog();
     if (provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') {
       return (await this.openCode.catalog(provider, process.cwd())).map(model => ({ id: model.id, label: model.label, efforts: model.efforts.map(effort => effort.value) }));

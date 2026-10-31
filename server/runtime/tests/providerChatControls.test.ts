@@ -55,6 +55,10 @@ import { installOpenCodePlugin } from '../../providers/opencode/openCodeSessions
 import { readAgentStatus } from '../sessions/statusHooks.js';
 import { AgentWorkClock } from '../sessions/agentWorkClock.js';
 
+// Freebuff caches its per-account catalog under ADE's data directory. Keep the suite off
+// the host's real cache so these assertions describe the bundled fallback deterministically.
+process.env.ADE_DATA_DIR ??= fsNative.mkdtempSync(pathNative.join(osNative.tmpdir(), 'vade-freebuff-data-'));
+
 test('native OpenCode status drop-ins preserve configuration and publish exact-session working time', async () => {
   const directory = fsNative.mkdtempSync(pathNative.join(osNative.tmpdir(), 'vade-native-status-'));
   const keys = ['ADE_STATUS_FILE','ADE_STATUS_TOKEN','ADE_STATUS_SESSION','ADE_STATUS_PROVIDER','ADE_STATUS_CWD','ADE_STATUS_SOURCE_CWD','ADE_OPENCODE_PLUGIN_API'];

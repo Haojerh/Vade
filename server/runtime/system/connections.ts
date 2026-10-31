@@ -1,12 +1,12 @@
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { execFile } from 'node:child_process';
 import crypto from 'node:crypto';
 import type { LocalConnection, LocalConnectionsData, ProviderUsage, Section, UsageData, UsageWindow } from '../../../shared/contracts.js';
 import { GH_PATH, type CommandRunner } from '../../integrations/cli.js';
 import { executableOnPath, resolveAgent } from '../sessions/sessions.js';
 import { hasCredential, ProviderAccounts, readCredentialJson } from './providerAccounts.js';
+import { freebuffAccount, freebuffToken } from '../../providers/freebuff/freebuff.js';
 
 // Provider endpoint/response contracts checked against stablyai/orca's MIT-licensed
 // src/main/rate-limits adapters. This adapter has no dependency on Orca.
@@ -96,63 +96,6 @@ export function freebuffQuota(data: any): UsageWindow[] {
   return window ? [window] : [];
 }
 
-export interface FreebuffAccount { id: string; label: string }
-
-function freebuffDirectory(): string {
-  const custom = process.env.FREEBUFF_CONFIG_DIR;
-  return custom && path.isAbsolute(custom) ? custom : path.join(os.homedir(), '.config', 'manicode');
-}
-
-/** The account record the native CLI stores alongside its keychain token. It is
- *  display metadata only; the token never leaves the credential read. */
-export async function freebuffAccount(): Promise<FreebuffAccount | null> {
-  try {
-    const record = await readCredentialJson(path.join(freebuffDirectory(), 'credentials.json'));
-    const entry = record?.default ?? record;
-    if (!entry || typeof entry !== 'object') return null;
-    const id = typeof entry.id === 'string' ? entry.id.slice(0, 128) : '';
-    const name = typeof entry.name === 'string' ? entry.name.trim().slice(0, 120) : '';
-    const email = typeof entry.email === 'string' ? entry.email.trim().slice(0, 160) : '';
-    const label = name && email ? `${name} (${email})` : email || name || '';
-    return label ? { id: id || 'system', label } : null;
-  } catch {
-    return null;
-  }
-}
-
-let cachedFreebuffToken: { token: string | null; readAt: number } | null = null;
-export async function freebuffCredential(): Promise<string | null> {
-  if (cachedFreebuffToken && (Date.now() - cachedFreebuffToken.readAt < 60000)) {
-    return cachedFreebuffToken.token;
-  }
-  const credPath = path.join(freebuffDirectory(), 'credentials.json');
-  try {
-    const json = await readCredentialJson(credPath);
-    if (!json) return null;
-    const entry = json?.default ?? json;
-    if (typeof entry?.authToken === 'string' && entry.authToken.length > 0) {
-      cachedFreebuffToken = { token: entry.authToken, readAt: Date.now() };
-      return entry.authToken;
-    }
-    if (entry?.tokenStore === 'keychain' && process.platform === 'win32') {
-      // Bun.secrets stores this token as a generic Windows credential whose target is
-      // `freebuff-cli/<credentials path>`. The marshalled struct's field names must be
-      // distinct from the struct name or Add-Type rejects the whole source.
-      const target = `freebuff-cli/${credPath}`;
-      const ps = `Add-Type @'\nusing System; using System.Runtime.InteropServices; public class FreebuffCredential { [DllImport("advapi32.dll", SetLastError=true, CharSet=CharSet.Unicode)] public static extern bool CredRead(string t, int ty, int r, out IntPtr p); [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Unicode)] public struct Record { public int Flags; public int Type; public string TargetName; public string Comment; public long LastWritten; public int BlobSize; public IntPtr Blob; public int Persist; public int AttributeCount; public IntPtr Attributes; public string TargetAlias; public string UserName; } public static string Read(string t) { IntPtr p; if (CredRead(t, 1, 0, out p)) { var c = (Record)Marshal.PtrToStructure(p, typeof(Record)); byte[] b = new byte[c.BlobSize]; Marshal.Copy(c.Blob, b, 0, c.BlobSize); return System.Text.Encoding.UTF8.GetString(b); } return null; } }\n'@; [FreebuffCredential]::Read('${target.replace(/'/g, "''")}')`;
-      const result = await new Promise<string>((resolve) => {
-        execFile('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', ps], { windowsHide: true, timeout: 5000 }, (err, stdout) => {
-          if (err || !stdout) resolve('');
-          else resolve(stdout.trim());
-        });
-      });
-      const token = result || null;
-      cachedFreebuffToken = { token, readAt: Date.now() };
-      return token;
-    }
-  } catch {}
-  return null;
-}
 
 class UsageRequestError extends Error { constructor(readonly status: number) { super('Usage unavailable'); } }
 async function requestUsage(url: string, headers: Record<string, string>, body?: unknown): Promise<any> {
@@ -264,7 +207,7 @@ export class LocalConnections {
       const connected = def.id === 'github' ? githubConnected : def.id === 'codex' ? hasCredential('codex', codex, !this.options.accounts || this.options.accounts.selected('codex') === 'system')
         : def.id === 'claude' ? hasCredential('claude', claude)
         : def.id === 'codebuddy' ? Boolean(await codeBuddyCredential())
-        : def.id === 'freebuff' ? (installed ? Boolean(await (this.options.freebuffCredential ?? freebuffCredential)()) : null)
+        : def.id === 'freebuff' ? (installed ? Boolean(await (this.options.freebuffCredential ?? freebuffToken)()) : null)
         : ['opencode2','kilo','dsh'].includes(def.id) ? null
         : def.id === 'opencode' ? hasCredential('opencode', await (this.options.accounts?.openCodeCredentials() ?? readCredentialJson(path.join(process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share'), 'opencode', 'auth.json'))))
         : this.cached?.data?.providers.find(p => p.provider === 'antigravity')?.meta.availability === 'ready' ? true : null;
@@ -349,7 +292,7 @@ export class LocalConnections {
           }));
         } else if (def.id === 'freebuff') {
           if (!this.resolve('freebuff')) throw new Error();
-          const token = await (this.options.freebuffCredential ?? freebuffCredential)();
+          const token = await (this.options.freebuffCredential ?? freebuffToken)();
           if (!token) throw new Error();
           // The native CLI authenticates this endpoint with the token in the JSON
           // body; a bearer header is not accepted and returns 405.
@@ -389,3 +332,4 @@ export class LocalConnections {
     return result;
   }
 }
+

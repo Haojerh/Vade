@@ -5,8 +5,8 @@ import { codexRequest } from '../../../providers/codex/codexThread.js';
 import { resolveAgent } from '../../sessions/sessions.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import {claudeEffortAcknowledgement} from '../../../providers/common/shared.js';
-import { FREEBUFF_MODELS, freebuffModelByLabel } from '../../../providers/freebuff/freebuffCatalog.js';
-import { freebuffFooterModel, readFreebuffModel } from '../../../providers/freebuff/freebuff.js';
+import { freebuffModelByLabel, freebuffModelInRow, freebuffResolveStored } from '../../../providers/freebuff/freebuffCatalog.js';
+import { freebuffFooterModel, readFreebuffCatalog, readFreebuffModel } from '../../../providers/freebuff/freebuff.js';
 
 const SAFE = /^[a-zA-Z0-9][a-zA-Z0-9_.\/:+@()\[\]-]{0,199}$/;
 const text = (value: unknown, limit = 160): string => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, limit) : '';
@@ -22,7 +22,9 @@ export class ProviderChatControls {
   private cache = new Map<string, { at: number; models: AgentChatModel[] }>();
   private pending = new Map<string, Promise<AgentChatModel[]>>();
   async catalog(provider: Provider, cwd: string): Promise<AgentChatModel[]> {
-    if (provider === 'freebuff') return FREEBUFF_MODELS;
+    // Freebuff's catalog is per-account and served by the provider, so it is read on
+    // demand and cached there; it must never be replaced by a bundled snapshot.
+    if (provider === 'freebuff') return (await readFreebuffCatalog({ waitMs: 4000 })).models;
     const resolved = resolveAgent(provider);
     if (!resolved) throw new CliError('CLI_MISSING', 'Install this provider before selecting its settings');
     const key = JSON.stringify([provider, cwd, resolved]);
@@ -63,17 +65,20 @@ export class ProviderChatControls {
       const screen = typeof screenSource === 'function' ? screenSource() : screenSource;
       const footer = freebuffFooterModel(screen);
       const stored = readFreebuffModel('', '');
-      const footerModel = footer.label ? freebuffModelByLabel(footer.label) : undefined;
-      const storedModel = stored.model ? freebuffModelByLabel(stored.model) : undefined;
-      const currentModel = footerModel?.id ?? storedModel?.id ?? footer.label ?? stored.model;
-      const modelObj = currentModel ? FREEBUFF_MODELS.find(m => m.id === currentModel) ?? footerModel ?? storedModel : undefined;
+      const { models } = await readFreebuffCatalog({ waitMs: 2500 });
+      const footerModel = footer.label ? freebuffModelByLabel(footer.label, models) : undefined;
+      const storedModel = stored.model ? freebuffResolveStored(stored.model, models) : undefined;
+      const modelObj = footerModel ?? storedModel;
+      // A model the account can no longer select (plan change, retired row) still has to
+      // be shown as the current value; it is appended rather than silently replaced.
+      const listed = modelObj && models.some(model => model.id === modelObj.id) ? models : modelObj ? [...models, modelObj] : models;
       const currentEffort = footer.effort ?? stored.effort;
       return {
         provider: 'freebuff',
         transport: 'terminal',
-        models: FREEBUFF_MODELS,
+        models: listed,
         current: {
-          ...(currentModel ? { model: modelObj?.id ?? currentModel } : {}),
+          ...(modelObj ? { model: modelObj.id } : {}),
           ...(currentEffort ? { effort: currentEffort } : {}),
         },
         controls: { ...controls, model: true, effort: Boolean(modelObj?.efforts.length) },
@@ -182,9 +187,9 @@ async function typeCommand(command: string, io: ProviderControlIO) {
 const FREEBUFF_MODEL_PICKER = /choose model · Tab reasoning · Enter select · Esc cancel/;
 const FREEBUFF_REASONING_PICKER = /choose · Enter save · Esc back/;
 
-/** One rendered Freebuff model row. Only rows that resolve to the provider's own
+/** One rendered Freebuff model row. Only rows that resolve to the account's own
  *  catalog are accepted, so section headers and taglines are never navigation targets. */
-function freebuffPickerRows(screen: string): { selected: boolean; model: AgentChatModel }[] {
+function freebuffPickerRows(screen: string, models: AgentChatModel[]): { selected: boolean; model: AgentChatModel }[] {
   const rows: { selected: boolean; model: AgentChatModel }[] = [];
   for (const line of screen.split('\n')) {
     if (!/^\s*│/.test(line)) continue;
@@ -192,8 +197,7 @@ function freebuffPickerRows(screen: string): { selected: boolean; model: AgentCh
     const selected = content.startsWith('›');
     const body = content.replace(/^›\s*/, '').trim();
     if (!body) continue;
-    const head = body.split(' · ')[0];
-    const model = freebuffModelByLabel(head.split(' • ')[0].trim());
+    const model = freebuffModelInRow(body, models);
     if (model) rows.push({ selected, model });
   }
   return rows;
@@ -218,14 +222,14 @@ async function pressKeys(io: ProviderControlIO, delta: number): Promise<void> {
 
 /** The native picker scrolls its rows. Walk it in both directions until the target is
  *  rendered, then let the caller navigate the visible window by index. */
-async function revealFreebuffModel(io: ProviderControlIO, target: string): Promise<boolean> {
-  const selectedId = () => freebuffPickerRows(io.screen()).find(row => row.selected)?.model.id;
+async function revealFreebuffModel(io: ProviderControlIO, target: string, models: AgentChatModel[]): Promise<boolean> {
+  const selectedId = () => freebuffPickerRows(io.screen(), models).find(row => row.selected)?.model.id;
   for (const key of ['\x1b[B', '\x1b[A'] as const) {
     let previous = selectedId();
     for (let step = 0; step < 48; step++) {
       await io.write(key);
       await new Promise(resolve => setTimeout(resolve, 60));
-      const rows = freebuffPickerRows(io.screen());
+      const rows = freebuffPickerRows(io.screen(), models);
       if (rows.some(row => row.model.id === target)) return true;
       const current = rows.find(row => row.selected)?.model.id;
       if (current === previous) break;
@@ -240,26 +244,27 @@ async function revealFreebuffModel(io: ProviderControlIO, target: string): Promi
 async function applyFreebuffModel(options: AgentChatOptions, request: SetAgentChatOptionRequest, io: ProviderControlIO): Promise<AgentChatOptions> {
   const target = options.models.find(row => row.id === request.value);
   if (!target) invalid('Choose a model advertised by Freebuff');
+  const models = options.models;
   try {
     await typeCommand('/model', io);
     let screen = await io.waitFor(value => FREEBUFF_MODEL_PICKER.test(value));
-    if (!freebuffPickerRows(screen).some(row => row.model.id === target!.id)) {
-      if (!(await revealFreebuffModel(io, target!.id))) {
+    if (!freebuffPickerRows(screen, models).some(row => row.model.id === target!.id)) {
+      if (!(await revealFreebuffModel(io, target!.id, models))) {
         await io.write('\x1b');
         invalid('Freebuff does not list this model on the current connection. Choose another model or open Terminal.');
       }
       screen = io.screen();
     }
-    const rows = freebuffPickerRows(screen);
+    const rows = freebuffPickerRows(screen, models);
     const selectedIndex = rows.findIndex(row => row.selected);
     const targetIndex = rows.findIndex(row => row.model.id === target!.id);
     if (selectedIndex < 0 || targetIndex < 0) invalid('The Freebuff model picker changed. Open Terminal to select this model.');
     await pressKeys(io, targetIndex - selectedIndex);
-    await io.waitFor(value => freebuffPickerRows(value).find(row => row.selected)?.model.id === target!.id);
+    await io.waitFor(value => freebuffPickerRows(value, models).find(row => row.selected)?.model.id === target!.id);
     await io.write('\r');
     const confirmed = await io.waitFor(value => {
       const footer = freebuffFooterModel(value);
-      return Boolean(footer.label) && freebuffModelByLabel(footer.label!)?.id === target!.id;
+      return Boolean(footer.label) && freebuffModelByLabel(footer.label!, models)?.id === target!.id;
     });
     const footer = freebuffFooterModel(confirmed);
     return {

@@ -25,7 +25,7 @@ import { CodeBuddyChatControls } from '../../providers/codebuddy/codeBuddyChatCo
 import { codexPaginatedBinding, codexThread } from '../../providers/codex/codexThread.js';
 import { ConversationRounds } from '../chat/conversationRounds.js';
 import { dshBinding, dshReady, dshResumable, prepareDsh } from '../../providers/dsh/dsh.js';
-import { freebuffBinding, freebuffResumable, writeFreebuffLaunchSettings } from '../../providers/freebuff/freebuff.js';
+import { freebuffBinding, freebuffResumable, readFreebuffCatalog, writeFreebuffLaunchSettings } from '../../providers/freebuff/freebuff.js';
 import { answerCodeBuddyQuestion, codeBuddyApprovalVisible, terminalInteraction } from './interaction.js';
 import { OpenCodeChatControls } from '../../providers/opencode/openCodeChatControls.js';
 import { createOpenCodeSession, installOpenCodePlugin, isOpenCode, openCodeMajor, validProviderSessionId, verifyOpenCode } from '../../providers/opencode/openCodeSessions.js';
@@ -536,6 +536,8 @@ export class AdeSessions {
         record = { ...record, bindingToken: crypto.randomBytes(32).toString('hex') };
         if (record.providerThreadId) resolved = { ...resolved, args: [...resolved.args, '--conversation', record.providerThreadId] };
       } else if (record.provider === 'freebuff') {
+        // Warm the per-account catalog so the first settings read is live, not bundled.
+        void readFreebuffCatalog();
         if (record.providerThreadId) {
           resolved = { ...resolved, args: [...resolved.args, '--continue', record.providerThreadId, '--cwd', record.cwd] };
         } else {
