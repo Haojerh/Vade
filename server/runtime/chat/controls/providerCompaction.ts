@@ -14,6 +14,7 @@ const COMPACT_COMMANDS: Readonly<Record<string, string>> = {
   codebuddy: '/compact',
   codex: '/compact',
   dsh: '/compact',
+  freebuff: '/compact',
   kilo: '/compact',
   kilocode: '/compact',
   opencode: '/compact',

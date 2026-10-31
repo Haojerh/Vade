@@ -1,6 +1,6 @@
 import React from 'react';
 import { Icon } from '../ui/Icon';
-import { AgentLetterIcon, ClaudeIcon, GeminiIcon, KiloIcon, OpenAIIcon, OpenCodeGoIcon, OpenCodeIcon } from './ProviderGlyphs';
+import { AgentLetterIcon, ClaudeIcon, FreebuffIcon, GeminiIcon, KiloIcon, OpenAIIcon, OpenCodeGoIcon, OpenCodeIcon } from './ProviderGlyphs';
 import { PROVIDER_IMAGES } from './ProviderAssets';
 
 export type KnownProvider = keyof typeof PROVIDER_IMAGES | keyof typeof glyphs | 'unknown';
@@ -27,6 +27,7 @@ export function normalizeProvider(provider: string | null | undefined): { id: Kn
   else if (lower === 'opencode' || lower === 'open-code' || lower === 'opencode2') id = 'opencode';
   else if (lower === 'kilo' || lower === 'kilocode' || lower === 'kilo-code') id = 'kilo';
   else if (lower === 'dsb' || lower === 'dsh') id = 'dsh';
+  else if (lower === 'freebuff') id = 'freebuff';
   else if (lower in imageAssets || lower in glyphs) id = lower as KnownProvider;
   return { id, displayName: raw };
 }
@@ -39,6 +40,7 @@ const glyphs = {
   opencode: OpenCodeIcon,
   'opencode-go': OpenCodeGoIcon,
   kilo: KiloIcon,
+  freebuff: FreebuffIcon,
 } satisfies Record<string, React.ComponentType<{ size?: number }>>;
 
 export const ProviderIcon: React.FC<ProviderIconProps> = ({ provider, className = '', size = 16, showLabel = false, liveness }) => {

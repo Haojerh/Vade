@@ -18,7 +18,7 @@ export function updatedDescription(at: string | null, now = Date.now()): string 
   const minutes = Math.max(0, Math.floor((now - Date.parse(at)) / 60000));
   return minutes === 0 ? 'Updated just now' : minutes < 60 ? `Updated ${minutes}m ago` : `Updated ${Math.floor(minutes / 60)}h ago`;
 }
-export function shortWindow(label: string): string { return ['7d', 'Weekly', 'weekly'].includes(label) ? 'wk' : label.replace(/ \(\d+(?:\.\d+)? \/ \d+(?:\.\d+)? credits\)$/, ''); }
+export function shortWindow(label: string): string { return ['7d', 'Weekly', 'weekly'].includes(label) ? 'wk' : label.replace(/ \(\d+(?:\.\d+)? \/ \d+(?:\.\d+)? credits\)$/, '').replace(/ \(\d+(?:\.\d+)? \/ \d+(?:\.\d+)? hours\)$/, ''); }
 export function primaryWindow(provider: ProviderUsage): UsageWindow | undefined {
   return usageWindows(provider).find(w => /(?:^| )5h$/.test(w.label)) ?? usageWindows(provider)[0];
 }

@@ -14,7 +14,7 @@ export function formatContextTokens(count: number | null | undefined): string {
 }
 /** Providers whose native history can report context. An unknown reading still renders an
  *  explicit `?` ring with its reason instead of disappearing from the composer. */
-const CONTEXT_PROVIDERS = new Set(['opencode', 'opencode2', 'kilo', 'kilocode', 'codebuddy', 'dsh', 'codex', 'claude', 'antigravity']);
+const CONTEXT_PROVIDERS = new Set(['opencode', 'opencode2', 'kilo', 'kilocode', 'codebuddy', 'dsh', 'codex', 'claude', 'antigravity', 'freebuff']);
 
 export function ContextUsageMeter({ usage: observed, projectId, nodeId, runId, provider, openRequest, onOpenRequestHandled }: { usage?: AgentContextUsage; projectId: string; nodeId: string; runId: string | null; provider: string | null; openRequest?: number | null; onOpenRequestHandled?: () => void }) {
   const trigger = useRef<HTMLButtonElement>(null), content = useRef<HTMLDivElement>(null), timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -34,7 +34,7 @@ export function ContextUsageMeter({ usage: observed, projectId, nodeId, runId, p
     if (observed?.usedTokens == null) { clearTimeout(timer.current); card.reset(); }
   }, [observed?.usedTokens == null, card.reset]);
   useEffect(() => {
-    if (observed?.windowTokens != null || observed?.usedTokens == null || !observed.model || !['opencode','opencode2','kilo','codebuddy'].includes(provider ?? '') || catalogWindow?.model === observed.model) return;
+    if (observed?.windowTokens != null || observed?.usedTokens == null || !observed.model || !['opencode','opencode2','kilo','codebuddy','freebuff'].includes(provider ?? '') || catalogWindow?.model === observed.model) return;
     const abort = new AbortController(); setCatalogLoading(true);
     void fetchAgentChatOptions(projectId, nodeId, runId, abort.signal).then(section => {
       if (abort.signal.aborted || section.meta.stale || !section.data) return;

@@ -11,6 +11,7 @@ import { agyConversationSaved } from '../../providers/antigravity/agyBinding.js'
 import { CliError } from '../../integrations/cli.js';
 import { isPathInsideRoots } from '../../providers/common/transcriptUtils.js';
 import { dshTranscript, dshResumable, validDshId } from '../../providers/dsh/dsh.js';
+import { freebuffProjectsDir } from '../../providers/freebuff/freebuff.js';
 
 type Provider = Exclude<AdeProvider, 'terminal'>;
 interface Indexed { id: string; provider: Provider; threadId: string; cwd: string | null; title: string; lastMessage: string | null; messageCount: number; limited: boolean; updatedAt: string; model: string | null; file: string; root: string }
@@ -38,7 +39,7 @@ export class AgentHistory {
         const valid = (entry: Indexed | null) => {
           if (!entry) return true;
           const root = entry.provider === 'dsh' && isPathInsideRoots(entry.file, [path.join(store.directory,'dsh')]) ? path.dirname(entry.file) : entry.provider === 'codex' ? path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'sessions')
-            : entry.provider === 'claude' ? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') : entry.provider === 'antigravity' ? path.join(agyRoot(), 'brain') : entry.provider === 'codebuddy' ? path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'projects') : isOpenCode(entry.provider) ? path.dirname(openCodeFile(entry.provider)) : null;
+            : entry.provider === 'claude' ? path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects') : entry.provider === 'antigravity' ? path.join(agyRoot(), 'brain') : entry.provider === 'codebuddy' ? path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'projects') : entry.provider === 'freebuff' ? freebuffProjectsDir() : isOpenCode(entry.provider) ? path.dirname(openCodeFile(entry.provider)) : null;
           return root && typeof entry.file === 'string' && entry.file.length <= 4096 && entry.root === root && path.isAbsolute(entry.file)
             && path.relative(root, entry.file).split(path.sep)[0] !== '..' && validProviderSessionId(entry.provider, entry.threadId) && entry.id === opaque(`${entry.provider}:${entry.threadId}`);
         };
@@ -67,6 +68,7 @@ export class AgentHistory {
       ['codebuddy', path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'projects'), 1],
       ['claude', path.join(process.env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), '.claude'), 'projects'), 1],
       ['antigravity', path.join(agyRoot(), 'brain'), 4],
+      ['freebuff', freebuffProjectsDir(), 4],
     ];
     const walk = async (directory: string, root: string, provider: Provider, depth: number): Promise<void> => {
       const handle = await fs.promises.opendir(directory);
@@ -74,7 +76,7 @@ export class AgentHistory {
         if (--remaining < 0) { this.limited = true; break; }
         const file = path.join(directory, entry.name);
         if (entry.isDirectory() && depth) await walk(file, root, provider, depth - 1).catch(() => { this.warnings.push(`${provider}: a history folder could not be read.`); });
-        else if (entry.isFile() && entry.name.endsWith('.jsonl') && (provider !== 'antigravity' || (entry.name === 'transcript.jsonl' && path.relative(root, file).split(path.sep).slice(1).join('/') === '.system_generated/logs/transcript.jsonl'))) {
+        else if (entry.isFile() && (entry.name.endsWith('.jsonl') || (provider === 'freebuff' && entry.name === 'chat-messages.json')) && (provider !== 'antigravity' || (entry.name === 'transcript.jsonl' && path.relative(root, file).split(path.sep).slice(1).join('/') === '.system_generated/logs/transcript.jsonl'))) {
           const stat = await fs.promises.stat(file);
           candidates.push({ file, root, provider, size: stat.size, mtime: stat.mtimeMs });
         }
@@ -91,11 +93,12 @@ export class AgentHistory {
     if (this.closed) return;
     const entries = new Map<string, Indexed>(), owned = this.store.projects().flatMap(project => this.store.sessions(project.id));
     const workspaces = await this.agyWorkspaces();
+    const fbWorkspaces = await this.freebuffWorkspaces();
     for (const record of owned.filter(record => record.provider === 'dsh').slice(0,200)) {
       try {
         if (!dshResumable(this.store.directory,record)) continue;
         const {file,root}=dshTranscript(this.store.directory,record),stat=fs.statSync(file);
-        const row=await this.parse({file,root,provider:'dsh',size:stat.size,mtime:stat.mtimeMs},Math.min(stat.size,1024*1024),workspaces);
+        const row=await this.parse({file,root,provider:'dsh',size:stat.size,mtime:stat.mtimeMs},Math.min(stat.size,1024*1024),workspaces,fbWorkspaces);
         if(row)entries.set(row.id,row);
       } catch { /* Missing exact owned DSH observations do not index another session. */ }
     }
@@ -108,7 +111,7 @@ export class AgentHistory {
         else {
           if (budget <= 0) { this.limited = true; return null; }
           const bytes = Math.min(candidate.size, 4 * 1024 * 1024, budget); budget -= bytes;
-          try { row = await this.parse(candidate, bytes, workspaces); }
+          try { row = await this.parse(candidate, bytes, workspaces, fbWorkspaces); }
           catch { row = null; this.warnings.push(`${candidate.provider}: a session could not be indexed.`); }
           this.parsed.set(candidate.file, { stamp, entry: row });
         }
@@ -139,7 +142,7 @@ export class AgentHistory {
     if (!this.closed && Buffer.byteLength(cache) <= 4000000) this.store.db.prepare("INSERT OR REPLACE INTO preferences VALUES ('history-index', ?)").run(cache);
   }
 
-  private async parse(candidate: { file: string; root: string; provider: Provider; size: number; mtime: number }, bytes: number, workspaces: Map<string, string | null>): Promise<Indexed | null> {
+  private async parse(candidate: { file: string; root: string; provider: Provider; size: number; mtime: number }, bytes: number, workspaces: Map<string, string | null>, fbWorkspaces?: Map<string, string | null>): Promise<Indexed | null> {
     const { file, root, provider } = candidate;
     if (!isPathInsideRoots(file, [root])) return null;
     const fd = await fs.promises.open(file, 'r');
@@ -157,6 +160,49 @@ export class AgentHistory {
     }
     finally { await fd.close(); }
     const limited = candidate.size > bytes;
+    if (provider === 'freebuff') {
+      const parts = path.relative(root, file).split(path.sep);
+      const projectFolder = parts[0];
+      const threadId = parts[2];
+      if (!threadId || !validProviderSessionId('freebuff', threadId)) return null;
+      const cwd = fbWorkspaces?.get(projectFolder) ?? null;
+      let title = '', lastMessage: string | null = null, model: string | null = null;
+      try {
+        const chatDir = path.dirname(file);
+        const metaPath = path.join(chatDir, 'chat-meta.json');
+        if (fs.existsSync(metaPath)) {
+          const meta = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          if (meta.firstPrompt) title = clean(meta.firstPrompt, 120);
+        }
+        const runStatePath = path.join(chatDir, 'run-state.json');
+        if (fs.existsSync(runStatePath)) {
+          const state = JSON.parse(fs.readFileSync(runStatePath, 'utf8'));
+          if (typeof state.selectedModel === 'string') model = state.selectedModel;
+        }
+        const msgs = JSON.parse(text);
+        if (Array.isArray(msgs)) {
+          for (const m of msgs) {
+            if (!title && m.variant === 'user' && typeof m.content === 'string') title = clean(m.content, 120);
+            if (typeof m.content === 'string' && m.content.trim()) lastMessage = clean(m.content, 300);
+          }
+          return {
+            id: opaque(`${provider}:${threadId}`),
+            provider,
+            threadId,
+            cwd,
+            title: title || 'Freebuff',
+            lastMessage,
+            messageCount: msgs.length,
+            limited,
+            updatedAt: new Date(candidate.mtime).toISOString(),
+            model: model || 'deepseek/deepseek-v4-flash',
+            file,
+            root,
+          };
+        }
+      } catch {}
+      return null;
+    }
     const lines = text.split('\n');
     let threadId: string | undefined, cwd: string | null = null;
     if (provider === 'antigravity') {
@@ -218,6 +264,26 @@ export class AgentHistory {
         if (path.isAbsolute(key)) paths.set(value, key); else if (path.isAbsolute(value)) paths.set(key, value);
       }
       for (const [id, value] of Object.entries(metadata.conversations ?? {}).slice(0, 10000)) add(id, paths.get((value as { summary?: { ProjectID?: string } }).summary?.ProjectID ?? ''));
+    } catch {}
+    return result;
+  }
+
+  private async freebuffWorkspaces(): Promise<Map<string, string | null>> {
+    const result = new Map<string, string | null>();
+    try {
+      const recentPath = path.join(os.homedir(), '.config', 'manicode', 'recent-projects.json');
+      if (fs.existsSync(recentPath)) {
+        const text = await fs.promises.readFile(recentPath, 'utf8');
+        const list = JSON.parse(text);
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (typeof item?.path === 'string' && path.isAbsolute(item.path)) {
+              const base = path.basename(item.path);
+              result.set(base, path.resolve(item.path));
+            }
+          }
+        }
+      }
     } catch {}
     return result;
   }

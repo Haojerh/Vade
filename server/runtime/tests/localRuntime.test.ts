@@ -1239,8 +1239,8 @@ test('standalone API owns onboarding and validates origins, methods, bodies and 
     assert.equal((await fetch(base + projectRoute + `/nodes/${nodeId}/terminal?cursor=-1`)).status, 400);
     assert.equal((await fetch(base + projectRoute + '/commit-graph?nodeId=foreign')).status, 404);
     const catalog = await (await fetch(base + '/api/agents/catalog')).json();
-    assert.deepEqual(catalog.available.map((item: { id: string }) => item.id), ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh', 'terminal']);
-    assert.ok(catalog.installed.every((item: { command: string }) => ['codex', 'claude', 'agy', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh-tui', 'terminal'].includes(item.command)));
+    assert.deepEqual(catalog.available.map((item: { id: string }) => item.id), ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh', 'freebuff', 'terminal']);
+    assert.ok(catalog.installed.every((item: { command: string }) => ['codex', 'claude', 'agy', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh-tui', 'freebuff', 'terminal'].includes(item.command)));
     assert.ok(['ready', 'unavailable'].includes((await (await fetch(base + '/api/usage')).json()).meta.availability));
     const refreshes: boolean[] = [];
     const readUsage = f.runtime.connectionsService.usage.bind(f.runtime.connectionsService);

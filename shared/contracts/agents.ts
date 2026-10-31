@@ -2,7 +2,7 @@ import type { Id, ISO, Section, State } from './common.js';
 import type { ConversationPage } from './chat.js';
 import type { TerminalShell } from './terminal.js';
 
-export type AdeProvider = 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' | 'terminal';
+export type AdeProvider = 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' | 'freebuff' | 'terminal';
 
 /** Exact-session native measurement. A missing capacity never implies a model default. */
 export interface AgentContextUsage {
@@ -51,8 +51,8 @@ export interface AgentStatus {
 
 export type AgentPermissionMode = 'manual' | 'auto' | 'yolo';
 export interface AgentPreferences {
-  defaultAgent: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh';
-  providers: Record<'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh', { enabled: boolean; mode: AgentPermissionMode }>;
+  defaultAgent: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' | 'freebuff';
+  providers: Record<'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' | 'freebuff', { enabled: boolean; mode: AgentPermissionMode }>;
 }
 
 export interface AgentInteraction {

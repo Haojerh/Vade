@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
-import type { ConversationPage, Id, ISO, NodeDetailsQuery, Section, SourceMeta, Subagent, SubagentConversation } from '../../../shared/contracts.js';
+import type { ConversationPage, Id, ISO, NodeDetailsQuery, Section, SourceMeta, Subagent, SubagentConversation, ToolActivity } from '../../../shared/contracts.js';
 import type { SessionRecord } from '../store.js';
 import { hashId, readOlderTranscriptLines, toIsoOrNull } from '../../providers/common/transcriptUtils.js';
 import { isOpenCode, openCodeFile, withOpenCode } from '../../providers/opencode/openCodeSessions.js';
@@ -11,8 +11,9 @@ import { publicTranscriptRecord } from '../../providers/common/shared.js';
 import { readOpenCodePage } from '../../providers/opencode/opencode.js';
 import { readOpenCodeV2Page } from '../../providers/opencode/openCodeV2.js';
 import { issueStoredCursor, validateStoredCursor } from '../../providers/common/conversationCursors.js';
-import { databaseToolActivity, mergeToolActivity, transcriptToolActivity } from '../../providers/common/toolActivity.js';
+import { databaseToolActivity, mergeToolActivity, toolActivityFromCall, transcriptToolActivity } from '../../providers/common/toolActivity.js';
 import { parseAntigravityTranscriptLine } from '../../providers/antigravity/antigravity.js';
+import { freebuffChatDir, readFreebuffMessages } from '../../providers/freebuff/freebuff.js';
 
 /** Bounded, read-only discovery of native child agents recorded for one exact session.
  *  A provider that records no child linkage returns an empty section, never a guess. */
@@ -32,6 +33,7 @@ const pending = new Map<string, Promise<Section<Subagent[]>>>();
 type Handle =
   | { kind: 'file'; file: string; provider: string }
   | { kind: 'inline'; file: string; agentId: string }
+  | { kind: 'freebuff-inline'; file: string; agentId: string }
   | { kind: 'database'; file: string; childId: string; provider: 'opencode' | 'opencode2' | 'kilo' }
   | { kind: 'unavailable'; reason: string };
 const handles = new Map<string, Handle>();
@@ -554,6 +556,63 @@ function antigravitySection(record: SessionRecord): Section<Subagent[]> {
   return sec(children, children.length ? 'ready' : 'empty');
 }
 
+function freebuffSection(record: SessionRecord): Section<Subagent[]> {
+  const parent = record.providerThreadId;
+  if (!parent) return sec([], 'empty');
+  const chatFolder = freebuffChatDir(record.cwd, parent);
+  const file = path.join(chatFolder, 'chat-messages.json');
+  if (!fs.existsSync(file)) return sec([], 'empty');
+
+  const rawMessages = readFreebuffMessages(file);
+  const discovered = new Map<string, { label: string; role: string | null; prompt: string | null; startedAt: ISO | null }>();
+
+  for (const msg of rawMessages) {
+    if (msg.variant !== 'ai' || !Array.isArray(msg.blocks)) continue;
+    const timestamp = toIsoOrNull(msg.timestamp);
+    for (const block of msg.blocks) {
+      if (block?.type === 'agent' && block.agentId) {
+        const id = String(block.agentId);
+        discovered.set(id, {
+          label: typeof block.agentType === 'string' && block.agentType.trim() ? block.agentType.trim() : id,
+          role: typeof block.agentType === 'string' ? block.agentType : null,
+          prompt: typeof block.prompt === 'string' ? block.prompt : null,
+          startedAt: timestamp,
+        });
+      } else if (block?.type === 'tool' && (block.toolName === 'spawn_agents' || block.toolName === 'spawn_agent_inline')) {
+        const agents = Array.isArray(block.input?.agents) ? block.input.agents : [];
+        agents.forEach((ag: any, idx: number) => {
+          const id = ag.agent_id || `${block.toolCallId ?? 'spawn'}-${idx}`;
+          discovered.set(id, {
+            label: typeof ag.agent_type === 'string' && ag.agent_type.trim() ? ag.agent_type.trim() : id,
+            role: typeof ag.agent_type === 'string' ? ag.agent_type : null,
+            prompt: typeof ag.prompt === 'string' ? ag.prompt : null,
+            startedAt: timestamp,
+          });
+        });
+      }
+    }
+  }
+
+  const children: Subagent[] = [];
+  for (const [id, meta] of discovered) {
+    if (children.length >= MAX_CHILDREN) break;
+    const cid = remember(childId(record, 'freebuff', id), { kind: 'freebuff-inline', file, agentId: id });
+    children.push({
+      id: cid,
+      label: meta.label.slice(0, 80),
+      role: meta.role,
+      state: 'completed',
+      model: null,
+      startedAt: meta.startedAt,
+      lastActivityAt: null,
+      preview: meta.prompt ? previewText(meta.prompt) : null,
+      transcript: 'available',
+    });
+  }
+  children.sort((a, b) => String(b.startedAt ?? '').localeCompare(String(a.startedAt ?? '')));
+  return sec(children, children.length ? 'ready' : 'empty');
+}
+
 function compute(record: SessionRecord): Promise<Section<Subagent[]>> {
   switch (record.provider) {
     case 'codex': return Promise.resolve(codexSection(record));
@@ -562,6 +621,7 @@ function compute(record: SessionRecord): Promise<Section<Subagent[]>> {
     case 'dsh': return dshSection(record);
     case 'codebuddy': return Promise.resolve(codeBuddySection(record));
     case 'antigravity': return Promise.resolve(antigravitySection(record));
+    case 'freebuff': return Promise.resolve(freebuffSection(record));
     default: return Promise.resolve(sec<Subagent[]>([], 'unsupported', 'This provider does not record child agents.'));
   }
 }
@@ -573,6 +633,7 @@ function cacheKey(record: SessionRecord): string {
     : provider === 'dsh' ? path.join(process.env.DSH_HOME || path.join(os.homedir(), '.dsh'), 'sessions', '--' + record.cwd.replace(/[:\\/]+/g, '-') + '--')
     : provider === 'codebuddy' ? path.join(process.env.CODEBUDDY_CONFIG_DIR || path.join(os.homedir(), '.codebuddy'), 'projects')
     : provider === 'antigravity' ? (record.providerThreadId ? path.join(process.env.GEMINI_APPDATA_DIR || process.env.ANTIGRAVITY_APPDATA_DIR || path.join(os.homedir(), '.gemini', 'antigravity-cli'), 'brain', record.providerThreadId, '.system_generated', 'logs', 'transcript.jsonl') : '')
+    : provider === 'freebuff' ? (record.providerThreadId ? freebuffChatDir(record.cwd, record.providerThreadId) : '')
     : '';
   return `${record.provider}:${record.providerThreadId ?? record.id}:${root}:${root ? stampOf(root) : ''}`;
 }
@@ -643,6 +704,60 @@ export async function readSubagentTranscript(record: SessionRecord, subagentId: 
       return {
         conversation: page(sourceIdentity, messages, nextCursor, result.limited || result.hasMore, handle.provider, query.cursor ?? null),
         tools: readTools(() => mergeToolActivity(databaseToolActivity(handle.file, handle.childId))),
+      };
+    }
+    if (handle.kind === 'freebuff-inline') {
+      const rawMessages = readFreebuffMessages(handle.file);
+      const messages: ConversationPage['messages'] = [];
+      const tools: ToolActivity[] = [];
+      for (const msg of rawMessages) {
+        if (msg.variant !== 'ai' || !Array.isArray(msg.blocks)) continue;
+        const timestamp = toIsoOrNull(msg.timestamp);
+        for (const block of msg.blocks) {
+          if (block?.type === 'agent' && String(block.agentId) === handle.agentId) {
+            if (block.prompt) {
+              messages.push({
+                id: hashId('msg', `${sourceIdentity}:${handle.agentId}:user`),
+                role: 'user',
+                text: block.prompt,
+                at: timestamp,
+              });
+            }
+            if (Array.isArray(block.blocks)) {
+              for (let bIdx = 0; bIdx < block.blocks.length; bIdx++) {
+                const subBlock = block.blocks[bIdx];
+                if (subBlock?.type === 'tool' && subBlock.toolName) {
+                  const act = toolActivityFromCall(handle.agentId, subBlock.toolCallId ?? `call:${bIdx}`, subBlock.toolName, subBlock.input, timestamp);
+                  if (act) tools.push(act);
+                } else if (subBlock?.type === 'text' && typeof subBlock.content === 'string') {
+                  messages.push({
+                    id: hashId('msg', `${sourceIdentity}:${handle.agentId}:${bIdx}`),
+                    role: 'agent',
+                    text: subBlock.content,
+                    at: timestamp,
+                  });
+                }
+              }
+            }
+          } else if (block?.type === 'tool' && (block.toolName === 'spawn_agents' || block.toolName === 'spawn_agent_inline')) {
+            const agents = Array.isArray(block.input?.agents) ? block.input.agents : [];
+            agents.forEach((ag: any, idx: number) => {
+              const id = ag.agent_id || `${block.toolCallId ?? 'spawn'}-${idx}`;
+              if (id === handle.agentId && ag.prompt) {
+                messages.push({
+                  id: hashId('msg', `${sourceIdentity}:${handle.agentId}:user`),
+                  role: 'user',
+                  text: ag.prompt,
+                  at: timestamp,
+                });
+              }
+            });
+          }
+        }
+      }
+      return {
+        conversation: page(sourceIdentity, messages, null, false, 'freebuff', null),
+        tools,
       };
     }
     const stat = fs.statSync(handle.file);

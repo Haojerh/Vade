@@ -50,7 +50,7 @@ export function AgentSettings() {
             <div className="agent-setting-controls">
               <BinaryControl label={`${agent.name} availability`} choices={[{value:'enabled',label:'Enabled'},{value:'disabled',label:'Disabled'}]} value={preference.enabled ? 'enabled' : 'disabled'} disabledChoices={[saving || loading, saving || loading || isDefault && enabledProviders === 1]} onChange={value => toggleEnabled(value === 'enabled')} />
               <Select aria-label={`${agent.name} permission mode`} value={preference.mode} disabled={saving || loading} onChange={e => { void change({ ...value, providers: { ...value.providers, [provider]: { ...preference, mode: e.target.value as AgentPermissionMode } } }); }}>
-                <option value="manual">Manual</option><option value="auto" disabled={['antigravity', 'opencode', 'opencode2', 'kilo', 'dsh'].includes(provider)}>Auto</option><option value="yolo" disabled={['opencode2', 'dsh'].includes(provider)}>Yolo</option>
+                <option value="manual">Manual</option><option value="auto" disabled={['antigravity', 'opencode', 'opencode2', 'kilo', 'dsh', 'freebuff'].includes(provider)}>Auto</option><option value="yolo" disabled={['opencode2', 'dsh'].includes(provider)}>Yolo</option>
               </Select>
               {installed && <button type="button" className="agent-default-control" aria-label={`${agent.name} default agent`} aria-pressed={isDefault} disabled={!preference.enabled || saving || loading} onClick={() => { void change({ ...value, defaultAgent: provider }); }}>{isDefault && <Icon name="check" size={14} />}{isDefault ? 'Default' : 'Set default'}</button>}
             </div>
@@ -58,7 +58,7 @@ export function AgentSettings() {
         })}
       </div>;
     })}
-    <p className="agent-settings-note">Manual uses provider permission prompts. Auto uses the provider’s automatic reviewer. Antigravity, OpenCode and Kilo do not expose a separate automatic reviewer. Yolo skips tool approvals; Codex also disables its sandbox. Sign-in and provider policies still apply.</p>
+    <p className="agent-settings-note">Manual uses provider permission prompts. Auto uses the provider’s automatic reviewer. Antigravity, OpenCode, Kilo and Freebuff do not expose a separate automatic reviewer. Yolo skips tool approvals; Codex also disables its sandbox. Sign-in and provider policies still apply.</p>
     {error && <p className="text-danger" role="alert">{error}</p>}
   </section>;
 }

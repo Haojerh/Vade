@@ -103,6 +103,23 @@ export function KiloIcon({ size = 14 }: { size?: number }): React.JSX.Element {
   );
 }
 
+export function FreebuffIcon({ size = 14 }: { size?: number }): React.JSX.Element {
+  return (
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      viewBox="0 0 77.18 77.19"
+      width={size}
+      height={size}
+      fill="currentColor"
+      aria-hidden
+      className="text-current"
+    >
+      <polygon points="77.18 0 77.18 19.3 19.3 19.3 19.3 77.19 0 77.19 0 0 77.18 0" />
+      <polygon points="63.62 24.89 63.62 44.19 44.32 44.19 44.32 77.19 25.03 77.19 25.03 24.89 63.62 24.89" />
+    </svg>
+  );
+}
+
 export function OpenCodeIcon({ size = 14 }: { size?: number }): React.JSX.Element {
   return (
     <svg

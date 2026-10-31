@@ -17,7 +17,7 @@ import { DialogActions } from '../../components/ui/DialogActions';
 import { useConfirmationState } from '../../hooks/ui/useConfirmationState';
 import { arrangeOrganization, connectionCreatesCycle as cycle } from './organizationGraph';
 
-const labels: Record<WorkflowProvider, string> = { codex: 'Codex', claude: 'Claude Code', antigravity: 'Antigravity', codebuddy: 'CodeBuddy', opencode: 'OpenCode', opencode2: 'OpenCode 2', kilo: 'Kilo Code', dsh: 'DeepSeek Harness' };
+const labels: Record<WorkflowProvider, string> = { codex: 'Codex', claude: 'Claude Code', antigravity: 'Antigravity', codebuddy: 'CodeBuddy', opencode: 'OpenCode', opencode2: 'OpenCode 2', kilo: 'Kilo Code', dsh: 'DeepSeek Harness', freebuff: 'Freebuff' };
 
 function NodeEditor({ node, graph, onDependencyChange, onChange, onRemove }: { node: OrganizationNode; graph: OrganizationConfig; onDependencyChange: (source: string, enabled: boolean) => void; onChange: (patch: Partial<OrganizationNode>) => void; onRemove: () => void }) {
   const [models, setModels] = useState<WorkflowModel[]>([]), [loading, setLoading] = useState(false), [error, setError] = useState<string | null>(null), [revision, setRevision] = useState(0);

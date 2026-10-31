@@ -1,7 +1,7 @@
 import { test,mock } from 'node:test';
 import fs from 'node:fs/promises';
 import assert from 'node:assert/strict';
-import { agyQuota, claudeQuota, codexQuota, LocalConnections, quotaWindow } from '../system/connections.js';
+import { agyQuota, claudeQuota, codexQuota, freebuffQuota, LocalConnections, quotaWindow } from '../system/connections.js';
 import type { CommandRunner } from '../../integrations/cli.js';
 
 test('a slow native provider does not hide ready usage and concurrent polls share its probe',async()=>{
@@ -43,7 +43,7 @@ test('provider account detection skips GitHub probes and shares concurrent reads
   assert.equal(first, second);
   assert.equal(first.data?.connections.some(connection => connection.id === 'github'), false);
   assert.deepEqual(first.data?.connections.map(connection => connection.id), [
-    'codex', 'claude', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh', 'antigravity',
+    'codex', 'claude', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh', 'antigravity', 'freebuff',
   ]);
 });
 
@@ -61,6 +61,9 @@ test('quota parsers preserve zero, distinguish unknown from zero, and use struct
     { remaining_fraction: 1, window: '5h' }, { remaining_fraction: 0, disabled: true }, { remaining_fraction: 2 },
   ] }] } } };
   assert.deepEqual(agyQuota(data), [{ label: 'Gemini 5h', usedPercent: 0, resetsAt: null }]);
+  assert.deepEqual(freebuffQuota({ remainingBalance: 200, usage: 50, next_quota_reset: '2026-11-30T00:00:00.000Z' }), [
+    { label: 'Hours (10 / 50 hours)', usedPercent: 20, resetsAt: '2026-11-30T00:00:00.000Z' },
+  ]);
 });
 
 test('native quota reads deduplicate, preserve last good observations on errors, and never serialize credentials', async () => {

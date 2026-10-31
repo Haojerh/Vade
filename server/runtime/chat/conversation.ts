@@ -43,6 +43,15 @@ import {
   verifyJsonSession,
 } from './transcriptHelpers.js';
 import { forkClaudeBefore } from '../../providers/claude/claudeRewind.js';
+import {
+  freebuffContextUsage,
+  freebuffNativeRounds,
+  freebuffProviderActivities,
+  freebuffTools,
+  freebuffTranscript,
+  readFreebuffModel,
+  readFreebuffPage,
+} from '../../providers/freebuff/freebuff.js';
 import { codeBuddyBranch } from '../../providers/codebuddy/codeBuddyBranch.js';
 import { validCodexThreadId } from '../../providers/codex/codexThread.js';
 import {
@@ -89,7 +98,7 @@ export class AdeConversations {
   private roundCache = new Map<string, { stamp: string; rounds: ConversationRound[] }>();
 
   private nativeRounds(record: SessionRecord, file: string, source: string, stat: fs.Stats) {
-    if (!['claude', 'codex', 'antigravity', 'codebuddy', 'dsh', 'opencode', 'opencode2', 'kilo'].includes(record.provider)) return [];
+    if (!['claude', 'codex', 'antigravity', 'codebuddy', 'dsh', 'freebuff', 'opencode', 'opencode2', 'kilo'].includes(record.provider)) return [];
     let stamp = `${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`;
     if (isOpenCode(record.provider)) {
       stamp += [file + '-wal', file + '-shm']
@@ -120,7 +129,9 @@ export class AdeConversations {
               ? antigravityNativeRounds(filtered, source)
               : record.provider === 'codebuddy'
                 ? codeBuddyNativeRounds(record.providerThreadId!, filtered, source)
-                : dshNativeRounds(record.providerThreadId!, filtered, source);
+                : record.provider === 'freebuff'
+                  ? freebuffNativeRounds(file, record.providerThreadId!, source)
+                  : dshNativeRounds(record.providerThreadId!, filtered, source);
     }
     if (this.roundCache.size >= 32) this.roundCache.delete(this.roundCache.keys().next().value!);
     this.roundCache.set(source, { stamp, rounds });
@@ -162,6 +173,7 @@ export class AdeConversations {
 
   private resolve(record: SessionRecord): { file: string; root: string } {
     if (record.provider === 'dsh') return dshTranscript(this.directory, record);
+    if (record.provider === 'freebuff') return freebuffTranscript(this.directory, record);
     if (isOpenCode(record.provider)) {
       const file = verifyOpenCode(record);
       return { file, root: path.dirname(file) };
@@ -209,7 +221,7 @@ export class AdeConversations {
   private metadataPending = new Map<string, Promise<Awaited<ReturnType<AdeConversations['readMetadata']>>>>();
 
   async metadata(record: SessionRecord): Promise<Awaited<ReturnType<AdeConversations['readMetadata']>>> {
-    if (record.provider === 'antigravity' || isOpenCode(record.provider)) return this.readMetadata(record);
+    if (record.provider === 'antigravity' || record.provider === 'freebuff' || isOpenCode(record.provider)) return this.readMetadata(record);
     try {
       const { file } = this.resolve(record);
       const stat = fs.statSync(file);
@@ -294,6 +306,12 @@ export class AdeConversations {
         Object.assign(result, (record.provider === 'opencode2' ? readOpenCodeV2Model : readOpenCodeModel)(file, id) ?? {});
         tools = (record.provider === 'opencode2' ? openCodeV2Tools : databaseToolActivity)(file, id);
         const data = databaseProviderActivity(file, id, record.provider === 'opencode2');
+        result.providerActivity = { data, meta: { availability: data.length ? 'ready' : 'empty', attemptedAt: now, observedAt: now, partial: true, stale: false, issue: null } };
+      } else if (record.provider === 'freebuff') {
+        result.contextUsage = freebuffContextUsage(record);
+        Object.assign(result, readFreebuffModel(file, id));
+        tools = freebuffTools(file, id);
+        const data = freebuffProviderActivities(file);
         result.providerActivity = { data, meta: { availability: data.length ? 'ready' : 'empty', attemptedAt: now, observedAt: now, partial: true, stale: false, issue: null } };
       } else if (record.provider === 'antigravity') {
         const allowedPath = (candidate: string) => isPathInsideRoots(candidate, [root]);
@@ -475,6 +493,33 @@ export class AdeConversations {
       const agy = record.provider === 'antigravity';
       const stat = fs.statSync(file);
       const sourceIdentity = this.identity(record, file);
+      if (record.provider === 'freebuff') {
+        const freebuffData = readFreebuffPage(file, id, query);
+        const rounds = mergeConversationRounds(this.savedRounds(record), this.nativeRounds(record, file, sourceIdentity, stat));
+        const now = new Date().toISOString();
+        return {
+          data: {
+            messages: freebuffData.messages,
+            rounds,
+            source: 'transcript',
+            sourceIdentity,
+            provider: record.provider,
+            cursor: query.cursor ?? null,
+            nextCursor: null,
+            limited: false,
+            truncated: false,
+            warnings: [],
+          },
+          meta: {
+            availability: freebuffData.messages.length ? 'ready' : 'empty',
+            attemptedAt: now,
+            observedAt: now,
+            partial: false,
+            stale: false,
+            issue: null,
+          },
+        };
+      }
       const older = query.direction === 'older';
       const expected = { projectId: record.projectId, nodeId: record.id, runId: null, sourceIdentity };
       const cursor = query.cursor ? validateStoredCursor(query.cursor, expected) : null;

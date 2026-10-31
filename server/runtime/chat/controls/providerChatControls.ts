@@ -5,6 +5,8 @@ import { codexRequest } from '../../../providers/codex/codexThread.js';
 import { resolveAgent } from '../../sessions/sessions.js';
 import type { ChatControlIO } from './chatControlTypes.js';
 import {claudeEffortAcknowledgement} from '../../../providers/common/shared.js';
+import { FREEBUFF_MODELS } from '../../../providers/freebuff/freebuffCatalog.js';
+import { writeFreebuffModel } from '../../../providers/freebuff/freebuff.js';
 
 const SAFE = /^[a-zA-Z0-9][a-zA-Z0-9_.\/:+@()\[\]-]{0,199}$/;
 const text = (value: unknown, limit = 160): string => typeof value === 'string' ? value.replace(/[\x00-\x1f\x7f]/g, '').slice(0, limit) : '';
@@ -13,13 +15,14 @@ const controls = { model: false, effort: false, fastMode: false, fastToggle: fal
 const resolvedModelAliases = new WeakMap<AgentChatModel[], Map<string, string>>();
 const invalid = (message: string): never => { throw new CliError('INVALID_ARGUMENT', message); };
 type ProviderControlIO = ChatControlIO;
-type Provider = 'claude' | 'codex';
+type Provider = 'claude' | 'codex' | 'freebuff';
 
 /** Provider-native catalogs, matching Orca's model/list and list_models wire formats. */
 export class ProviderChatControls {
   private cache = new Map<string, { at: number; models: AgentChatModel[] }>();
   private pending = new Map<string, Promise<AgentChatModel[]>>();
   async catalog(provider: Provider, cwd: string): Promise<AgentChatModel[]> {
+    if (provider === 'freebuff') return FREEBUFF_MODELS;
     const resolved = resolveAgent(provider);
     if (!resolved) throw new CliError('CLI_MISSING', 'Install this provider before selecting its settings');
     const key = JSON.stringify([provider, cwd, resolved]);
@@ -53,6 +56,21 @@ export class ProviderChatControls {
     return request;
   }
   async read(provider: Provider, observed: { model?: string | null; effort?: string | null; fastMode?: boolean; serviceTier?: string }, screenSource: string | (() => string), cwd: string): Promise<AgentChatOptions> {
+    if (provider === 'freebuff') {
+      const currentModel = observed.model || 'deepseek/deepseek-v4-flash';
+      const modelObj = FREEBUFF_MODELS.find(m => m.id === currentModel) || FREEBUFF_MODELS[0];
+      const currentEffort = observed.effort || (modelObj?.efforts?.[0]?.value ?? undefined);
+      return {
+        provider: 'freebuff',
+        transport: 'terminal',
+        models: FREEBUFF_MODELS,
+        current: {
+          model: modelObj.id,
+          ...(currentEffort ? { effort: currentEffort } : {}),
+        },
+        controls: { ...controls, model: true, effort: Boolean(modelObj?.efforts?.length) },
+      };
+    }
     const models = await this.catalog(provider, cwd);
     const screen = typeof screenSource === 'function' ? screenSource() : screenSource;
     const visible = provider === 'codex' ? codexFooter(models, screen) : {};
@@ -72,6 +90,23 @@ export class ProviderChatControls {
     if (request.key === 'fastMode' && options.current.fastMode === (request.value === 'true')) return options;
     if ((request.key === 'model' || request.key === 'effort') && options.current[request.key] === request.value) return options;
     const fast = request.key === 'fastToggle' || request.key === 'fastMode';
+    if (options.provider === 'freebuff') {
+      const selectedModel = request.key === 'model' ? request.value : options.current.model;
+      const modelObj = options.models.find(m => m.id === selectedModel);
+      const selectedEffort = request.key === 'effort' ? request.value : (modelObj?.efforts?.[0]?.value ?? undefined);
+      writeFreebuffModel(process.cwd(), undefined, {
+        ...(request.key === 'model' ? { model: request.value } : {}),
+        ...(request.key === 'effort' ? { effort: request.value } : {}),
+      });
+      return updateControls({
+        ...options,
+        current: {
+          ...options.current,
+          [request.key]: request.value,
+          ...(request.key === 'model' ? { effort: selectedEffort } : {}),
+        },
+      });
+    }
     if (options.provider === 'codex' && !fast) return applyCodexPicker(options, request, io);
     const command = fast ? '/fast' : request.key === 'model' ? `/model ${request.value}` : `/effort ${request.value}`;
     const before = io.output().length;

@@ -13,6 +13,7 @@ import { permissionArgs, readAgentPreferences } from '../../system/agentPreferen
 import { agyConversationSaved } from '../../../providers/antigravity/agyBinding.js';
 import { validCodexThreadId } from '../../../providers/codex/codexThread.js';
 import { isOpenCode, validProviderSessionId, verifyOpenCode } from '../../../providers/opencode/openCodeSessions.js';
+import { freebuffResumable } from '../../../providers/freebuff/freebuff.js';
 import { statusFile } from '../../sessions/statusHooks.js';
 import type { AdeStore, SessionRecord } from '../../store.js';
 
@@ -234,6 +235,9 @@ export function permissionRestartResumable(
   }
   if (record.provider === 'claude' || record.provider === 'codebuddy') {
     return findVerifiedSessionTranscript(record) !== null;
+  }
+  if (record.provider === 'freebuff') {
+    return freebuffResumable(record);
   }
   return record.provider === 'codex';
 }

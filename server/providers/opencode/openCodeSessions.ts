@@ -15,6 +15,7 @@ import { nativeModelContextWindow } from '../common/providerContext.js';
 export const isOpenCode = (provider: string): provider is 'opencode' | 'opencode2' | 'kilo' => provider === 'opencode' || provider === 'opencode2' || provider === 'kilo';
 export function validProviderSessionId(provider: AdeProvider, id: unknown): id is string {
   if (provider === 'dsh') return typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,119}$/.test(id);
+  if (provider === 'freebuff') return typeof id === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9_.:\-T+Z]{0,119}$/.test(id);
   return typeof id === 'string' && (isOpenCode(provider) ? /^ses_[a-zA-Z0-9]{1,100}$/.test(id) : /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id));
 }
 export function openCodeFile(provider: 'opencode' | 'opencode2' | 'kilo'): string {

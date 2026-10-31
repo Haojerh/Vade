@@ -25,6 +25,7 @@ import { CodeBuddyChatControls } from '../../providers/codebuddy/codeBuddyChatCo
 import { codexPaginatedBinding, codexThread } from '../../providers/codex/codexThread.js';
 import { ConversationRounds } from '../chat/conversationRounds.js';
 import { dshBinding, dshReady, dshResumable, prepareDsh } from '../../providers/dsh/dsh.js';
+import { freebuffBinding, freebuffResumable } from '../../providers/freebuff/freebuff.js';
 import { answerCodeBuddyQuestion, codeBuddyApprovalVisible, terminalInteraction } from './interaction.js';
 import { OpenCodeChatControls } from '../../providers/opencode/openCodeChatControls.js';
 import { createOpenCodeSession, installOpenCodePlugin, isOpenCode, openCodeMajor, validProviderSessionId, verifyOpenCode } from '../../providers/opencode/openCodeSessions.js';
@@ -418,7 +419,7 @@ export class AdeSessions {
     projectId: string,
     worktreeId: string,
     cwd: string,
-    source: { provider: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh'; threadId: string; cwd: string | null; title: string },
+    source: { provider: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' | 'freebuff'; threadId: string; cwd: string | null; title: string },
   ): Promise<SessionRecord> {
     if (source.provider === 'dsh' && !source.cwd) throw new CliError('INVALID_ARGUMENT', 'DSH continuation requires its verified source workspace.');
     const dshContinuation = source.provider === 'dsh' && path.relative(path.resolve(cwd), path.resolve(source.cwd!)) !== '';
@@ -440,6 +441,9 @@ export class AdeSessions {
       const previous = matches.find(record => !record.closed) ?? matches[0];
       if (source.provider === 'dsh' && previous && !dshResumable(this.store.directory, previous)) {
         throw new CliError('RUNTIME_UNAVAILABLE', 'DSH has not saved this empty session yet. Start a new agent; there is no saved conversation to resume.');
+      }
+      if (source.provider === 'freebuff' && previous && !freebuffResumable(previous)) {
+        throw new CliError('RUNTIME_UNAVAILABLE', 'Freebuff has not saved this session yet. Start a new agent; there is no saved conversation to resume.');
       }
       if ((!previous || dshContinuation) && this.store.sessions(projectId).length >= 200) {
         throw new CliError('RATE_LIMITED', 'Project session history has reached the 200 session limit');
@@ -531,6 +535,12 @@ export class AdeSessions {
         this.prepareAgy(this.store.directory, node);
         record = { ...record, bindingToken: crypto.randomBytes(32).toString('hex') };
         if (record.providerThreadId) resolved = { ...resolved, args: [...resolved.args, '--conversation', record.providerThreadId] };
+      } else if (record.provider === 'freebuff') {
+        if (record.providerThreadId) {
+          resolved = { ...resolved, args: [...resolved.args, '--continue', record.providerThreadId, '--cwd', record.cwd] };
+        } else {
+          resolved = { ...resolved, args: [...resolved.args, '--cwd', record.cwd] };
+        }
       }
       if (record.provider !== 'terminal') {
         const access = resolveSessionLaunchPermission(this.store, record);
@@ -794,7 +804,7 @@ export class AdeSessions {
     this.store.project(projectId);
     const record = this.store.sessions(projectId).find(session => session.id === id && !session.closed);
     if (!record) throw new CliError('NODE_NOT_FOUND', 'Agent session does not belong to this project');
-    const observedId = record.provider === 'dsh' ? dshBinding(this.store.directory, record) : readAgyBinding(this.store.directory, record);
+    const observedId = record.provider === 'dsh' ? dshBinding(this.store.directory, record) : record.provider === 'freebuff' ? freebuffBinding(record) : readAgyBinding(this.store.directory, record);
     if (!record.providerThreadId && observedId) {
       const updated = { ...record, providerThreadId: observedId };
       this.store.saveSession(updated);
@@ -844,7 +854,8 @@ export class AdeSessions {
       !session?.live &&
       !this.starting.has(id) &&
       (record.provider !== 'antigravity' || this.savedAgy(record)) &&
-      (record.provider !== 'dsh' || dshResumable(this.store.directory, record));
+      (record.provider !== 'dsh' || dshResumable(this.store.directory, record)) &&
+      (record.provider !== 'freebuff' || freebuffResumable(record));
     const restartable = record.provider === 'terminal' && !session?.live && !this.starting.has(id);
     if (!session) return { data: '', cursor: 0, reset: cursor !== 0, live: false, exitCode: null, resumable, recoverable: resumable || restartable, restartable };
     const reset = cursor < session.start || cursor > session.start + session.buffer.length;

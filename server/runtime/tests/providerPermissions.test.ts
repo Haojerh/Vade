@@ -107,6 +107,7 @@ test('readProviderPermissionState and withProviderPermissions do not fabricate c
         opencode2: { enabled: true, mode: 'manual' },
         kilo: { enabled: true, mode: 'yolo' },
         dsh: { enabled: true, mode: 'manual' },
+        freebuff: { enabled: true, mode: 'manual' },
       },
     });
 
@@ -153,6 +154,7 @@ test('resolveSessionLaunchPermission records configured launch mode and returns 
         opencode2: { enabled: true, mode: 'manual' },
         kilo: { enabled: true, mode: 'manual' },
         dsh: { enabled: true, mode: 'manual' },
+        freebuff: { enabled: true, mode: 'manual' },
       },
     });
 

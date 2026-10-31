@@ -11,6 +11,7 @@ export const permissionArgs = {
   kilo: { manual: [], auto: null, yolo: ['--auto'] },
   dsh: { manual: [], auto: null, yolo: null },
   antigravity: { manual: [], auto: null, yolo: ['--dangerously-skip-permissions'] },
+  freebuff: { manual: [], auto: null, yolo: ['--trust-agents'] },
 } satisfies Record<string, Record<AgentPermissionMode, string[] | null>>;
 
 export function readAgentPreferences(store: AdeStore): AgentPreferences {
@@ -18,6 +19,7 @@ export function readAgentPreferences(store: AdeStore): AgentPreferences {
   const defaults: AgentPreferences = { defaultAgent: 'codex', providers: {
     codex: { enabled: true, mode: 'yolo' }, claude: { enabled: true, mode: 'yolo' }, antigravity: { enabled: true, mode: 'yolo' },
     dsh: { enabled: true, mode: 'manual' }, codebuddy: { enabled: true, mode: 'manual' }, opencode: { enabled: true, mode: 'manual' }, opencode2: { enabled: true, mode: 'manual' }, kilo: { enabled: true, mode: 'manual' },
+    freebuff: { enabled: true, mode: 'manual' },
   } };
   if (!row) return defaults;
   const saved = JSON.parse(String(row.value));
@@ -25,9 +27,9 @@ export function readAgentPreferences(store: AdeStore): AgentPreferences {
 }
 
 export function saveAgentPreferences(store: AdeStore, value: AgentPreferences): void {
-  if (!value || Object.keys(value).some(key => !['defaultAgent', 'providers'].includes(key)) || !value.providers || Object.keys(value.providers).length !== 8
+  if (!value || Object.keys(value).some(key => !['defaultAgent', 'providers'].includes(key)) || !value.providers || Object.keys(value.providers).length !== 9
     || !Object.hasOwn(permissionArgs, value.defaultAgent)) throw new CliError('INVALID_ARGUMENT', 'Invalid agent preferences');
-  for (const provider of ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh'] as const) {
+  for (const provider of ['codex', 'claude', 'antigravity', 'codebuddy', 'opencode', 'opencode2', 'kilo', 'dsh', 'freebuff'] as const) {
     const row = value.providers[provider];
     if (!row || Object.keys(row).some(key => !['enabled', 'mode'].includes(key)) || typeof row.enabled !== 'boolean'
       || !Object.hasOwn(permissionArgs[provider], row.mode) || permissionArgs[provider][row.mode] === null) throw new CliError('INVALID_ARGUMENT', 'This permission mode is not supported by the selected agent');

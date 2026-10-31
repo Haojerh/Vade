@@ -12,6 +12,7 @@ export const PROVIDERS: { id: AdeProvider; name: string; command: string; packag
   { id: 'opencode2', name: 'OpenCode 2', command: 'opencode2', package: 'opencode-ai', entry: 'bin/opencode2' },
   { id: 'kilo', name: 'Kilo Code', command: 'kilo', package: '@kilocode/cli', entry: 'bin/kilo' },
   { id: 'dsh', name: 'DeepSeek Harness', command: 'dsh-tui', package: '@deepseek-harness-tui/dsh-tui', entry: 'bin/dsh-tui.js' },
+  { id: 'freebuff', name: 'Freebuff', command: 'freebuff', package: 'freebuff', entry: 'index.js' },
   { id: 'terminal', name: 'Terminal', command: 'terminal' },
 ];
 
@@ -74,6 +75,10 @@ export function resolveAgent(provider: AdeProvider, shell?: TerminalShell): { ex
   if (provider === 'claude') {
     const nativeClaude = path.join(os.homedir(), '.local', 'bin', process.platform === 'win32' ? 'claude.exe' : 'claude');
     if (fs.existsSync(nativeClaude)) return { executable: nativeClaude, args: [] };
+  }
+  if (provider === 'freebuff') {
+    const configBinary = path.join(os.homedir(), '.config', 'manicode', process.platform === 'win32' ? 'freebuff.exe' : 'freebuff');
+    if (fs.existsSync(configBinary)) return { executable: configBinary, args: [] };
   }
   // Resolve known npm entry points directly; never run a .cmd shim or concatenate a shell command.
   if (definition.package && definition.entry) {

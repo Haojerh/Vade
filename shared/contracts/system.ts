@@ -20,7 +20,7 @@ export interface UsageData {
 }
 
 export interface LocalConnection {
-  id: 'github' | 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh';
+  id: 'github' | 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' | 'freebuff';
   label: string;
   installed: boolean;
   connected: boolean | null;

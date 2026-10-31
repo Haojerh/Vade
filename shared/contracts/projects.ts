@@ -39,7 +39,7 @@ export interface ProjectShortcut {
   action: 'terminal' | 'agent';
   command: string;
   appendEnter: boolean;
-  agent: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh';
+  agent: 'codex' | 'claude' | 'antigravity' | 'codebuddy' | 'opencode' | 'opencode2' | 'kilo' | 'dsh' | 'freebuff';
 }
 export interface RunProjectShortcutResponse { nodeId: string; staged: boolean; message: string }
 

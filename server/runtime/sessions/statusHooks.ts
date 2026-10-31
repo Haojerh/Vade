@@ -15,6 +15,7 @@ export const STATUS_EVENTS = {
   opencode2: ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'Stop', 'SessionError', 'SessionAborted'],
   kilo: ['SessionStart', 'UserPromptSubmit', 'PostToolUse', 'PermissionRequest', 'Stop', 'SessionError', 'SessionAborted'],
   antigravity: ['SessionStart', 'PreInvocation', 'PostInvocation', 'PreToolUse', 'PostToolUse', 'Stop'],
+  freebuff: ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop'],
 } as const;
 
 // Observe metadata only. Antigravity PreToolUse requires "ask" to preserve normal permission handling.
@@ -83,7 +84,7 @@ process.stdin.on('end',()=>process.exit(0)); process.stdin.on('error',()=>proces
 export function statusFile(directory: string, id: string): string { return path.join(directory, 'status', id + '.json'); }
 
 export function installStatusHooks(directory: string, provider: AdeProvider, node: string, configFile?: string): void {
-  if (provider === 'terminal' || provider === 'dsh' || provider === 'opencode' || provider === 'opencode2' || provider === 'kilo') return;
+  if (provider === 'terminal' || provider === 'dsh' || provider === 'opencode' || provider === 'opencode2' || provider === 'kilo' || provider === 'freebuff') return;
   const script = path.join(directory, 'ade-status-hook.cjs');
   if (/["%\r\n]/.test(node + script)) throw new CliError('INVALID_ARGUMENT', 'Runtime path cannot be used for provider status hooks');
   fs.mkdirSync(path.join(directory, 'status'), { recursive: true, mode: 0o700 });
